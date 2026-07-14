@@ -1,0 +1,22 @@
+# ai-flow caller workflow — copy to .github/workflows/ai-commands.yml in each
+# participating repo (code repos and the org plans repo). Requires:
+# - the org-level CURSOR_API_KEY secret (or a repo secret)
+# - self-hosted runners labeled ai-light / ai-build (see d3mlabs/ai-flow README)
+name: ai-commands
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  ai-commands:
+    uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1
+    secrets:
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}

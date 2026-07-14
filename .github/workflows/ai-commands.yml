@@ -1,0 +1,74 @@
+# ai-flow: reusable slash-command dispatcher (/ask, /edit, /split, /build).
+#
+# Adopting repos reference this via a ~10-line caller workflow (see
+# templates/caller-workflow.yml). Jobs run on self-hosted runners carrying the
+# headless Cursor `agent` CLI — Actions bills nothing for self-hosted jobs.
+name: ai-commands
+
+on:
+  workflow_call:
+    inputs:
+      command_prefix:
+        description: >-
+          Optional command prefix for adopters with clashing slash-command
+          bots (e.g. "ai-" turns /ask into /ai-ask). We default to none.
+        type: string
+        default: ""
+      light_runner_labels:
+        description: Runner labels for /ask, /edit, and /split.
+        type: string
+        default: '["self-hosted", "ai-light"]'
+      build_runner_labels:
+        description: Runner labels for /build (heavier, e.g. warm Unreal envs).
+        type: string
+        default: '["self-hosted", "ai-build"]'
+    secrets:
+      CURSOR_API_KEY:
+        description: Authenticates the headless Cursor agent CLI on the runner.
+        required: true
+
+jobs:
+  # The `if` runs in the workflow engine, so non-command comments never start
+  # a job (no billed no-op runs — free anyway on self-hosted, but noisy). It
+  # is a coarse contains() filter; the exact line-start command grammar and
+  # the permission gate are re-checked by the Ruby dispatcher, which exits
+  # cleanly on a mid-line prose mention.
+  dispatch:
+    if: >-
+      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
+       contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
+       contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
+       contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)))
+    # Route /build to the build pool, everything else to the light pool.
+    # Coarse (a prose mention of /build in an /edit comment routes heavy),
+    # which errs on the safe side: the build pool can run anything.
+    runs-on: ${{ contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) && fromJSON(inputs.build_runner_labels) || fromJSON(inputs.light_runner_labels) }}
+    # Serialize runs per issue/PR: batches assume a stable body snapshot.
+    concurrency:
+      group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+    timeout-minutes: 120
+    steps:
+      - name: Check out the target repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The default GITHUB_TOKEN can't push branches that trigger CI;
+          # gh (below) uses it for API calls, git push uses it via checkout.
+          token: ${{ github.token }}
+
+      - name: Check out ai-flow (the dispatcher)
+        uses: actions/checkout@v4
+        with:
+          repository: d3mlabs/ai-flow
+          path: .ai-flow
+          token: ${{ github.token }}
+
+      - name: Dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          AI_FLOW_COMMAND_PREFIX: ${{ inputs.command_prefix }}
+          AI_FLOW_WORKDIR: ${{ github.workspace }}
+        run: ruby .ai-flow/bin/dispatch.rb
