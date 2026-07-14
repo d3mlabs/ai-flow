@@ -56,7 +56,8 @@ standalone `/ask`, which gets a reply.
    register N instances for N parallel jobs. Repos using `dev` can run
    `dev runner-setup`.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
-   and make sure it is on the runner service's PATH.
+   and make sure it — and a Ruby >= 3.0 — is on the runner service's PATH
+   (the dispatcher is a stdlib-only Ruby script).
 5. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
    auto-push via `dev plan`.
 
