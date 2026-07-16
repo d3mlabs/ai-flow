@@ -128,6 +128,14 @@ module AiFlow
       )
     end
 
+    # Assign users to an issue or PR (PRs share the issues namespace).
+    def add_assignees(owner_repo, number, logins)
+      api(
+        "repos/#{owner_repo}/issues/#{number}/assignees",
+        method: "POST", payload: { assignees: logins },
+      )
+    end
+
     # @return [String] the repo's default branch
     def default_branch(owner_repo)
       api("repos/#{owner_repo}").fetch("default_branch")

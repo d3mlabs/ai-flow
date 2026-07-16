@@ -3,6 +3,13 @@
 # Adopting repos reference this via a ~10-line caller workflow (see
 # templates/caller-workflow.yml). Jobs run on self-hosted runners carrying the
 # headless Cursor `agent` CLI — Actions bills nothing for self-hosted jobs.
+#
+# Identity: an org-owned GitHub App (`ai-flow`) is the acting identity — no
+# hosted component, purely a per-job token mint. App tokens (unlike the
+# default GITHUB_TOKEN) trigger downstream workflows, so /build PRs get CI
+# runs. Without the App secrets the job degrades to github.token: everything
+# works except CI on /build PRs. See docs/attribution.md for the full
+# identity + attribution model.
 name: ai-commands
 
 on:
@@ -22,10 +29,26 @@ on:
         description: Runner labels for /build (heavier, e.g. warm Unreal envs).
         type: string
         default: '["self-hosted", "ai-build"]'
+      per_actor_runners:
+        description: >-
+          Route every job to the commenter's own runner (labels
+          ["self-hosted", "dev-<login>"]) instead of the shared pools. Compute
+          scoping for multi-dev orgs; jobs queue while that dev's box is
+          offline.
+        type: boolean
+        default: false
     secrets:
       CURSOR_API_KEY:
         description: Authenticates the headless Cursor agent CLI on the runner.
         required: true
+      AI_FLOW_APP_ID:
+        description: >-
+          GitHub App ID for the ai-flow App (optional; without it the job
+          falls back to github.token and /build PRs won't trigger CI).
+        required: false
+      AI_FLOW_APP_PRIVATE_KEY:
+        description: Private key for the ai-flow GitHub App (optional).
+        required: false
 
 jobs:
   # The `if` runs in the workflow engine, so non-command comments never start
@@ -41,22 +64,34 @@ jobs:
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)))
-    # Route /build to the build pool, everything else to the light pool.
-    # Coarse (a prose mention of /build in an /edit comment routes heavy),
-    # which errs on the safe side: the build pool can run anything.
-    runs-on: ${{ contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) && fromJSON(inputs.build_runner_labels) || fromJSON(inputs.light_runner_labels) }}
+    # per_actor_runners routes to the commenter's own box; otherwise /build
+    # goes to the build pool and everything else to the light pool. Coarse (a
+    # prose mention of /build in an /edit comment routes heavy), which errs on
+    # the safe side: the build pool can run anything.
+    runs-on: ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login)) || (contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) && fromJSON(inputs.build_runner_labels) || fromJSON(inputs.light_runner_labels)) }}
     # Serialize runs per issue/PR: batches assume a stable body snapshot.
     concurrency:
       group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
     timeout-minutes: 120
     steps:
+      # Mint the App installation token (1h, scoped to this repo). Guarded so
+      # adopters without an App still get a working (degraded) setup.
+      - name: Mint the ai-flow App token
+        id: app-token
+        if: ${{ secrets.AI_FLOW_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AI_FLOW_APP_ID }}
+          private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
+
       - name: Check out the target repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # The default GITHUB_TOKEN can't push branches that trigger CI;
-          # gh (below) uses it for API calls, git push uses it via checkout.
-          token: ${{ github.token }}
+          # The resolved token also lands in the persisted git credentials,
+          # so /build pushes act as the App — App-pushed branches and PRs
+          # trigger CI, which the default GITHUB_TOKEN suppresses.
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Check out ai-flow (the dispatcher)
         uses: actions/checkout@v4
@@ -67,7 +102,7 @@ jobs:
 
       - name: Dispatch
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           AI_FLOW_COMMAND_PREFIX: ${{ inputs.command_prefix }}
           AI_FLOW_WORKDIR: ${{ github.workspace }}

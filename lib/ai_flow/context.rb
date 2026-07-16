@@ -22,6 +22,11 @@ module AiFlow
     attr_reader :author_association
     # @return [String] the comment's html_url
     attr_reader :comment_url
+    # @return [String, nil] the commenter's login (the requesting human)
+    attr_reader :commenter_login
+    # @return [Integer, nil] the commenter's user id (for the canonical
+    #   <id>+<login>@users.noreply.github.com credit form)
+    attr_reader :commenter_id
     # @return [String, nil] PR head branch (review comments only)
     attr_reader :pr_head_ref
     # @return [String, nil] the review comment's line anchor (diff hunk)
@@ -39,6 +44,9 @@ module AiFlow
       @comment_body = comment["body"] || ""
       @author_association = comment["author_association"] || "NONE"
       @comment_url = comment.fetch("html_url")
+      user = comment["user"] || {}
+      @commenter_login = user["login"]
+      @commenter_id = user["id"]
 
       if review_comment?
         pull_request = payload.fetch("pull_request")

@@ -1,6 +1,9 @@
 # ai-flow caller workflow — copy to .github/workflows/ai-commands.yml in each
 # participating repo (code repos and the org plans repo). Requires:
 # - the org-level CURSOR_API_KEY secret (or a repo secret)
+# - the org-level AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets (the
+#   ai-flow GitHub App; optional — without them jobs fall back to the default
+#   GITHUB_TOKEN and /build PRs won't trigger CI)
 # - self-hosted runners labeled ai-light / ai-build (see d3mlabs/ai-flow README)
 name: ai-commands
 
@@ -20,3 +23,5 @@ jobs:
     uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+      AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
+      AI_FLOW_APP_PRIVATE_KEY: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}

@@ -90,6 +90,10 @@ module AiFlow
           if code_repo == @context.owner_repo
             default = @github.default_branch(code_repo)
             run!("git", "fetch", "origin", default, chdir: @workdir)
+            # Long-lived runner checkouts accumulate stale worktree metadata
+            # (crashed jobs, tmpdirs GC'd from under git); prune or the add
+            # eventually fails.
+            run!("git", "worktree", "prune", chdir: @workdir)
             run!("git", "worktree", "add", "--detach", worktree, "origin/#{default}", chdir: @workdir)
             begin
               yield worktree
@@ -128,34 +132,51 @@ module AiFlow
         status, = @executor.capture("git", "status", "--porcelain", chdir: worktree)
         return false if status.strip.empty?
 
-        run!("git", "-c", "user.name=ai-flow", "-c", "user.email=ai-flow@users.noreply.github.com",
-             "commit", "-m", "ai-flow /build: #{issue.title}", chdir: worktree)
+        message = CommitIdentity.message_with_requester("ai-flow /build: #{issue.title}", @context)
+        run!("git", *CommitIdentity.git_flags(@github), "commit", "-m", message, chdir: worktree)
         true
       end
 
+      # /build commits are unsigned (plain git in the worktree), so a repo
+      # enforcing signed commits rejects the push — fail with the pointer to
+      # the documented upgrade path rather than a bare git error.
       def push_branch(worktree, branch)
-        run!("git", "push", "-u", "origin", branch, "--force-with-lease", chdir: worktree)
+        _out, err, ok = @executor.capture(
+          "git", "push", "-u", "origin", branch, "--force-with-lease", chdir: worktree,
+        )
+        return if ok
+
+        raise GitHub::Error,
+              "git push failed: #{err.strip} — if this repo enforces signed commits, " \
+              "see d3mlabs/ai-flow docs/attribution.md (createCommitOnBranch upgrade path)"
       end
 
       # Back-references always use the full `Closes owner/repo#n` form (valid
       # same-repo too, so no branching between repo-scoped and org-wide plans).
+      # The PR is the bot's proposal; the accountable human is named in the
+      # body and assigned to the PR (see docs/attribution.md).
       #
       # @return [Hash] the created PR
       def open_pull_request(code_repo, issue_repo, issue, branch)
+        requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
           Implements #{issue.html_url}.
 
-          Closes #{issue_repo}##{issue.number}
+          #{requested_by}Closes #{issue_repo}##{issue.number}
 
           <!-- ai-flow:build ##{issue.number} -->
         BODY
-        @github.create_pull_request(
+        pr = @github.create_pull_request(
           code_repo,
           title: issue.title,
           body: body,
           head: branch,
           base: @github.default_branch(code_repo),
         )
+        if @context.commenter_login
+          @github.add_assignees(code_repo, pr.fetch("number"), [@context.commenter_login])
+        end
+        pr
       end
 
       def run!(*argv, chdir:)

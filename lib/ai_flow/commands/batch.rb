@@ -239,8 +239,10 @@ module AiFlow
         status, = @executor.capture("git", "status", "--porcelain", chdir: @workdir)
         return nil if status.strip.empty?
 
-        run_git("-c", "user.name=ai-flow", "-c", "user.email=ai-flow@users.noreply.github.com",
-                "commit", "-m", "ai-flow /edit: #{segment.instruction.lines.first.to_s.strip[0, 60]}")
+        message = CommitIdentity.message_with_requester(
+          "ai-flow /edit: #{segment.instruction.lines.first.to_s.strip[0, 60]}", @context
+        )
+        run_git(*CommitIdentity.git_flags(@github), "commit", "-m", message)
         run_git("push")
         sha, = @executor.capture("git", "rev-parse", "HEAD", chdir: @workdir)
         sha.strip

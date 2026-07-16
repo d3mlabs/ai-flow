@@ -44,17 +44,47 @@ standalone `/ask`, which gets a reply.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
   repos using `dev plan`.
 
+## Identity: the ai-flow GitHub App
+
+All GitHub writes (pushes, PRs, comments, body PATCHes) act as the org's
+`ai-flow` GitHub App — a per-job token mint, no hosted component. The
+comparison that settled it:
+
+| | default `GITHUB_TOKEN` | dev PAT | GitHub App |
+|---|---|---|---|
+| /build PRs trigger CI | no (by design) | yes | yes |
+| Acting identity | `github-actions[bot]` | the PAT's human — overclaims authorship | `ai-flow[bot]` — truthful |
+| Expiry / rotation | per-job, automatic | 90d ceremony per dev | non-expiring key, 1h installation tokens minted per job |
+| Scope | the one repo | the dev's whole account | exactly the repos the App is installed on |
+| Audit trail | anonymous-ish | indistinguishable from the human | first-class bot actor |
+
+Setup is a one-time org task: register the App (permissions: contents,
+issues, pull requests — read/write), install it on participating repos, and
+store `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` as org secrets. Without
+those secrets the workflow degrades gracefully to `github.token`: everything
+works except CI on /build PRs.
+
+Attribution model (who authors what, and why): see
+[docs/attribution.md](docs/attribution.md). Short form — local Cursor work is
+dev-authored; web-initiated work (`/build`, `/edit` on PRs) is authored by
+`ai-flow[bot]` with a `Co-authored-by` trailer crediting the requesting
+human, whose accountability lives on the PR (`Requested by @login`, PR
+assignee, merge record).
+
 ## Adoption checklist (per repo)
 
 1. Copy `templates/caller-workflow.yml` to `.github/workflows/ai-commands.yml`
    (works for code repos and the org plans repo alike).
-2. Ensure the org secret `CURSOR_API_KEY` is available to the repo (or add a
-   repo secret) — it authenticates the headless `agent` CLI on the runner.
+2. Ensure the org secrets are available to the repo (or add repo secrets):
+   `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
+   and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App;
+   optional but required for CI on /build PRs). Install the App on the repo.
 3. Register self-hosted runners with the labels the workflow routes on:
-   `ai-light` (chat-heavy commands) and `ai-build` (build-heavy, e.g. warm
-   Unreal environments). One registered runner instance = one concurrent job;
-   register N instances for N parallel jobs. Repos using `dev` can run
-   `dev runner-setup`.
+   `ai-light` (chat-heavy commands) and `ai-build` (build-heavy — a box with
+   a warm native dev environment; /build runs the full agent loop including
+   tests, so it needs a real dev machine, not a bare runner). One registered
+   runner instance = one concurrent job; register N instances for N parallel
+   jobs. Repos using `dev` can run `dev runner-setup`.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
    and make sure it — and a Ruby >= 3.0 — is on the runner service's PATH
    (the dispatcher is a stdlib-only Ruby script).
@@ -63,7 +93,10 @@ standalone `/ask`, which gets a reply.
 
 Configuration inputs (set in the caller workflow's `with:`): `command_prefix`
 (default none; set e.g. `ai-` if you run other slash-command bots),
-`light_runner_labels`, `build_runner_labels`.
+`light_runner_labels`, `build_runner_labels`, and `per_actor_runners`
+(multi-dev orgs: route every job to the commenter's own runner, labeled
+`dev-<login>`, instead of the shared pools — compute scoping without shared
+hardware; per-dev runner registration tooling is deliberately deferred).
 
 Shareability: if this repo is public, any org can reference
 `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1` with its own secret and

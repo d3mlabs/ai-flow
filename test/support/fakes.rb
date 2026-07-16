@@ -84,7 +84,17 @@ class FakeGitHub
 
   def create_pull_request(owner_repo, title:, body:, head:, base:)
     @calls << [:create_pull_request, owner_repo, head, base]
+    @pull_request_bodies ||= []
+    @pull_request_bodies << body
     { "html_url" => "https://github.com/#{owner_repo}/pull/900", "number" => 900, "body" => body }
+  end
+
+  def pull_request_bodies
+    @pull_request_bodies || []
+  end
+
+  def add_assignees(owner_repo, number, logins)
+    @calls << [:add_assignees, owner_repo, number, logins]
   end
 
   def default_branch(owner_repo)
@@ -142,6 +152,7 @@ module ContextBuilder
         "comment" => {
           "id" => comment_id, "body" => body, "author_association" => association,
           "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{comment_id}",
+          "user" => { "login" => "jpduchesne", "id" => 111 },
         },
       },
     )
