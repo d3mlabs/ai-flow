@@ -9,14 +9,23 @@ module AiFlow
   # trailer — contribution-graph credit without an authorship claim — and
   # accountability lives at the PR layer (Requested by + assignee + merge).
   module CommitIdentity
-    BOT_LOGIN = "ai-flow[bot]"
+    DEFAULT_BOT_LOGIN = "ai-flow[bot]"
 
     module_function
+
+    # App names are globally unique, so an adopter's App slug may differ from
+    # ours; the workflow derives the login from the minted token's app-slug
+    # output and passes it down as AI_FLOW_BOT_LOGIN.
+    #
+    # @return [String]
+    def bot_login
+      ENV.fetch("AI_FLOW_BOT_LOGIN", DEFAULT_BOT_LOGIN)
+    end
 
     # @param github [AiFlow::GitHub]
     # @return [Array<String>] `git -c` flags setting author and committer
     def git_flags(github)
-      ["-c", "user.name=#{BOT_LOGIN}", "-c", "user.email=#{bot_email(github)}"]
+      ["-c", "user.name=#{bot_login}", "-c", "user.email=#{bot_email(github)}"]
     end
 
     # The canonical <id>+<login>@users.noreply.github.com form is what links
@@ -26,10 +35,10 @@ module AiFlow
     # @param github [AiFlow::GitHub]
     # @return [String]
     def bot_email(github)
-      bot_id = github.api("users/#{ERB::Util.url_encode(BOT_LOGIN)}").fetch("id")
-      "#{bot_id}+#{BOT_LOGIN}@users.noreply.github.com"
+      bot_id = github.api("users/#{ERB::Util.url_encode(bot_login)}").fetch("id")
+      "#{bot_id}+#{bot_login}@users.noreply.github.com"
     rescue StandardError
-      "#{BOT_LOGIN}@users.noreply.github.com"
+      "#{bot_login}@users.noreply.github.com"
     end
 
     # @param message [String]

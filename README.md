@@ -60,9 +60,11 @@ comparison that settled it:
 
 Setup is a one-time org task: register the App (permissions: contents,
 issues, pull requests — read/write), install it on participating repos, and
-store `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` as org secrets. Without
-those secrets the workflow degrades gracefully to `github.token`: everything
-works except CI on /build PRs.
+store `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` as org secrets. The App
+is intrinsic to the attribution model, so a job without the secrets fails
+loudly. Adopters who want to try ai-flow before registering an App can set
+`allow_token_fallback: true` to knowingly run degraded on `github.token`
+(writes act as `github-actions[bot]`, /build PRs don't trigger CI).
 
 Attribution model (who authors what, and why): see
 [docs/attribution.md](docs/attribution.md). Short form — local Cursor work is
@@ -77,8 +79,9 @@ assignee, merge record).
    (works for code repos and the org plans repo alike).
 2. Ensure the org secrets are available to the repo (or add repo secrets):
    `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
-   and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App;
-   optional but required for CI on /build PRs). Install the App on the repo.
+   and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App —
+   required unless the caller sets `allow_token_fallback: true`). Install
+   the App on the repo.
 3. Register self-hosted runners with the labels the workflow routes on:
    `ai-light` (chat-heavy commands) and `ai-build` (build-heavy — a box with
    a warm native dev environment; /build runs the full agent loop including
@@ -93,10 +96,11 @@ assignee, merge record).
 
 Configuration inputs (set in the caller workflow's `with:`): `command_prefix`
 (default none; set e.g. `ai-` if you run other slash-command bots),
-`light_runner_labels`, `build_runner_labels`, and `per_actor_runners`
+`light_runner_labels`, `build_runner_labels`, `per_actor_runners`
 (multi-dev orgs: route every job to the commenter's own runner, labeled
 `dev-<login>`, instead of the shared pools — compute scoping without shared
-hardware; per-dev runner registration tooling is deliberately deferred).
+hardware; per-dev runner registration tooling is deliberately deferred),
+and `allow_token_fallback` (explicit opt-in to run without the App).
 
 Shareability: if this repo is public, any org can reference
 `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1` with its own secret and

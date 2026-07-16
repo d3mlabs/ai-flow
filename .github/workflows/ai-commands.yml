@@ -7,9 +7,11 @@
 # Identity: an org-owned GitHub App (`ai-flow`) is the acting identity — no
 # hosted component, purely a per-job token mint. App tokens (unlike the
 # default GITHUB_TOKEN) trigger downstream workflows, so /build PRs get CI
-# runs. Without the App secrets the job degrades to github.token: everything
-# works except CI on /build PRs. See docs/attribution.md for the full
-# identity + attribution model.
+# runs. The App is intrinsic to the attribution model, so missing App
+# secrets fail the job loudly; adopters trying ai-flow before registering an
+# App must opt into degraded github.token mode explicitly
+# (allow_token_fallback). See docs/attribution.md for the full identity +
+# attribution model.
 name: ai-commands
 
 on:
@@ -37,17 +39,26 @@ on:
           offline.
         type: boolean
         default: false
+      allow_token_fallback:
+        description: >-
+          Run without the ai-flow GitHub App, degrading to the job's
+          github.token: writes act as github-actions[bot] and /build PRs
+          don't trigger CI. Off by default — the App is intrinsic to the
+          attribution model, so degrading must be an explicit choice, never
+          a silent one.
+        type: boolean
+        default: false
     secrets:
       CURSOR_API_KEY:
         description: Authenticates the headless Cursor agent CLI on the runner.
         required: true
       AI_FLOW_APP_ID:
         description: >-
-          GitHub App ID for the ai-flow App (optional; without it the job
-          falls back to github.token and /build PRs won't trigger CI).
+          GitHub App ID for the ai-flow App. Effectively required — a job
+          without it fails unless allow_token_fallback is set.
         required: false
       AI_FLOW_APP_PRIVATE_KEY:
-        description: Private key for the ai-flow GitHub App (optional).
+        description: Private key for the ai-flow GitHub App.
         required: false
 
 jobs:
@@ -74,8 +85,15 @@ jobs:
       group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
     timeout-minutes: 120
     steps:
-      # Mint the App installation token (1h, scoped to this repo). Guarded so
-      # adopters without an App still get a working (degraded) setup.
+      # The App carries the attribution model (bot identity + CI on /build
+      # PRs), so its absence is a loud failure, not a silent degradation.
+      - name: Require the ai-flow App
+        if: ${{ secrets.AI_FLOW_APP_ID == '' && !inputs.allow_token_fallback }}
+        run: |
+          echo "::error::ai-flow requires its GitHub App (AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets — see the README's identity section). To knowingly run degraded on github.token (writes act as github-actions[bot], /build PRs get no CI), set allow_token_fallback: true in the caller workflow."
+          exit 1
+
+      # Mint the App installation token (1h, scoped to this repo).
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ secrets.AI_FLOW_APP_ID != '' }}
@@ -106,4 +124,7 @@ jobs:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           AI_FLOW_COMMAND_PREFIX: ${{ inputs.command_prefix }}
           AI_FLOW_WORKDIR: ${{ github.workspace }}
+          # App names are globally unique, so an adopter's App may not be
+          # named ai-flow — derive the bot login from the actual slug.
+          AI_FLOW_BOT_LOGIN: ${{ format('{0}[bot]', steps.app-token.outputs.app-slug || 'ai-flow') }}
         run: ruby .ai-flow/bin/dispatch.rb

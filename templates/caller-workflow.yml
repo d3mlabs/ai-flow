@@ -2,8 +2,8 @@
 # participating repo (code repos and the org plans repo). Requires:
 # - the org-level CURSOR_API_KEY secret (or a repo secret)
 # - the org-level AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets (the
-#   ai-flow GitHub App; optional — without them jobs fall back to the default
-#   GITHUB_TOKEN and /build PRs won't trigger CI)
+#   ai-flow GitHub App — required; jobs fail without them unless you opt
+#   into degraded mode with `with: { allow_token_fallback: true }`)
 # - self-hosted runners labeled ai-light / ai-build (see d3mlabs/ai-flow README)
 name: ai-commands
 
