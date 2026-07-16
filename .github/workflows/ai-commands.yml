@@ -98,7 +98,10 @@ jobs:
           echo "::error::ai-flow requires its GitHub App (AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets — see the README's identity section). To knowingly run degraded on github.token (writes act as github-actions[bot], /build PRs get no CI), set allow_token_fallback: true in the caller workflow."
           exit 1
 
-      # Mint the App installation token (1h, scoped to this repo).
+      # Mint the App installation token (1h). owner (without a repositories
+      # list) scopes it to every repo the App is installed on, not just the
+      # triggering repo — /build pushes to other code repos and the private
+      # ai-flow checkout below both need that reach.
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
@@ -106,6 +109,7 @@ jobs:
         with:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
           private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
 
       - name: Check out the target repo
         uses: actions/checkout@v4
@@ -116,12 +120,15 @@ jobs:
           # trigger CI, which the default GITHUB_TOKEN suppresses.
           token: ${{ steps.app-token.outputs.token || github.token }}
 
+      # github.token is scoped to the triggering repo, so it can't read a
+      # private ai-flow — the App token can (installed org-wide). Public
+      # ai-flow forks work with the plain github.token fallback.
       - name: Check out ai-flow (the dispatcher)
         uses: actions/checkout@v4
         with:
           repository: d3mlabs/ai-flow
           path: .ai-flow
-          token: ${{ github.token }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Dispatch
         env:
