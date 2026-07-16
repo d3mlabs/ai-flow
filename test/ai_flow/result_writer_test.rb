@@ -12,13 +12,14 @@ class AiFlow::ResultWriterTest < Minitest::Test
     writer = AiFlow::ResultWriter.new(github: FakeGitHub.new)
 
     When "rendering results"
-    updated = writer.render(body, [[segments[0], "RESULT-1"], [segments[1], "RESULT-2"]])
+    updated = writer.render(body, [[segments[0], "RESULT-1\n\nline two"], [segments[1], "RESULT-2"]])
 
-    Then "each result sits directly under its command, separated by a rule"
-    updated.index("RESULT-1") > updated.index("/edit tighten")
-    updated.index("RESULT-1") < updated.index("> Q2")
-    updated.index("RESULT-2") > updated.index("/ask why?")
-    updated.include?("---")
+    Then "each result sits under its command, blockquote-wrapped as a panel"
+    updated.index("> RESULT-1") > updated.index("/edit tighten")
+    updated.index("> RESULT-1") < updated.index("> Q2")
+    updated.index("> RESULT-2") > updated.index("/ask why?")
+    updated.include?("> RESULT-1\n>\n> line two")
+    !updated.include?("---")
 
     Cleanup
     nil

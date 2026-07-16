@@ -168,17 +168,19 @@ module AiFlow
       def issue_segment_results(resolved, parsed, snapshot)
         resolved.each_with_index.map do |(segment, span), index|
           text = parsed.segments[index + 1] || "⚠️ The agent returned no result for this segment."
-          result =
-            if segment.command == "edit" && !text.start_with?("CONFLICT:")
-              @rich_diff.render(
-                before: span || snapshot,
-                after: text,
-                backlink_url: @context.subject_url,
-              )
-            else
-              text
-            end
-          [segment, "✅ **/#{segment.command}**\n\n#{result}"]
+          if segment.command == "edit" && !text.start_with?("CONFLICT:")
+            diff = @rich_diff.render(
+              before: span || snapshot,
+              after: text,
+              backlink_url: @context.subject_url,
+            )
+            # Header line stays visible (status + backlink); the diff views are
+            # collapsed below it, so a segment scans as three compact lines.
+            header = ["✅ **/#{segment.command}**", diff.backlink].compact.join(" — ")
+            [segment, "#{header}\n\n#{diff.collapsed}"]
+          else
+            [segment, "✅ **/#{segment.command}**\n\n#{text}"]
+          end
         end
       end
 

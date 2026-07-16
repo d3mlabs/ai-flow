@@ -115,8 +115,8 @@ flowchart TD
     disp --> buildSplitCmd["Commands::BuildSplit<br/>(orchestrates Build per wave)"]
 
     batchCmd --> planBody["PlanBody<br/>(issue-body marker, quote anchors)"]
-    batchCmd --> richDiff["RichDiff<br/>(ins/del prose, mermaid re-render,<br/>text-fragment backlink)"]
-    batchCmd --> resultWriter["ResultWriter<br/>(in-place comment edits)"]
+    batchCmd --> richDiff["RichDiff<br/>(collapsed Word diff + Source diff,<br/>text-fragment backlink)"]
+    batchCmd --> resultWriter["ResultWriter<br/>(in-place comment edits,<br/>blockquoted result panels)"]
     splitCmd --> resultWriter
     buildCmd --> resultWriter
     buildSplitCmd --> resultWriter
@@ -152,7 +152,7 @@ flowchart TD
     resolve -->|stale quote| staleResult["Segment fails alone:<br/>re-quote and retry"]
     resolve --> agentPass["Phase 2: ONE agent pass<br/>integrates all /edit segments<br/>into one new document"]
     agentPass --> patch["ONE guarded PATCH<br/>(refuse if body moved<br/>since the snapshot)"]
-    agentPass --> results["Per-segment results append<br/>in place under each command<br/>(/edit gets a rendered rich diff)"]
+    agentPass --> results["Per-segment results append in place<br/>as blockquoted panels (/edit gets a backlink<br/>header + collapsed Word/Source diffs)"]
 ```
 
 ## The /build flow

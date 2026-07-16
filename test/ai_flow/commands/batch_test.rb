@@ -58,7 +58,9 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     github.calls.map(&:first).count(:update_issue_body) == 1
     github.issue(REPO, 7).body == AiFlow::PlanBody.to_issue_body(new_body)
     github.comment_edits.fetch(55).include?("/edit cover LOD1 too")
-    github.comment_edits.fetch(55).scan("✅ **/edit**").size == 2
+    github.comment_edits.fetch(55).scan("> ✅ **/edit** — [view the edited section](").size == 2
+    github.comment_edits.fetch(55).include?("<summary>Word diff</summary>")
+    github.comment_edits.fetch(55).include?("<summary>Source diff</summary>")
     github.comment_edits.fetch(55).include?("<ins>")
 
     Cleanup

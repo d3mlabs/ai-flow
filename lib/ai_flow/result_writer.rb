@@ -13,6 +13,9 @@ module AiFlow
 
     # Pure body transformation: insert each segment's rendered result directly
     # under the text that segment owns (bottom-up, so indices stay valid).
+    # Results are blockquote-wrapped so the machine-appended part reads as one
+    # panel (the left accent bar), visually separated from the human's command
+    # text — a stronger grouping than the bare `---` rule it replaced.
     #
     # @param original_body [String] the command comment as posted
     # @param results [Array<Array(CommentParser::Segment, String)>]
@@ -20,10 +23,15 @@ module AiFlow
     def render(original_body, results)
       lines = original_body.gsub("\r\n", "\n").split("\n", -1)
       results.sort_by { |segment, _result| -segment.end_line }.each do |segment, result|
-        block = ["", "---", "", result]
-        lines.insert(segment.end_line + 1, *block)
+        lines.insert(segment.end_line + 1, "", *blockquote(result))
       end
       lines.join("\n")
+    end
+
+    # @param result [String]
+    # @return [Array<String>] the result's lines, each quote-prefixed
+    def blockquote(result)
+      result.split("\n", -1).map { |line| line.empty? ? ">" : "> #{line}" }
     end
 
     # Edit the command comment in place with the segments' results.

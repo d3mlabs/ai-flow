@@ -4,7 +4,7 @@ require "test_helper"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::RichDiffTest < Minitest::Test
-  test "prose changes render as word-level ins/del" do
+  test "prose changes render as word-level ins/del inside sibling collapsibles" do
     Given "a one-word change"
     before = "The carve system uses LOD0 only.\n"
     after = "The carve system uses LOD0 and LOD1.\n"
@@ -12,11 +12,13 @@ class AiFlow::RichDiffTest < Minitest::Test
     When "rendering"
     result = AiFlow::RichDiff.new.render(before: before, after: after)
 
-    Then "ins/del markup and a collapsed source diff are present"
-    result.include?("<del>only.</del>")
-    result.include?("<ins>and LOD1.</ins>")
-    result.include?("<details>")
-    result.include?("````diff")
+    Then "the collapsed block holds a Word diff and a Source diff section"
+    result.collapsed.include?("<summary>Word diff</summary>")
+    result.collapsed.include?("<summary>Source diff</summary>")
+    result.collapsed.include?("<del>only.</del>")
+    result.collapsed.include?("<ins>and LOD1.</ins>")
+    result.collapsed.scan("<details>").size == 2
+    result.collapsed.include?("````diff")
 
     Cleanup
     nil
@@ -30,15 +32,15 @@ class AiFlow::RichDiffTest < Minitest::Test
     When "rendering"
     result = AiFlow::RichDiff.new.render(before: before, after: after)
 
-    Then "the new diagram appears as a live mermaid block"
-    result.include?("Updated diagram:")
-    result.include?("```mermaid\nflowchart LR\n  a --> b\n  b --> c\n```")
+    Then "the new diagram appears as a live mermaid block in the Word diff"
+    result.collapsed.include?("Updated diagram:")
+    result.collapsed.include?("```mermaid\nflowchart LR\n  a --> b\n  b --> c\n```")
 
     Cleanup
     nil
   end
 
-  test "the collapsed diff fence outlives any fence it contains" do
+  test "the source diff fence outlives any fence it contains" do
     Given "a diff containing a three-backtick mermaid fence"
     before = "Text.\n"
     after = "Text.\n\n```mermaid\nflowchart LR\n  a --> b\n```\n"
@@ -47,7 +49,22 @@ class AiFlow::RichDiffTest < Minitest::Test
     result = AiFlow::RichDiff.new.render(before: before, after: after)
 
     Then "the outer fence is four backticks (plan's formatter rule)"
-    result.include?("````diff")
+    result.collapsed.include?("````diff")
+
+    Cleanup
+    nil
+  end
+
+  test "a change confined to a code fence points the Word diff at the source" do
+    Given "an edit touching only fenced code, which the word diff excludes"
+    before = "```\nputs :a\n```\n"
+    after = "```\nputs :b\n```\n"
+
+    When "rendering"
+    result = AiFlow::RichDiff.new.render(before: before, after: after)
+
+    Then
+    result.collapsed.include?("Fenced blocks changed — see the source diff.")
 
     Cleanup
     nil
@@ -61,8 +78,9 @@ class AiFlow::RichDiffTest < Minitest::Test
       backlink_url: "https://github.com/o/r/issues/2",
     )
 
-    Expect
-    result.include?("https://github.com/o/r/issues/2#:~:text=Runtime%20carve%20operations%20stay%20on%20LOD0.")
+    Expect "the backlink comes back separately from the collapsed diffs"
+    result.backlink.include?("https://github.com/o/r/issues/2#:~:text=Runtime%20carve%20operations%20stay%20on%20LOD0.")
+    !result.collapsed.include?("#:~:text=")
 
     Cleanup
     nil

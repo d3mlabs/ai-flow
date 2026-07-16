@@ -4,12 +4,21 @@ require "erb"
 require "tmpdir"
 
 module AiFlow
-  # Renders the /edit result format (see the ai-flow plan, Component 5):
-  # word-level <ins>/<del> prose (both allowed by GitHub's sanitizer — visually
-  # the PR rich diff's green-underline/red-strikethrough), changed mermaid
-  # blocks re-rendered live, the exact unified source diff collapsed in
-  # <details>, and a text-fragment backlink to the edited section.
+  # Renders the /edit result format (see the ai-flow plan, Component 5): two
+  # sibling collapsibles — "Word diff" (word-level <ins>/<del> rendered prose,
+  # both allowed by GitHub's sanitizer, plus changed mermaid blocks re-rendered
+  # live) and "Source diff" (the exact unified diff in a colored ```diff
+  # fence) — with a text-fragment backlink returned separately so the caller
+  # can put it on the always-visible header line. Details summary rows are the
+  # structural separators: bold labels were rejected because diff content
+  # contains bold prose and the structure dissolved into it.
   class RichDiff
+    # @!attribute backlink
+    #   @return [String, nil] markdown link to the edited section
+    # @!attribute collapsed
+    #   @return [String] the two <details> blocks, closed by default
+    Result = Struct.new(:backlink, :collapsed, keyword_init: true)
+
     # @param executor [AiFlow::Executor] used for git's word/unified diffs
     def initialize(executor: Executor.new)
       @executor = executor
@@ -18,19 +27,29 @@ module AiFlow
     # @param before [String] the section (or document) before the edit
     # @param after [String] the section after the edit
     # @param backlink_url [String, nil] issue/PR URL for the text-fragment link
-    # @return [String] the rendered result block
+    # @return [Result]
     def render(before:, after:, backlink_url: nil)
-      parts = []
-      parts << ins_del_prose(before, after)
+      word_diff = [ins_del_prose(before, after)]
       mermaid = changed_mermaid_blocks(before, after)
-      parts << "Updated diagram:\n\n#{mermaid.join("\n\n")}" unless mermaid.empty?
-      parts << collapsed_source_diff(before, after)
-      link = backlink(after, backlink_url)
-      parts << link if link
-      parts.join("\n\n")
+      word_diff << "Updated diagram:\n\n#{mermaid.join("\n\n")}" unless mermaid.empty?
+
+      Result.new(
+        backlink: backlink(after, backlink_url),
+        collapsed: [
+          details("Word diff", word_diff.join("\n\n")),
+          details("Source diff", source_diff_fence(before, after)),
+        ].join("\n"),
+      )
     end
 
     private
+
+    # @param summary [String]
+    # @param content [String]
+    # @return [String]
+    def details(summary, content)
+      "<details>\n<summary>#{summary}</summary>\n\n#{content}\n\n</details>"
+    end
 
     # Word-level diff via `git diff --word-diff=plain` ({+…+} / [-…-] markers),
     # converted to <ins>/<del>. Mermaid/code fences are excluded — a word-diffed
@@ -57,7 +76,7 @@ module AiFlow
         .gsub(/\{\+(.*?)\+\}/m) { "<ins>#{Regexp.last_match(1)}</ins>" }
         .gsub(/\[-(.*?)-\]/m) { "<del>#{Regexp.last_match(1)}</del>" }
         .strip
-      converted.empty? ? "Section rewritten (see the source diff below)." : converted
+      converted.empty? ? "Fenced blocks changed — see the source diff." : converted
     end
 
     # Mermaid blocks present in the edited text that differ from before — these
@@ -73,28 +92,20 @@ module AiFlow
       text.scan(/^```mermaid\n.*?^```$/m)
     end
 
-    # The exact unified diff, collapsed. Formatter rule from the plan: the
-    # fence must be longer than any fence the diff contains, otherwise an inner
-    # fence terminates the block and the rest of the comment spills out.
+    # The exact unified diff in a colored ```diff fence. Formatter rule from
+    # the plan: the fence must be longer than any fence the diff contains,
+    # otherwise an inner fence terminates the block and the rest of the
+    # comment spills out.
     #
     # @return [String]
-    def collapsed_source_diff(before, after)
+    def source_diff_fence(before, after)
       diff_body = git_diff(before, after, ["--unified=3"])
         .split("\n")
         .drop_while { |line| !line.start_with?("@@") }
         .join("\n")
       longest_inner_fence = diff_body.scan(/`{3,}/).map(&:length).max || 0
       fence = "`" * [longest_inner_fence + 1, 4].max
-      <<~MARKDOWN.strip
-        <details>
-        <summary>Source diff</summary>
-
-        #{fence}diff
-        #{diff_body}
-        #{fence}
-
-        </details>
-      MARKDOWN
+      "#{fence}diff\n#{diff_body}\n#{fence}"
     end
 
     # Text-fragment backlink (#:~:text=) to the first distinctive prose line of
@@ -112,7 +123,7 @@ module AiFlow
       return nil unless anchor_line
 
       fragment = ERB::Util.url_encode(anchor_line.strip.split(" ").take(6).join(" "))
-      "[View the edited section](#{url}#:~:text=#{fragment})"
+      "[view the edited section](#{url}#:~:text=#{fragment})"
     end
 
     # Diff two strings via git --no-index (exit 1 = differences, not failure).
