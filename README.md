@@ -35,6 +35,9 @@ standalone `/ask`, which gets a reply.
 
 ## Layout
 
+Architecture (system diagram, job lifecycle, module map, command flows):
+see [docs/architecture.md](docs/architecture.md).
+
 - `.github/workflows/ai-commands.yml` — the reusable workflow (`workflow_call`).
 - `bin/dispatch.rb` — job entry point; parses the event, gates, routes.
 - `lib/ai_flow/` — comment parsing, anchor resolution, the `Agent#launch`
@@ -43,6 +46,8 @@ standalone `/ask`, which gets a reply.
 - `templates/caller-workflow.yml` — the ~10-line workflow each repo copies.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
   repos using `dev plan`.
+- `docs/` — [architecture.md](docs/architecture.md) (how it's put together)
+  and [attribution.md](docs/attribution.md) (who authors what, and why).
 
 ## Identity: the ai-flow GitHub App
 
