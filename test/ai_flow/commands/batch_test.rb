@@ -92,6 +92,37 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     nil
   end
 
+  test "a rewrite that cannot be integrated reports ⚠️ instead of a ✅ diff" do
+    Given "two quotes in one paragraph — the first splice invalidates the second span"
+    github = FakeGitHub.new
+    body = "# Doc\n\nAlpha sentence here. Beta sentence here.\n"
+    github.seed_issue(REPO, 7, title: "Doc", body: AiFlow::PlanBody.to_issue_body(body))
+    comment = "> Alpha sentence here.\n\n/edit improve alpha\n\n" \
+              "> Beta sentence here.\n\n/edit improve beta"
+    context = ContextBuilder.issue_comment(body: comment)
+    agent = FakeAgent.new([<<~OUTPUT])
+      <<<AI-FLOW:BODY>>>
+      #{body}
+      <<<AI-FLOW:SEGMENT 1>>>
+      Alpha improved. Beta sentence here.
+      <<<AI-FLOW:SEGMENT 2>>>
+      Alpha sentence here. Beta improved.
+    OUTPUT
+
+    When "running the batch"
+    build_batch(github:, agent:, context:).run(parse(comment))
+
+    Then "the landed edit gets its ✅ diff and the dropped one is loud"
+    github.issue(REPO, 7).body.include?("Alpha improved.")
+    !github.issue(REPO, 7).body.include?("Beta improved.")
+    edited = github.comment_edits.fetch(55)
+    edited.scan("✅ **/edit**").size == 1
+    edited.include?("⚠️ **/edit** — the rewrite was produced but could not be integrated")
+
+    Cleanup
+    nil
+  end
+
   test "a stale quote fails only its own segment" do
     Given "a batch where one quote no longer matches the body"
     github = FakeGitHub.new

@@ -60,8 +60,8 @@ module AiFlow
 
         if resolved.any?
           parsed = run_agent_pass(resolved, snapshot)
-          results += issue_segment_results(resolved, parsed, snapshot)
           new_body = integrated_body(resolved, parsed, snapshot)
+          results += issue_segment_results(resolved, parsed, snapshot, new_body || snapshot)
           patch_body(issue, snapshot, new_body) if new_body && edits?(resolved)
         end
 
@@ -164,11 +164,24 @@ module AiFlow
         PROMPT
       end
 
+      # Each /edit result is verified against the body actually being written:
+      # a rewrite that did not land (splice invalidated by a sibling edit, or
+      # an agent BODY echo swallowing an unscoped edit) must never render a ✅
+      # with a diff the PATCH does not carry.
+      #
+      # @param final_body [String] the body the PATCH will write (or the
+      #   snapshot when nothing is written)
       # @return [Array<Array(Segment, String)>]
-      def issue_segment_results(resolved, parsed, snapshot)
+      def issue_segment_results(resolved, parsed, snapshot, final_body)
         resolved.each_with_index.map do |(segment, span), index|
           text = parsed.segments[index + 1] || "⚠️ The agent returned no result for this segment."
           if segment.command == "edit" && !text.start_with?("CONFLICT:")
+            unless final_body.include?(text.strip)
+              next [segment, "⚠️ **/edit** — the rewrite was produced but could not be integrated " \
+                             "into the body (another segment may have replaced this section). " \
+                             "The body was left untouched for this segment; re-run it alone."]
+            end
+
             diff = @rich_diff.render(
               before: span || snapshot,
               after: text,
