@@ -61,10 +61,43 @@ module AiFlow
         if resolved.any?
           parsed = run_agent_pass(resolved, snapshot)
           results += issue_segment_results(resolved, parsed, snapshot)
-          patch_body(issue, snapshot, parsed.body) if parsed.body && edits?(resolved)
+          new_body = integrated_body(resolved, parsed, snapshot)
+          patch_body(issue, snapshot, new_body) if new_body && edits?(resolved)
         end
 
         deliver(segments, results)
+      end
+
+      # The new document to PATCH. Anchored edits are spliced into the snapshot
+      # deterministically from the per-segment rewrites — models reliably
+      # rewrite the section they were pointed at but often return the BODY
+      # echo unintegrated (observed in the wild: correct segments, untouched
+      # 15KB document). The agent's BODY output is used only where splicing
+      # can't work: unscoped edits, and spans invalidated by an earlier splice.
+      #
+      # @return [String, nil] nil when no change to write
+      def integrated_body(resolved, parsed, snapshot)
+        spliced = snapshot.dup
+        needs_agent_body = false
+
+        resolved.each_with_index do |(segment, span), index|
+          next unless segment.command == "edit"
+
+          text = parsed.segments[index + 1]
+          next if text.nil? || text.start_with?("CONFLICT:")
+
+          if span && spliced.include?(span)
+            spliced = spliced.sub(span) { text }
+          else
+            needs_agent_body = true
+          end
+        end
+
+        if needs_agent_body
+          agent_body = parsed.body
+          return agent_body if agent_body && agent_body.strip != snapshot.strip
+        end
+        spliced == snapshot ? nil : spliced
       end
 
       # Phase 1: every quote resolves against the snapshot, or the segment is

@@ -65,6 +65,31 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     nil
   end
 
+  test "anchored edits splice into the body even when the agent echoes the snapshot as BODY" do
+    Given "an agent whose BODY output is the unintegrated snapshot (observed in the wild)"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: AiFlow::PlanBody.to_issue_body(SNAPSHOT))
+    comment = "> The carve system uses LOD0 only.\n\n/edit cover LOD1 too"
+    context = ContextBuilder.issue_comment(body: comment)
+    agent = FakeAgent.new([<<~OUTPUT])
+      <<<AI-FLOW:BODY>>>
+      #{SNAPSHOT}
+      <<<AI-FLOW:SEGMENT 1>>>
+      The carve system uses LOD0 and LOD1.
+    OUTPUT
+
+    When "running the batch"
+    build_batch(github:, agent:, context:).run(parse(comment))
+
+    Then "the PATCH carries the spliced rewrite, not the echoed snapshot"
+    github.calls.map(&:first).count(:update_issue_body) == 1
+    github.issue(REPO, 7).body.include?("The carve system uses LOD0 and LOD1.")
+    !github.issue(REPO, 7).body.include?("LOD0 only")
+
+    Cleanup
+    nil
+  end
+
   test "a stale quote fails only its own segment" do
     Given "a batch where one quote no longer matches the body"
     github = FakeGitHub.new
