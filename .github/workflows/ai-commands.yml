@@ -84,11 +84,16 @@ jobs:
     concurrency:
       group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
     timeout-minutes: 120
+    # The secrets context is not valid in step-level `if:` (compile-time
+    # "Unrecognized named-value: 'secrets'"), so the App presence check reads
+    # the secret through a job-level env var instead.
+    env:
+      AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
     steps:
       # The App carries the attribution model (bot identity + CI on /build
       # PRs), so its absence is a loud failure, not a silent degradation.
       - name: Require the ai-flow App
-        if: ${{ secrets.AI_FLOW_APP_ID == '' && !inputs.allow_token_fallback }}
+        if: ${{ env.AI_FLOW_APP_ID == '' && !inputs.allow_token_fallback }}
         run: |
           echo "::error::ai-flow requires its GitHub App (AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets — see the README's identity section). To knowingly run degraded on github.token (writes act as github-actions[bot], /build PRs get no CI), set allow_token_fallback: true in the caller workflow."
           exit 1
@@ -96,7 +101,7 @@ jobs:
       # Mint the App installation token (1h, scoped to this repo).
       - name: Mint the ai-flow App token
         id: app-token
-        if: ${{ secrets.AI_FLOW_APP_ID != '' }}
+        if: ${{ env.AI_FLOW_APP_ID != '' }}
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
