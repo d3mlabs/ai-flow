@@ -155,6 +155,7 @@ module AiFlow
           - /edit segments: rewrite the anchored section (or the whole document when unscoped) per the instruction. Integrate ALL edit segments holistically into ONE new document. If two segments genuinely contradict each other, apply neither, and say so in both segments' results starting with "CONFLICT:".
           - /ask segments: answer the question against the snapshot (and the repository you are checked out in, read-only). Make no document changes for /ask.
           - Preserve everything you were not asked to change, byte for byte.
+          - File references in the document and in results must be GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never local filesystem paths.
 
           OUTPUT FORMAT — follow exactly, no other text before or after:
           #{edits?(resolved) ? "<<<AI-FLOW:BODY>>>\n(the full new document)\n" : ""}<<<AI-FLOW:SEGMENT 1>>>

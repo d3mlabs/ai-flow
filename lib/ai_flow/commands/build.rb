@@ -122,7 +122,7 @@ module AiFlow
 
           #{extra_instruction.empty? ? "" : "Additional instruction: #{extra_instruction}"}
 
-          Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout.
+          Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
         PROMPT
       end
 
