@@ -39,7 +39,9 @@ module AiFlow
     # @return [String] the agent's result text
     # @raise [Error] when the agent fails
     def launch(prompt:, workdir:, command:, force: false)
-      argv = [binary, "-p", "--output-format", "json"]
+      # --trust: headless runs can't answer the workspace-trust prompt, and the
+      # workdir is always a CI checkout of a repo we dispatched for.
+      argv = [binary, "-p", "--output-format", "json", "--trust"]
       model = ENV["AI_FLOW_MODEL"] || MODELS[command]
       argv += ["--model", model] if model
       argv << "--force" if force
