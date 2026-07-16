@@ -85,4 +85,19 @@ class AiFlow::RichDiffTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "a bullets-only section still gets a backlink, markers stripped" do
+    Given "an edited section made entirely of list items (observed on plans#1)"
+    result = AiFlow::RichDiff.new.render(
+      before: "- Old bullet.\n",
+      after: "- Plans must live remotely in GitHub.\n- Problem 1 (issues): no review flow.\n",
+      backlink_url: "https://github.com/o/r/issues/2",
+    )
+
+    Expect "the fragment matches the rendered bullet text, without the marker"
+    result.backlink.include?("#:~:text=Plans%20must%20live%20remotely%20in")
+
+    Cleanup
+    nil
+  end
 end

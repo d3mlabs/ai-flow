@@ -116,14 +116,27 @@ module AiFlow
     def backlink(after, url)
       return nil unless url
 
-      anchor_line = after.split("\n").find do |line|
-        stripped = line.strip
-        !stripped.empty? && !stripped.start_with?("#", "```", ">", "-", "*", "|", "<")
-      end
-      return nil unless anchor_line
+      anchor = anchor_text(after)
+      return nil unless anchor
 
-      fragment = ERB::Util.url_encode(anchor_line.strip.split(" ").take(6).join(" "))
+      fragment = ERB::Util.url_encode(anchor.split(" ").take(6).join(" "))
       "[view the edited section](#{url}#:~:text=#{fragment})"
+    end
+
+    # Prefers a bare prose line. Sections made only of bullets/headings would
+    # otherwise have no anchor, so fall back to the first such line with its
+    # leading markers stripped — text fragments match the rendered text, and
+    # a rendered bullet/heading drops those markers.
+    #
+    # @return [String, nil]
+    def anchor_text(after)
+      lines = after.split("\n").map(&:strip).reject(&:empty?)
+      prose = lines.find { |line| !line.start_with?("#", "```", ">", "-", "*", "|", "<") }
+      return prose if prose
+
+      decorated = lines.find { |line| !line.start_with?("```", "|", "<") }
+      stripped = decorated&.sub(/\A[#>*\- ]+/, "")
+      stripped unless stripped.nil? || stripped.empty?
     end
 
     # Diff two strings via git --no-index (exit 1 = differences, not failure).
