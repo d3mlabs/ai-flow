@@ -4,6 +4,8 @@
 # - the org-level AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets (the
 #   ai-flow GitHub App — required; jobs fail without them unless you opt
 #   into degraded mode with `with: { allow_token_fallback: true }`)
+# - this repo in each org secret's selected-repos list (our org secrets use
+#   `selected` visibility; see the README's adoption checklist, step 2)
 # - self-hosted runners labeled ai-light / ai-build (see d3mlabs/ai-flow README)
 name: ai-commands
 

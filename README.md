@@ -86,7 +86,12 @@ assignee, merge record).
    `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
    and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App —
    required unless the caller sets `allow_token_fallback: true`). Install
-   the App on the repo.
+   the App on the repo. Our org secrets use `selected` visibility, so add
+   the adopting repo to each secret's repository list (org settings →
+   secrets, or `gh secret set <name> --org <org> --visibility selected
+   --repos <list>`). Note `private` visibility excludes public repos
+   entirely — a public caller's job fails at the "Require the ai-flow App"
+   step until the secret is shared with it.
 3. Register self-hosted runners with the labels the workflow routes on:
    `ai-light` (chat-heavy commands) and `ai-build` (build-heavy — a box with
    a warm native dev environment; /build runs the full agent loop including
