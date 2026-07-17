@@ -33,7 +33,12 @@ module AiFlow
       return if segments.empty?
 
       acknowledge
-      route(segments)
+      return if route(segments)
+
+      # Soft failure: the per-segment ⚠️ is already on the comment; the run
+      # itself must still go red so a failed command is visible from Actions.
+      warn "ai-flow: one or more segments failed — see the command comment."
+      exit 1
     rescue CommentParser::ParseError, GitHub::Error, Agent::Error => e
       report_failure(segments, e)
     end
@@ -50,15 +55,20 @@ module AiFlow
       # A failed reaction must not block the command.
     end
 
+    # @return [Boolean] whether the command(s) fully succeeded — only batches
+    #   have per-segment soft failures; the other commands raise on failure.
     def route(segments)
       if segments.all? { |segment| CommentParser::BATCHABLE_COMMANDS.include?(segment.command) }
         batch.run(segments)
       elsif segments.first.command == "split"
         split.run(segments.first)
+        true
       elsif segments.first.flags.include?("--split")
         build_split.run(segments.first)
+        true
       else
         build.run(segments.first)
+        true
       end
     end
 

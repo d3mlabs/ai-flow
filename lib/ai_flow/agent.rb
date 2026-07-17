@@ -47,6 +47,7 @@ module AiFlow
       argv << "--force" if force
 
       out, err, ok = @executor.capture(*argv, stdin: prompt, chdir: workdir)
+      log_run(command, prompt, out, err)
       raise Error, "agent CLI not found — install the Cursor agent CLI on this runner" if err.include?("No such file")
       raise Error, "agent run failed: #{err.strip.empty? ? out.strip : err.strip}" unless ok
 
@@ -54,6 +55,23 @@ module AiFlow
     end
 
     private
+
+    # The workflow job log is ai-flow's observability surface: every agent
+    # pass logs its prompt and raw output as collapsed groups, so a bad run
+    # can be diagnosed from the run page without reproducing it. `::group::`
+    # is the Actions log-grouping command; the runner only processes workflow
+    # commands on stdout, and outside Actions the lines are harmless.
+    def log_run(command, prompt, out, err)
+      log_group("ai-flow agent prompt (/#{command})", prompt)
+      log_group("ai-flow agent raw output (/#{command})", out)
+      log_group("ai-flow agent stderr (/#{command})", err) unless err.strip.empty?
+    end
+
+    def log_group(title, content)
+      $stdout.puts "::group::#{title}"
+      $stdout.puts content
+      $stdout.puts "::endgroup::"
+    end
 
     # @return [String]
     def binary

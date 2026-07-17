@@ -51,9 +51,10 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     OUTPUT
 
     When "running the batch"
-    build_batch(github:, agent:, context:).run(parse(comment))
+    success = build_batch(github:, agent:, context:).run(parse(comment))
 
     Then "one agent pass, one body PATCH, and both results edited in place"
+    success == true
     agent.prompts.size == 1
     github.calls.map(&:first).count(:update_issue_body) == 1
     github.issue(REPO, 7).body == new_body
@@ -131,9 +132,10 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     OUTPUT
 
     When "running the batch"
-    build_batch(github:, agent:, context:).run(parse(comment))
+    success = build_batch(github:, agent:, context:).run(parse(comment))
 
-    Then "the landed edit gets its ✅ diff and the dropped one is loud"
+    Then "the landed edit gets its ✅ diff, the dropped one is loud, and the batch reports failure"
+    success == false
     github.issue(REPO, 7).body.include?("Alpha improved.")
     !github.issue(REPO, 7).body.include?("Beta improved.")
     edited = github.comment_edits.fetch(55)
@@ -160,9 +162,10 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     OUTPUT
 
     When "running the batch"
-    build_batch(github:, agent:, context:).run(parse(comment))
+    success = build_batch(github:, agent:, context:).run(parse(comment))
 
     Then "the live segment applied and the stale one reports staleness"
+    success == false
     github.issue(REPO, 7).body == new_body
     edited = github.comment_edits.fetch(55)
     edited.include?("⚠️ The quoted text was not found")

@@ -35,7 +35,9 @@ module AiFlow
       end
 
       # @param segments [Array<CommentParser::Segment>]
-      # @return [void]
+      # @return [Boolean] whether every segment succeeded (a ⚠️ result is a
+      #   soft failure: it is reported on the comment, and the caller turns it
+      #   into a red workflow run)
       def run(segments)
         if @context.pull_request?
           run_on_pull_request(segments)
@@ -314,12 +316,15 @@ module AiFlow
       # Standalone /ask gets a reply (a question-and-answer is a legitimate
       # two-comment conversation); everything else — including /ask inside a
       # batch — lands in place in the command comment.
+      #
+      # @return [Boolean] whether every segment result is a success
       def deliver(segments, results)
         if segments.size == 1 && segments.first.command == "ask"
           reply(results.first.last)
         else
           @result_writer.write(@context, results)
         end
+        results.none? { |_segment, text| text.to_s.start_with?("⚠️") }
       end
 
       def reply(text)
