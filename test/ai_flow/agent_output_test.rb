@@ -4,38 +4,22 @@ require "test_helper"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::AgentOutputTest < Minitest::Test
-  test "parses the body and numbered segment blocks" do
+  test "parses numbered segment blocks" do
     Given "a delimited agent output"
     output = <<~OUTPUT
-      <<<AI-FLOW:BODY>>>
-      # New document
-
-      Rewritten content.
       <<<AI-FLOW:SEGMENT 1>>>
-      The rewritten section text.
+      Extended the carve system to LOD1.
       <<<AI-FLOW:SEGMENT 2>>>
-      An answer to the question.
+      An answer to the question,
+      over two lines.
     OUTPUT
 
     When "parsing"
     parsed = AiFlow::AgentOutput.parse(output)
 
     Then
-    parsed.body == "# New document\n\nRewritten content."
-    parsed.segments[1] == "The rewritten section text."
-    parsed.segments[2] == "An answer to the question."
-
-    Cleanup
-    nil
-  end
-
-  test "an ask-only output has segments but no body" do
-    Given
-    parsed = AiFlow::AgentOutput.parse("<<<AI-FLOW:SEGMENT 1>>>\nJust an answer.")
-
-    Expect
-    parsed.body.nil?
-    parsed.segments == { 1 => "Just an answer." }
+    parsed.segments[1] == "Extended the carve system to LOD1."
+    parsed.segments[2] == "An answer to the question,\nover two lines."
 
     Cleanup
     nil

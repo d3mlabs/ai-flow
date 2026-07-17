@@ -4,18 +4,23 @@ module AiFlow
   module Commands
     # Runs an /ask///edit batch — the review work unit (plan, Component 4).
     #
+    # Issue mode is file-based, mirroring how Cursor handles a chat message
+    # with several cmd+L selections: the snapshot is written to a plan file,
+    # one agent pass applies every /edit instruction to that file holistically
+    # (quotes are focus anchors, not edit boundaries — an instruction's
+    # implications land wherever the document needs them), and the file is
+    # read back for one guarded PATCH. One comment is one unit of change:
+    # per-segment result lines plus a single whole-document rich diff.
+    #
     # Two-phase, because every quote was taken against the same body the
-    # reviewer read, so segments must never be invalidated by their siblings'
-    # edits:
+    # reviewer read:
     # - Phase 1 resolves all quotes against a snapshot taken at batch start;
     #   the only per-segment failure is a quote missing from that snapshot.
-    # - Phase 2 is one agent pass applying all /edit instructions against the
-    #   snapshot, producing one new body — one guarded PATCH for the whole
-    #   batch. /ask segments answer against the same snapshot.
+    # - Phase 2 is the single agent pass over the plan file.
     #
     # On a code PR, /edit means "apply the instruction to the code": the agent
-    # works on the PR branch, commits and pushes, and the in-place result is
-    # the commit link plus a summary instead of a body rich diff.
+    # works on the PR branch, commits and pushes, and the result is the commit
+    # link plus a summary instead of a body rich diff.
     class Batch
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
@@ -50,61 +55,79 @@ module AiFlow
 
       # ---- Issue (plan) mode ----
 
+      # The plan file the agent edits, at the root of the job's checkout (the
+      # agent CLI works within its working directory) — never committed in
+      # issue mode, and deleted after the pass.
+      #
+      # @return [String] filename relative to the workdir
+      def plan_filename
+        "ai-flow-plan-#{@context.number}.md"
+      end
+
       def run_on_issue(segments)
         issue = @github.issue(@context.owner_repo, @context.number)
         snapshot = PlanBody.from_issue_body(issue.body)
 
         resolved, stale = resolve_anchors(segments, snapshot)
-        results = stale.map do |segment|
+        stale_results = stale.map do |segment|
           [segment, "⚠️ The quoted text was not found in the current body — it changed between " \
                     "posting and execution. Re-quote against the current body and retry."]
         end
 
+        results = stale_results
+        appendix = nil
         if resolved.any?
-          parsed = run_agent_pass(resolved, snapshot)
-          new_body = integrated_body(resolved, parsed, snapshot)
-          results += issue_segment_results(resolved, parsed, snapshot, new_body || snapshot)
-          patch_body(issue, snapshot, new_body) if new_body && edits?(resolved)
-        end
-
-        deliver(segments, results)
-      end
-
-      # The new document to PATCH. Edits are integrated into the snapshot
-      # deterministically from the per-segment rewrites — models reliably
-      # rewrite the section they were pointed at but often return the BODY
-      # echo unintegrated (observed in the wild: correct segments, untouched
-      # document — for both anchored and unscoped edits). Anchored rewrites
-      # splice into their span; an unscoped rewrite IS the whole document per
-      # the output contract, so it replaces the working copy outright. The
-      # agent's BODY output is used only where neither works: spans
-      # invalidated by an earlier splice.
-      #
-      # @return [String, nil] nil when no change to write
-      def integrated_body(resolved, parsed, snapshot)
-        spliced = snapshot.dup
-        needs_agent_body = false
-
-        resolved.each_with_index do |(segment, span), index|
-          next unless segment.command == "edit"
-
-          text = parsed.segments[index + 1]
-          next if text.nil? || text.start_with?("CONFLICT:")
-
-          if span.nil?
-            spliced = "#{text.rstrip}\n"
-          elsif spliced.include?(span)
-            spliced = spliced.sub(span) { text }
-          else
-            needs_agent_body = true
+          parsed, new_body = run_plan_file_pass(resolved, snapshot)
+          edits_applied = !new_body.nil?
+          results += issue_segment_results(resolved, parsed, edits_applied: edits_applied)
+          if edits_applied
+            patch_body(snapshot, new_body)
+            appendix = plan_diff_appendix(snapshot, new_body)
           end
         end
 
-        if needs_agent_body
-          agent_body = parsed.body
-          return agent_body if agent_body && agent_body.strip != snapshot.strip
-        end
-        spliced == snapshot ? nil : spliced
+        deliver(segments, in_segment_order(segments, results), appendix: appendix)
+      end
+
+      # Phase 2: write the snapshot to the plan file, run one agent pass that
+      # edits it (and answers /ask segments), read the result back.
+      #
+      # @return [Array(AgentOutput::Parsed, String | nil)] the parsed segment
+      #   results and the new body (nil when the document was not changed)
+      def run_plan_file_pass(resolved, snapshot)
+        path = File.join(@workdir, plan_filename)
+        File.write(path, snapshot)
+
+        output = @agent.launch(
+          prompt: issue_batch_prompt(resolved, snapshot),
+          workdir: @workdir,
+          command: edits?(resolved) ? "edit" : "ask",
+          force: edits?(resolved),
+        )
+
+        new_body = File.exist?(path) ? PlanBody.from_issue_body(File.read(path)) : nil
+        new_body = nil if new_body == snapshot
+        [AgentOutput.parse(output), new_body]
+      ensure
+        File.delete(path) if File.exist?(path)
+      end
+
+      # The batch's single whole-document diff, appended after the per-segment
+      # result lines (one comment = one unit of change).
+      #
+      # @return [String]
+      def plan_diff_appendix(snapshot, new_body)
+        diff = @rich_diff.render(before: snapshot, after: new_body, backlink_url: @context.subject_url)
+        header = ["**Plan updated**", diff.backlink].compact.join(" — ")
+        "#{header}\n\n#{diff.collapsed}"
+      end
+
+      # Results are accumulated stale-first; the comment should read in the
+      # order the reviewer wrote the segments.
+      #
+      # @return [Array<Array(Segment, String)>]
+      def in_segment_order(segments, results)
+        results.sort_by { |segment, _text| segments.index { |candidate| candidate.equal?(segment) } }
       end
 
       # Phase 1: every quote resolves against the snapshot, or the segment is
@@ -126,88 +149,58 @@ module AiFlow
         [resolved, stale]
       end
 
-      # Phase 2: one agent pass over the snapshot with every segment.
-      #
-      # @return [AgentOutput::Parsed]
-      def run_agent_pass(resolved, snapshot)
-        output = @agent.launch(
-          prompt: issue_batch_prompt(resolved, snapshot),
-          workdir: @workdir,
-          command: edits?(resolved) ? "edit" : "ask",
-        )
-        AgentOutput.parse(output)
-      end
-
       def issue_batch_prompt(resolved, snapshot)
         segment_descriptions = resolved.each_with_index.map do |(segment, span), index|
           <<~SEGMENT
             <<<SEGMENT #{index + 1}: /#{segment.command}>>>
-            #{span ? "Anchored section:\n#{span}" : "Scope: the whole document"}
+            #{span ? "Focus (the quoted section this feedback concerns):\n#{span}" : "Focus: the whole document"}
             Instruction: #{segment.instruction.empty? ? "(none — the quote itself is the subject)" : segment.instruction}
           SEGMENT
         end.join("\n")
 
         <<~PROMPT
-          You are ai-flow, processing a batch of review commands against a plan document (a GitHub issue body). Work strictly from the snapshot below — it is the body every reviewer quote was taken against.
-
-          SNAPSHOT DOCUMENT:
-          <<<DOCUMENT>>>
-          #{snapshot}
-          <<<END DOCUMENT>>>
+          You are ai-flow, processing a batch of review commands against a plan document (a GitHub issue body). The document is the file `#{plan_filename}` in your working directory; every reviewer quote below was taken against its current content.
 
           SEGMENTS:
           #{segment_descriptions}
 
           Rules:
-          - /edit segments: rewrite the anchored section (or the whole document when unscoped) per the instruction. Integrate ALL edit segments holistically into ONE new document. If two segments genuinely contradict each other, apply neither, and say so in both segments' results starting with "CONFLICT:".
-          - /ask segments: answer the question against the snapshot (and the repository you are checked out in, read-only). Make no document changes for /ask.
-          - Preserve everything you were not asked to change, byte for byte.
+          - /edit segments: edit `#{plan_filename}` to apply the instruction. The quote marks where the feedback points, not a boundary — apply the instruction's implications wherever the document needs them, and keep the whole document internally consistent in logic and writing style.
+          - Apply ALL /edit segments holistically in one editing pass. If two segments genuinely contradict each other, apply neither, and say so in both segments' results starting with "CONFLICT:".
+          - /ask segments: answer the question against the document and the repository you are checked out in. Make no changes for /ask.
+          - Do not modify any file other than `#{plan_filename}`.
+          - Leave text the instructions do not touch as it is — no gratuitous rewording or reformatting.
           - File references in the document and in results must be GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never local filesystem paths.
 
           OUTPUT FORMAT — follow exactly, no other text before or after:
-          #{edits?(resolved) ? "<<<AI-FLOW:BODY>>>\n(the full new document)\n" : ""}<<<AI-FLOW:SEGMENT 1>>>
-          (for /edit: the rewritten section exactly as it appears in the new document; for /ask: the answer)
+          <<<AI-FLOW:SEGMENT 1>>>
+          (for /edit: a one-line summary of what you changed for this item; for /ask: the answer)
           <<<AI-FLOW:SEGMENT 2>>>
           (…one block per segment, in order)
         PROMPT
       end
 
-      # Each /edit result is verified against the body actually being written:
-      # a rewrite that did not land (splice invalidated by a sibling edit, or
-      # an agent BODY echo swallowing an unscoped edit) must never render a ✅
-      # with a diff the PATCH does not carry.
-      #
-      # @param final_body [String] the body the PATCH will write (or the
-      #   snapshot when nothing is written)
+      # @param edits_applied [Boolean] whether the plan document changed —
+      #   an /edit whose pass left the document untouched must not render ✅
       # @return [Array<Array(Segment, String)>]
-      def issue_segment_results(resolved, parsed, snapshot, final_body)
-        resolved.each_with_index.map do |(segment, span), index|
+      def issue_segment_results(resolved, parsed, edits_applied:)
+        resolved.each_with_index.map do |(segment, _span), index|
           text = parsed.segments[index + 1] || "⚠️ The agent returned no result for this segment."
-          if segment.command == "edit" && !text.start_with?("CONFLICT:")
-            unless final_body.include?(text.strip)
-              next [segment, "⚠️ **/edit** — the rewrite was produced but could not be integrated " \
-                             "into the body (another segment may have replaced this section). " \
-                             "The body was left untouched for this segment; re-run it alone."]
-            end
-
-            diff = @rich_diff.render(
-              before: span || snapshot,
-              after: text,
-              backlink_url: @context.subject_url,
-            )
-            # Header line stays visible (status + backlink); the diff views are
-            # collapsed below it, so a segment scans as three compact lines.
-            header = ["✅ **/#{segment.command}**", diff.backlink].compact.join(" — ")
-            [segment, "#{header}\n\n#{diff.collapsed}"]
+          if segment.command == "edit" && text.start_with?("CONFLICT:")
+            [segment, "⚠️ **/edit** — #{text}"]
+          elsif segment.command == "edit" && !edits_applied
+            [segment, "⚠️ **/edit** — the agent made no change to the plan document. Its report: #{text}"]
+          elsif segment.command == "edit"
+            [segment, "✅ **/edit** — #{text}"]
           else
-            [segment, "✅ **/#{segment.command}**\n\n#{text}"]
+            [segment, "✅ **/ask**\n\n#{text}"]
           end
         end
       end
 
       # One guarded PATCH for the whole batch: refetch and refuse when the body
       # moved since the snapshot (the single updated_at race window).
-      def patch_body(issue, snapshot, new_body)
+      def patch_body(snapshot, new_body)
         current = @github.issue(@context.owner_repo, @context.number)
         if PlanBody.from_issue_body(current.body) != snapshot
           raise GitHub::Error,
@@ -315,14 +308,15 @@ module AiFlow
 
       # Standalone /ask gets a reply (a question-and-answer is a legitimate
       # two-comment conversation); everything else — including /ask inside a
-      # batch — lands in place in the command comment.
+      # batch — lands in the command comment's appended result section.
       #
+      # @param appendix [String, nil] batch-level block (the plan diff)
       # @return [Boolean] whether every segment result is a success
-      def deliver(segments, results)
-        if segments.size == 1 && segments.first.command == "ask"
+      def deliver(segments, results, appendix: nil)
+        if segments.size == 1 && segments.first.command == "ask" && appendix.nil?
           reply(results.first.last)
         else
-          @result_writer.write(@context, results)
+          @result_writer.write(@context, results, appendix: appendix)
         end
         results.none? { |_segment, text| text.to_s.start_with?("⚠️") }
       end

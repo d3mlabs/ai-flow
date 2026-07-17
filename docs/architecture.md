@@ -81,7 +81,7 @@ sequenceDiagram
     Dispatcher->>Agent: prompt (workdir = checkout or worktree)
     Agent-->>Dispatcher: result text
     Dispatcher->>GitHub: guarded writes (body PATCH, push, PR, sub-issues)
-    Dispatcher->>GitHub: edit the command comment in place with results
+    Dispatcher->>GitHub: append the result section to the command comment
 ```
 
 Two deliberate layers of filtering: the workflow-level `if` is a coarse
@@ -116,7 +116,7 @@ flowchart TD
 
     batchCmd --> planBody["PlanBody<br/>(body normalization, quote anchors)"]
     batchCmd --> richDiff["RichDiff<br/>(collapsed Word diff + Source diff,<br/>text-fragment backlink)"]
-    batchCmd --> resultWriter["ResultWriter<br/>(in-place comment edits,<br/>blockquoted result panels)"]
+    batchCmd --> resultWriter["ResultWriter<br/>(appends one blockquoted result<br/>section under a --- rule)"]
     splitCmd --> resultWriter
     buildCmd --> resultWriter
     buildSplitCmd --> resultWriter
@@ -142,17 +142,19 @@ orchestrator.
 
 ## The batch two-phase flow
 
-Every quote in a batch was taken against the same rendered body the
-reviewer read, so segments must never be invalidated by their siblings'
-edits:
+Issue-mode editing is file-based, mirroring a Cursor chat message with
+several cmd+L selections: quotes are focus anchors, not edit boundaries —
+the agent owns the whole document's consistency and an instruction's
+implications land wherever the document needs them. One comment is one
+unit of change.
 
 ```mermaid
 flowchart TD
-    snapshot["Take one body snapshot"] --> resolve["Phase 1: resolve every quote<br/>against the snapshot<br/>(exact, then markdown-insensitive;<br/>widened to paragraph spans)"]
+    snapshot["Take one body snapshot,<br/>write it to the plan file"] --> resolve["Phase 1: resolve every quote<br/>against the snapshot<br/>(exact, then markdown-insensitive;<br/>widened to paragraph spans)"]
     resolve -->|stale quote| staleResult["Segment fails alone:<br/>re-quote and retry"]
-    resolve --> agentPass["Phase 2: ONE agent pass<br/>integrates all /edit segments<br/>into one new document"]
-    agentPass --> patch["ONE guarded PATCH<br/>(refuse if body moved<br/>since the snapshot)"]
-    agentPass --> results["Per-segment results append in place<br/>as blockquoted panels (/edit gets a backlink<br/>header + collapsed Word/Source diffs)"]
+    resolve --> agentPass["Phase 2: ONE agent pass<br/>edits the plan file holistically<br/>(answers /ask segments inline)"]
+    agentPass --> patch["Read the file back:<br/>ONE guarded PATCH<br/>(refuse if body moved<br/>since the snapshot)"]
+    agentPass --> results["One appended result section:<br/>per-segment ✅/⚠️ lines + ONE combined<br/>collapsed Word/Source diff"]
 ```
 
 ## The /build flow

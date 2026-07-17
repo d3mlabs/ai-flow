@@ -2,10 +2,13 @@
 
 require "test_helper"
 require "support/fakes"
+require "fileutils"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BatchTest < Minitest::Test
   REPO = "d3mlabs/demo"
+  PLAN_FILE = "ai-flow-plan-7.md"
 
   SNAPSHOT = <<~BODY
     # Carve system
@@ -17,7 +20,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     Chunks stream in 64m cells.
   BODY
 
-  def build_batch(github:, agent:, context:)
+  def build_batch(github:, agent:, context:, workdir:)
     AiFlow::Commands::Batch.new(
       context: context,
       github: github,
@@ -25,7 +28,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
       rich_diff: AiFlow::RichDiff.new,
       result_writer: AiFlow::ResultWriter.new(github: github),
       executor: AiFlow::Executor.new,
-      workdir: Dir.pwd,
+      workdir: workdir,
     )
   end
 
@@ -33,219 +36,194 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     AiFlow::CommentParser.new.parse(body)
   end
 
-  test "an /edit batch integrates once, PATCHes once, and appends per-segment results" do
-    Given "a plan issue and a two-segment edit batch"
+  test "an /edit batch runs one file pass, PATCHes once, and appends results + one diff" do
+    Given "a plan issue, a two-segment edit batch, and an agent that edits the plan file"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> The carve system uses LOD0 only.\n\n/edit cover LOD1 too\n\n" \
               "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
     new_body = SNAPSHOT.sub("LOD0 only", "LOD0 and LOD1").sub("64m cells", "32m cells")
-    agent = FakeAgent.new([<<~OUTPUT])
-      <<<AI-FLOW:BODY>>>
-      #{new_body}
+    agent = FakeAgent.new([<<~OUTPUT]) { File.write(File.join(dir, PLAN_FILE), new_body) }
       <<<AI-FLOW:SEGMENT 1>>>
-      The carve system uses LOD0 and LOD1.
+      Extended the carve system to LOD1.
       <<<AI-FLOW:SEGMENT 2>>>
-      Chunks stream in 32m cells.
+      Reduced streaming cells to 32m.
     OUTPUT
 
     When "running the batch"
-    success = build_batch(github:, agent:, context:).run(parse(comment))
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "one agent pass, one body PATCH, and both results edited in place"
+    Then "one forced agent pass, one body PATCH, ordered results, one combined diff"
     success == true
     agent.prompts.size == 1
+    agent.launches.first[:force] == true
     github.calls.map(&:first).count(:update_issue_body) == 1
     github.issue(REPO, 7).body == new_body
     github.comment_edits.fetch(55).include?("/edit cover LOD1 too")
-    github.comment_edits.fetch(55).scan("> ✅ **/edit** — [view the edited section](").size == 2
-    github.comment_edits.fetch(55).include?("<summary>Word diff</summary>")
-    github.comment_edits.fetch(55).include?("<summary>Source diff</summary>")
+    github.comment_edits.fetch(55).include?("\n\n---\n\n")
+    github.comment_edits.fetch(55).include?("> **1.** ✅ **/edit** — Extended the carve system to LOD1.")
+    github.comment_edits.fetch(55).include?("> **2.** ✅ **/edit** — Reduced streaming cells to 32m.")
+    github.comment_edits.fetch(55).scan("**Plan updated**").size == 1
+    github.comment_edits.fetch(55).scan("<summary>Word diff</summary>").size == 1
+    github.comment_edits.fetch(55).scan("<summary>Source diff</summary>").size == 1
     github.comment_edits.fetch(55).include?("<ins>")
+    !File.exist?(File.join(dir, PLAN_FILE))
 
     Cleanup
-    nil
+    FileUtils.rm_rf(dir)
   end
 
-  test "anchored edits splice into the body even when the agent echoes the snapshot as BODY" do
-    Given "an agent whose BODY output is the unintegrated snapshot (observed in the wild)"
+  test "an /edit whose pass leaves the plan file untouched reports ⚠️ and skips the PATCH" do
+    Given "an agent that produces a summary but never edits the file"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
-    comment = "> The carve system uses LOD0 only.\n\n/edit cover LOD1 too"
+    comment = "/edit rework the plan"
     context = ContextBuilder.issue_comment(body: comment)
-    agent = FakeAgent.new([<<~OUTPUT])
-      <<<AI-FLOW:BODY>>>
-      #{SNAPSHOT}
-      <<<AI-FLOW:SEGMENT 1>>>
-      The carve system uses LOD0 and LOD1.
-    OUTPUT
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nReworked the plan."])
 
     When "running the batch"
-    build_batch(github:, agent:, context:).run(parse(comment))
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "the PATCH carries the spliced rewrite, not the echoed snapshot"
-    github.calls.map(&:first).count(:update_issue_body) == 1
-    github.issue(REPO, 7).body.include?("The carve system uses LOD0 and LOD1.")
-    !github.issue(REPO, 7).body.include?("LOD0 only")
-
-    Cleanup
-    nil
-  end
-
-  test "an unscoped edit lands from its segment even when the agent omits BODY" do
-    Given "an unscoped /edit whose agent returns the new document only as SEGMENT 1 (observed in the wild)"
-    github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
-    comment = "/edit replace the plan: streaming only"
-    context = ContextBuilder.issue_comment(body: comment)
-    new_body = "# Streaming only\n\nChunks stream in 64m cells.\n"
-    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\n#{new_body}"])
-
-    When "running the batch"
-    build_batch(github:, agent:, context:).run(parse(comment))
-
-    Then "the segment rewrite becomes the body and renders a ✅ diff"
-    github.calls.map(&:first).count(:update_issue_body) == 1
-    github.issue(REPO, 7).body == new_body
-    github.comment_edits.fetch(55).include?("✅ **/edit**")
-
-    Cleanup
-    nil
-  end
-
-  test "a rewrite that cannot be integrated reports ⚠️ instead of a ✅ diff" do
-    Given "two quotes in one paragraph — the first splice invalidates the second span"
-    github = FakeGitHub.new
-    body = "# Doc\n\nAlpha sentence here. Beta sentence here.\n"
-    github.seed_issue(REPO, 7, title: "Doc", body: body)
-    comment = "> Alpha sentence here.\n\n/edit improve alpha\n\n" \
-              "> Beta sentence here.\n\n/edit improve beta"
-    context = ContextBuilder.issue_comment(body: comment)
-    agent = FakeAgent.new([<<~OUTPUT])
-      <<<AI-FLOW:BODY>>>
-      #{body}
-      <<<AI-FLOW:SEGMENT 1>>>
-      Alpha improved. Beta sentence here.
-      <<<AI-FLOW:SEGMENT 2>>>
-      Alpha sentence here. Beta improved.
-    OUTPUT
-
-    When "running the batch"
-    success = build_batch(github:, agent:, context:).run(parse(comment))
-
-    Then "the landed edit gets its ✅ diff, the dropped one is loud, and the batch reports failure"
+    Then "no PATCH, a loud ⚠️, and the batch reports failure"
     success == false
-    github.issue(REPO, 7).body.include?("Alpha improved.")
-    !github.issue(REPO, 7).body.include?("Beta improved.")
-    edited = github.comment_edits.fetch(55)
-    edited.scan("✅ **/edit**").size == 1
-    edited.include?("⚠️ **/edit** — the rewrite was produced but could not be integrated")
+    !github.calls.map(&:first).include?(:update_issue_body)
+    github.comment_edits.fetch(55).include?("⚠️ **/edit** — the agent made no change to the plan document.")
 
     Cleanup
-    nil
+    FileUtils.rm_rf(dir)
   end
 
-  test "a stale quote fails only its own segment" do
-    Given "a batch where one quote no longer matches the body"
+  test "contradicting segments report CONFLICT and apply nothing" do
+    Given "an agent that refuses both segments"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
+    comment = "> Chunks stream in 64m cells.\n\n/edit make cells 32m\n\n" \
+              "> Chunks stream in 64m cells.\n\n/edit make cells 128m"
+    context = ContextBuilder.issue_comment(body: comment)
+    agent = FakeAgent.new([<<~OUTPUT])
+      <<<AI-FLOW:SEGMENT 1>>>
+      CONFLICT: contradicts segment 2 (32m vs 128m).
+      <<<AI-FLOW:SEGMENT 2>>>
+      CONFLICT: contradicts segment 1 (32m vs 128m).
+    OUTPUT
+
+    When "running the batch"
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
+
+    Then
+    success == false
+    !github.calls.map(&:first).include?(:update_issue_body)
+    github.comment_edits.fetch(55).scan("⚠️ **/edit** — CONFLICT:").size == 2
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a stale quote fails only its own segment, in comment order" do
+    Given "a batch where the first quote no longer matches the body"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> This text was edited away meanwhile.\n\n/edit tighten\n\n" \
               "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
     new_body = SNAPSHOT.sub("64m cells", "32m cells")
-    agent = FakeAgent.new([<<~OUTPUT])
-      <<<AI-FLOW:BODY>>>
-      #{new_body}
+    agent = FakeAgent.new([<<~OUTPUT]) { File.write(File.join(dir, PLAN_FILE), new_body) }
       <<<AI-FLOW:SEGMENT 1>>>
-      Chunks stream in 32m cells.
+      Reduced streaming cells to 32m.
     OUTPUT
 
     When "running the batch"
-    success = build_batch(github:, agent:, context:).run(parse(comment))
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "the live segment applied and the stale one reports staleness"
+    Then "the live segment applied; the stale one is first in the section"
     success == false
     github.issue(REPO, 7).body == new_body
     edited = github.comment_edits.fetch(55)
     edited.include?("⚠️ The quoted text was not found")
     edited.include?("✅ **/edit**")
+    edited.index("**1.** ⚠️ The quoted text was not found") < edited.index("**2.** ✅ **/edit**")
 
     Cleanup
-    nil
+    FileUtils.rm_rf(dir)
   end
 
-  test "a standalone /ask gets a reply comment, not an in-place edit" do
+  test "a standalone /ask gets a reply comment and an unforced pass" do
     Given "a plan issue and a bare question"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     context = ContextBuilder.issue_comment(body: "/ask why LOD0 only?")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause carving happens at runtime."])
 
     When "running"
-    build_batch(github:, agent:, context:).run(parse("/ask why LOD0 only?"))
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse("/ask why LOD0 only?"))
 
     Then "the answer is a reply and the body was never PATCHed"
+    success == true
+    agent.launches.first[:force] == false
     github.comments.size == 1
     github.comments.first.include?("Because carving happens at runtime.")
     github.comment_edits.empty?
     !github.calls.map(&:first).include?(:update_issue_body)
 
     Cleanup
-    nil
+    FileUtils.rm_rf(dir)
   end
 
-  test "an /ask inside a batch lands in place with the other results" do
+  test "an /ask inside a batch lands in the appended section with the edit" do
     Given "a batch mixing /ask and /edit"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> The carve system uses LOD0 only.\n\n/ask why?\n\n" \
               "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
     new_body = SNAPSHOT.sub("64m cells", "32m cells")
-    agent = FakeAgent.new([<<~OUTPUT])
-      <<<AI-FLOW:BODY>>>
-      #{new_body}
+    agent = FakeAgent.new([<<~OUTPUT]) { File.write(File.join(dir, PLAN_FILE), new_body) }
       <<<AI-FLOW:SEGMENT 1>>>
       Because carving happens at runtime.
       <<<AI-FLOW:SEGMENT 2>>>
-      Chunks stream in 32m cells.
+      Reduced streaming cells to 32m.
     OUTPUT
 
     When "running the batch"
-    build_batch(github:, agent:, context:).run(parse(comment))
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
     Then "the answer is in the edited comment, not a reply"
+    success == true
     github.comments.empty?
+    github.comment_edits.fetch(55).include?("✅ **/ask**")
     github.comment_edits.fetch(55).include?("Because carving happens at runtime.")
+    github.issue(REPO, 7).body == new_body
 
     Cleanup
-    nil
+    FileUtils.rm_rf(dir)
   end
 
   test "the guarded PATCH refuses when the body moved mid-batch" do
-    Given "a batch whose issue is edited between snapshot and PATCH"
+    Given "a batch whose issue is edited remotely while the agent runs"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
-    agent = Class.new do
-      def initialize(github) = @github = github
-
-      def launch(prompt:, workdir:, command:, force: false)
-        # Simulate a remote edit racing the batch.
-        @github.update_issue_body("d3mlabs/demo", 7, body: "# Changed meanwhile\n")
-        "<<<AI-FLOW:BODY>>>\nirrelevant\n<<<AI-FLOW:SEGMENT 1>>>\nirrelevant"
-      end
-    end.new(github)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nReduced streaming cells to 32m."]) do
+      github.update_issue_body(REPO, 7, body: "# Changed meanwhile\n")
+      File.write(File.join(dir, PLAN_FILE), SNAPSHOT.sub("64m cells", "32m cells"))
+    end
 
     When "running the batch"
-    build_batch(github:, agent:, context:).run(parse(comment))
+    build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
     Then
     raises AiFlow::GitHub::Error
 
     Cleanup
-    nil
+    FileUtils.rm_rf(dir)
   end
 end

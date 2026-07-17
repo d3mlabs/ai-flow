@@ -120,12 +120,15 @@ class FakeGitHub
   end
 end unless defined?(FakeGitHub)
 
-# Replays canned agent outputs and records prompts.
+# Replays canned agent outputs and records prompts. The optional block runs
+# on each launch (receiving the prompt) — file-based tests use it to edit the
+# plan file exactly like the real agent would.
 class FakeAgent
   attr_reader :prompts, :launches
 
-  def initialize(outputs)
+  def initialize(outputs, &on_launch)
     @outputs = outputs
+    @on_launch = on_launch
     @prompts = []
     @launches = []
   end
@@ -133,6 +136,7 @@ class FakeAgent
   def launch(prompt:, workdir:, command:, force: false)
     @prompts << prompt
     @launches << { command: command, force: force, workdir: workdir }
+    @on_launch&.call(prompt)
     @outputs.shift or raise AiFlow::Agent::Error, "no canned output left"
   end
 end unless defined?(FakeAgent)

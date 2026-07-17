@@ -151,21 +151,6 @@ class AiFlow::CommentParserTest < Minitest::Test
     nil
   end
 
-  test "end_line marks the last line each segment owns" do
-    Given "a batch where a command owns trailing free text"
-    body = "> Q1\n\n/edit tighten\nplus this line\n\n> Q2\n\n/ask why?"
-
-    When "parsing"
-    segments = parse(body)
-
-    Then "results insert after each segment's owned region"
-    segments[0].end_line == 3
-    segments[1].end_line == 7
-
-    Cleanup
-    nil
-  end
-
   test "plain quoted comments (deferred feedback) parse to no segments" do
     Given "a quote with no command — the deferred-feedback backlog"
     segments = parse("> This section worries me.\n\nLet's discuss at standup.")

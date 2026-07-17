@@ -34,7 +34,7 @@ module AiFlow
       word_diff << "Updated diagram:\n\n#{mermaid.join("\n\n")}" unless mermaid.empty?
 
       Result.new(
-        backlink: backlink(after, backlink_url),
+        backlink: backlink(before, after, backlink_url),
         collapsed: [
           details("Word diff", word_diff.join("\n\n")),
           details("Source diff", source_diff_fence(before, after)),
@@ -54,15 +54,23 @@ module AiFlow
     # Word-level diff via `git diff --word-diff=plain` ({+…+} / [-…-] markers),
     # converted to <ins>/<del>. Mermaid/code fences are excluded — a word-diffed
     # fence body would corrupt the block (the diagram is re-rendered whole
-    # instead), so fenced regions are dropped from the prose diff.
+    # instead), so fenced regions are dropped from the prose diff. Hunk
+    # headers are stripped, but non-adjacent hunks get a standalone `⋯`
+    # paragraph between them — whole-document diffs would otherwise read
+    # distant excerpts as contiguous prose.
     #
     # @return [String]
     def ins_del_prose(before, after)
       word_diff = git_diff(before, after, ["--word-diff=plain"])
       kept = []
       in_fence = false
+      in_first_hunk = true
       word_diff.split("\n").drop_while { |line| !line.start_with?("@@") }.each do |line|
-        next if line.start_with?("@@")
+        if line.start_with?("@@")
+          kept << "" << "⋯" << "" unless in_first_hunk
+          in_first_hunk = false
+          next
+        end
 
         # Fences may arrive wrapped in word-diff markers ({+```+} etc.) when a
         # whole block was added/removed.
@@ -108,33 +116,38 @@ module AiFlow
       "#{fence}diff\n#{diff_body}\n#{fence}"
     end
 
-    # Text-fragment backlink (#:~:text=) to the first distinctive prose line of
-    # the edited section — browser-native scroll-and-highlight. Generated
-    # against the current body; the agent refreshes it when the section changes.
+    # Text-fragment backlink (#:~:text=) to the first changed line —
+    # browser-native scroll-and-highlight. Anchoring to a changed line (not
+    # the first prose line of `after`) matters for whole-document diffs,
+    # where the document's first line is usually untouched.
     #
     # @return [String, nil]
-    def backlink(after, url)
+    def backlink(before, after, url)
       return nil unless url
 
-      anchor = anchor_text(after)
+      anchor = anchor_text(before, after)
       return nil unless anchor
 
       fragment = ERB::Util.url_encode(anchor.split(" ").take(6).join(" "))
       "[view the edited section](#{url}#:~:text=#{fragment})"
     end
 
-    # Prefers a bare prose line. Sections made only of bullets/headings would
-    # otherwise have no anchor, so fall back to the first such line with its
-    # leading markers stripped — text fragments match the rendered text, and
-    # a rendered bullet/heading drops those markers.
+    # The first changed line of `after`, preferring bare prose. Sections made
+    # only of bullets/headings would otherwise have no anchor, so fall back
+    # to the first changed line with its leading markers stripped — text
+    # fragments match the rendered text, and a rendered bullet/heading drops
+    # those markers.
     #
     # @return [String, nil]
-    def anchor_text(after)
+    def anchor_text(before, after)
       lines = after.split("\n").map(&:strip).reject(&:empty?)
-      prose = lines.find { |line| !line.start_with?("#", "```", ">", "-", "*", "|", "<") }
+      changed = lines.reject { |line| before.include?(line) }
+      changed = lines if changed.empty?
+
+      prose = changed.find { |line| !line.start_with?("#", "```", ">", "-", "*", "|", "<") }
       return prose if prose
 
-      decorated = lines.find { |line| !line.start_with?("```", "|", "<") }
+      decorated = changed.find { |line| !line.start_with?("```", "|", "<") }
       stripped = decorated&.sub(/\A[#>*\- ]+/, "")
       stripped unless stripped.nil? || stripped.empty?
     end
