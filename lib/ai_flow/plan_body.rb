@@ -59,12 +59,23 @@ module AiFlow
     end
 
     # Markdown-insensitive comparison form: rendered text lacks emphasis
-    # markers, backticks, heading hashes, and collapses whitespace.
+    # markers, backticks, heading hashes, and collapses whitespace. Two
+    # quote-reply artifacts observed in the wild are also neutralized:
+    # GitHub backslash-escapes markdown when quoting rendered text (a
+    # numbered list item arrives as "4\."), and a partial selection inside a
+    # list item arrives with the list prefix glued on ("1. DEV_CD_ROOT"), so
+    # leading enumerators/bullets are stripped per line.
     #
     # @param text [String]
     # @return [String]
     def normalize(text)
-      text.downcase.gsub(/[`*_#>|]/, "").gsub(/\[([^\]]*)\]\([^)]*\)/, '\1').gsub(/\s+/, " ").strip
+      text.downcase
+          .gsub(/\\(?=[[:punct:]])/, "")
+          .gsub(/^\s*(?:\d+[.)]|[-+])\s+/, "")
+          .gsub(/[`*_#>|]/, "")
+          .gsub(/\[([^\]]*)\]\([^)]*\)/, '\1')
+          .gsub(/\s+/, " ")
+          .strip
     end
   end
 end

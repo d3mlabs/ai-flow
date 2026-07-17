@@ -68,4 +68,24 @@ class AiFlow::PlanBodyTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "a quote-reply of a numbered list item resolves despite escapes and prefixes" do
+    Given "a body with a numbered list"
+    body = <<~DOC
+      ## Implementation sketch
+
+      1. **Repo index** — walk `DEV_CD_ROOT` for `.git` directories.
+
+      4. **`dev init <shell>`** (or extend existing profile install) — emit shell function.
+    DOC
+
+    Expect "the escaped enumerator (4\\.) and a glued-on list prefix both match"
+    AiFlow::PlanBody.locate_quote(body, "4\\. dev init <shell>") ==
+      "4. **`dev init <shell>`** (or extend existing profile install) — emit shell function."
+    AiFlow::PlanBody.locate_quote(body, "1. DEV_CD_ROOT") ==
+      "1. **Repo index** — walk `DEV_CD_ROOT` for `.git` directories."
+
+    Cleanup
+    nil
+  end
 end
