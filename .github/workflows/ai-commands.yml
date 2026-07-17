@@ -62,6 +62,50 @@ on:
         required: false
 
 jobs:
+  # Immediate 👀: the dispatch job serializes per issue/PR and runs on
+  # self-hosted runners, so its own acknowledgment can lag (queued behind a
+  # long /build, or the runner box offline). This job runs on GitHub-hosted
+  # runners outside the concurrency group and reacts within seconds — free
+  # on public repos, a few billed seconds on private ones. It reacts with
+  # the App token so the identity matches the dispatcher's own ack and the
+  # reactions API dedupes (two identities would render 👀 2). Coarse-filter
+  # caveat: a prose mention that passes the contains() check gets eyes even
+  # though the dispatcher will exit quietly — acceptable noise.
+  ack:
+    if: >-
+      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
+       contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
+       contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
+       contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
+    steps:
+      - name: Mint the ai-flow App token
+        id: app-token
+        if: ${{ env.AI_FLOW_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AI_FLOW_APP_ID }}
+          private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      # A failed reaction must never paint a successful command run red —
+      # warn and stay green (the dispatcher acks again as a backstop).
+      - name: React 👀
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
+            path="repos/${{ github.repository }}/pulls/comments/${{ github.event.comment.id }}/reactions"
+          else
+            path="repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions"
+          fi
+          gh api -X POST "$path" -f content=eyes || echo "::warning::ack reaction failed"
+
   # The `if` runs in the workflow engine, so non-command comments never start
   # a job (no billed no-op runs — free anyway on self-hosted, but noisy). It
   # is a coarse contains() filter; the exact line-start command grammar and

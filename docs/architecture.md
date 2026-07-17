@@ -72,12 +72,13 @@ sequenceDiagram
 
     Human->>GitHub: comment "/edit tighten this section"
     GitHub->>Workflow: issue_comment event (job-level if filter passed)
+    Note over Workflow: ack job (GitHub-hosted, outside the<br/>concurrency group) reacts 👀 within<br/>seconds, before dispatch even starts
     Note over Workflow: runs-on picks the pool:<br/>/build to ai-build, rest to ai-light<br/>(or dev-login when per_actor_runners)
     Workflow->>GitHub: mint App installation token (required)
     Workflow->>Workflow: checkout target repo + ai-flow
     Workflow->>Dispatcher: ruby dispatch.rb (GH_TOKEN = App token)
     Dispatcher->>Dispatcher: re-parse grammar + permission gate
-    Dispatcher->>GitHub: react with eyes (ack, not a comment)
+    Dispatcher->>GitHub: react with eyes (deduped backstop of the ack job)
     Dispatcher->>Agent: prompt (workdir = checkout or worktree)
     Agent-->>Dispatcher: result text
     Dispatcher->>GitHub: guarded writes (body PATCH, push, PR, sub-issues)
