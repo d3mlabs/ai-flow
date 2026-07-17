@@ -26,7 +26,7 @@ class AiFlow::Commands::SplitTest < Minitest::Test
   test "reconciliation creates missing, closes stale, keeps matching" do
     Given "an existing sub-issue set and a proposal that reshapes it"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent plan\n\n<!-- ai-flow:plan -->\n")
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent plan\n")
     kept = sub_issue(1, "Server API")
     stale = sub_issue(2, "Old approach")
     github.seed_issue(REPO, 1, title: "Server API", body: "")

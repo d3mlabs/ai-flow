@@ -34,9 +34,9 @@ class AiFlow::Commands::BatchTest < Minitest::Test
   end
 
   test "an /edit batch integrates once, PATCHes once, and appends per-segment results" do
-    Given "a managed plan issue and a two-segment edit batch"
+    Given "a plan issue and a two-segment edit batch"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Carve system", body: AiFlow::PlanBody.to_issue_body(SNAPSHOT))
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> The carve system uses LOD0 only.\n\n/edit cover LOD1 too\n\n" \
               "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
@@ -56,7 +56,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     Then "one agent pass, one body PATCH, and both results edited in place"
     agent.prompts.size == 1
     github.calls.map(&:first).count(:update_issue_body) == 1
-    github.issue(REPO, 7).body == AiFlow::PlanBody.to_issue_body(new_body)
+    github.issue(REPO, 7).body == new_body
     github.comment_edits.fetch(55).include?("/edit cover LOD1 too")
     github.comment_edits.fetch(55).scan("> ✅ **/edit** — [view the edited section](").size == 2
     github.comment_edits.fetch(55).include?("<summary>Word diff</summary>")
@@ -70,7 +70,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
   test "anchored edits splice into the body even when the agent echoes the snapshot as BODY" do
     Given "an agent whose BODY output is the unintegrated snapshot (observed in the wild)"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Carve system", body: AiFlow::PlanBody.to_issue_body(SNAPSHOT))
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> The carve system uses LOD0 only.\n\n/edit cover LOD1 too"
     context = ContextBuilder.issue_comment(body: comment)
     agent = FakeAgent.new([<<~OUTPUT])
@@ -96,7 +96,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     Given "two quotes in one paragraph — the first splice invalidates the second span"
     github = FakeGitHub.new
     body = "# Doc\n\nAlpha sentence here. Beta sentence here.\n"
-    github.seed_issue(REPO, 7, title: "Doc", body: AiFlow::PlanBody.to_issue_body(body))
+    github.seed_issue(REPO, 7, title: "Doc", body: body)
     comment = "> Alpha sentence here.\n\n/edit improve alpha\n\n" \
               "> Beta sentence here.\n\n/edit improve beta"
     context = ContextBuilder.issue_comment(body: comment)
@@ -126,7 +126,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
   test "a stale quote fails only its own segment" do
     Given "a batch where one quote no longer matches the body"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Carve system", body: AiFlow::PlanBody.to_issue_body(SNAPSHOT))
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> This text was edited away meanwhile.\n\n/edit tighten\n\n" \
               "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
@@ -142,7 +142,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     build_batch(github:, agent:, context:).run(parse(comment))
 
     Then "the live segment applied and the stale one reports staleness"
-    github.issue(REPO, 7).body == AiFlow::PlanBody.to_issue_body(new_body)
+    github.issue(REPO, 7).body == new_body
     edited = github.comment_edits.fetch(55)
     edited.include?("⚠️ The quoted text was not found")
     edited.include?("✅ **/edit**")
@@ -154,7 +154,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
   test "a standalone /ask gets a reply comment, not an in-place edit" do
     Given "a plan issue and a bare question"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Carve system", body: AiFlow::PlanBody.to_issue_body(SNAPSHOT))
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     context = ContextBuilder.issue_comment(body: "/ask why LOD0 only?")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause carving happens at runtime."])
 
@@ -174,7 +174,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
   test "an /ask inside a batch lands in place with the other results" do
     Given "a batch mixing /ask and /edit"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Carve system", body: AiFlow::PlanBody.to_issue_body(SNAPSHOT))
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> The carve system uses LOD0 only.\n\n/ask why?\n\n" \
               "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
@@ -202,7 +202,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
   test "the guarded PATCH refuses when the body moved mid-batch" do
     Given "a batch whose issue is edited between snapshot and PATCH"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Carve system", body: AiFlow::PlanBody.to_issue_body(SNAPSHOT))
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
     comment = "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
     agent = Class.new do
@@ -210,7 +210,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
 
       def launch(prompt:, workdir:, command:, force: false)
         # Simulate a remote edit racing the batch.
-        @github.update_issue_body("d3mlabs/demo", 7, body: "# Changed meanwhile\n\n<!-- ai-flow:plan -->\n")
+        @github.update_issue_body("d3mlabs/demo", 7, body: "# Changed meanwhile\n")
         "<<<AI-FLOW:BODY>>>\nirrelevant\n<<<AI-FLOW:SEGMENT 1>>>\nirrelevant"
       end
     end.new(github)

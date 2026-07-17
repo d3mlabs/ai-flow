@@ -46,7 +46,7 @@ class AiFlow::DispatcherTest < Minitest::Test
   test "a command comment is acknowledged with the eyes reaction and routed" do
     Given "a standalone /ask on a plan issue"
     github = FakeGitHub.new
-    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n\n<!-- ai-flow:plan -->\n")
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
     context = ContextBuilder.issue_comment(body: "/ask why?")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause."])
 

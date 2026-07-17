@@ -5,27 +5,16 @@ module AiFlow
   # quote-anchor resolution — the remote cmd+L proxy: a reviewer's quote is
   # located by string match against the body snapshot the batch runs on.
   module PlanBody
-    ISSUE_MARKER = "<!-- ai-flow:plan -->"
-
     module_function
 
+    # Issue bodies use CRLF line endings when edited via the GitHub web UI, so
+    # normalize to LF — quote anchoring and the PATCH race check both compare
+    # against LF text.
+    #
     # @param issue_body [String, nil]
-    # @return [Boolean] whether this issue is an ai-flow managed plan
-    def managed?(issue_body)
-      (issue_body || "").include?(ISSUE_MARKER)
-    end
-
-    # @param plan_body [String]
-    # @return [String]
-    def to_issue_body(plan_body)
-      "#{plan_body.rstrip}\n\n#{ISSUE_MARKER}\n"
-    end
-
-    # @param issue_body [String, nil]
-    # @return [String] LF-normalized body without the marker
+    # @return [String] LF-normalized body with a single trailing newline
     def from_issue_body(issue_body)
-      body = (issue_body || "").gsub("\r\n", "\n")
-      "#{body.sub(/\n*#{Regexp.escape(ISSUE_MARKER)}\s*\z/, "").rstrip}\n"
+      "#{(issue_body || "").gsub("\r\n", "\n").rstrip}\n"
     end
 
     # Resolve a quoted anchor against a body snapshot. Quotes come from the

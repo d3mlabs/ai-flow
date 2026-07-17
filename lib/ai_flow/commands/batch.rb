@@ -207,10 +207,7 @@ module AiFlow
                 "the issue body changed while the batch was running — no edits were applied; retry"
         end
 
-        @github.update_issue_body(
-          @context.owner_repo, @context.number,
-          body: PlanBody.managed?(issue.body) ? PlanBody.to_issue_body(new_body) : new_body,
-        )
+        @github.update_issue_body(@context.owner_repo, @context.number, body: new_body)
       end
 
       # ---- Code-PR mode ----

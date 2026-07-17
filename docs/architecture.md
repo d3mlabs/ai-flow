@@ -114,7 +114,7 @@ flowchart TD
     disp --> buildCmd["Commands::Build"]
     disp --> buildSplitCmd["Commands::BuildSplit<br/>(orchestrates Build per wave)"]
 
-    batchCmd --> planBody["PlanBody<br/>(issue-body marker, quote anchors)"]
+    batchCmd --> planBody["PlanBody<br/>(body normalization, quote anchors)"]
     batchCmd --> richDiff["RichDiff<br/>(collapsed Word diff + Source diff,<br/>text-fragment backlink)"]
     batchCmd --> resultWriter["ResultWriter<br/>(in-place comment edits,<br/>blockquoted result panels)"]
     splitCmd --> resultWriter

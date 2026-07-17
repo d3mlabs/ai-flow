@@ -18,11 +18,11 @@ class AiFlow::PlanBodyTest < Minitest::Test
     Carves persist as deltas against the base terrain.
   BODY
 
-  test "marker round-trip" do
+  test "from_issue_body normalizes CRLF and trailing whitespace" do
     Expect
-    AiFlow::PlanBody.managed?(AiFlow::PlanBody.to_issue_body("# T\n")) == true
-    AiFlow::PlanBody.from_issue_body(AiFlow::PlanBody.to_issue_body("# T\n")) == "# T\n"
-    AiFlow::PlanBody.managed?("# plain issue") == false
+    AiFlow::PlanBody.from_issue_body("# T\r\n\r\ncontent\r\n") == "# T\n\ncontent\n"
+    AiFlow::PlanBody.from_issue_body("# T\n\ncontent\n\n\n") == "# T\n\ncontent\n"
+    AiFlow::PlanBody.from_issue_body(nil) == "\n"
 
     Cleanup
     nil
