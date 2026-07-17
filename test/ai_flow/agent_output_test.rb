@@ -35,4 +35,18 @@ class AiFlow::AgentOutputTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "a delimiter run into mid-line narration still parses" do
+    Given "the agent CLI's result field concatenating narration into the delimiter (observed in the wild)"
+    output = "I'll apply those edits in smaller chunks.<<<AI-FLOW:SEGMENT 1>>>\nMade the root configurable."
+
+    When "parsing"
+    parsed = AiFlow::AgentOutput.parse(output)
+
+    Then
+    parsed.segments == { 1 => "Made the root configurable." }
+
+    Cleanup
+    nil
+  end
 end

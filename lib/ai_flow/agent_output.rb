@@ -8,7 +8,7 @@ module AiFlow
   #   <<<AI-FLOW:SEGMENT 1>>>
   #   (segment 1's answer / edit summary)
   module AgentOutput
-    SEGMENT_DELIMITER = /^<<<AI-FLOW:SEGMENT (\d+)>>>$/
+    SEGMENT_DELIMITER = /<<<AI-FLOW:SEGMENT (\d+)>>>/
 
     Parsed = Struct.new(:segments, keyword_init: true)
 
@@ -26,8 +26,8 @@ module AiFlow
         buffer = []
       end
 
-      output.to_s.split("\n").each do |line|
-        if (match = SEGMENT_DELIMITER.match(line.strip))
+      normalize_delimiters(output).split("\n").each do |line|
+        if (match = SEGMENT_DELIMITER.match(line.strip)) && match[0] == line.strip
           flush.call
           current = Integer(match[1])
         else
@@ -37,6 +37,16 @@ module AiFlow
       flush.call
 
       Parsed.new(segments: segments)
+    end
+
+    # The agent CLI's result field concatenates progress narration, observed
+    # running straight into a delimiter mid-line ("…done.<<<AI-FLOW:SEGMENT
+    # 1>>>"). Force every delimiter onto its own line before line-wise parsing.
+    #
+    # @param output [String]
+    # @return [String]
+    def normalize_delimiters(output)
+      output.to_s.gsub(SEGMENT_DELIMITER) { "\n#{Regexp.last_match(0)}\n" }
     end
   end
 end

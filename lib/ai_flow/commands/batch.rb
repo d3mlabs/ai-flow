@@ -185,13 +185,18 @@ module AiFlow
       # @return [Array<Array(Segment, String)>]
       def issue_segment_results(resolved, parsed, edits_applied:)
         resolved.each_with_index.map do |(segment, _span), index|
-          text = parsed.segments[index + 1] || "⚠️ The agent returned no result for this segment."
-          if segment.command == "edit" && text.start_with?("CONFLICT:")
+          text = parsed.segments[index + 1]
+          if segment.command == "edit" && text&.start_with?("CONFLICT:")
             [segment, "⚠️ **/edit** — #{text}"]
           elsif segment.command == "edit" && !edits_applied
-            [segment, "⚠️ **/edit** — the agent made no change to the plan document. Its report: #{text}"]
+            [segment, "⚠️ **/edit** — the agent made no change to the plan document." \
+                      "#{text ? " Its report: #{text}" : ""}"]
           elsif segment.command == "edit"
-            [segment, "✅ **/edit** — #{text}"]
+            # A missing summary is cosmetic when the edit itself landed — the
+            # appended diff carries the change; don't fail the batch over it.
+            [segment, "✅ **/edit** — #{text || "(the agent returned no summary — see the diff below)"}"]
+          elsif text.nil?
+            [segment, "⚠️ **/ask** — the agent returned no answer for this segment."]
           else
             [segment, "✅ **/ask**\n\n#{text}"]
           end
