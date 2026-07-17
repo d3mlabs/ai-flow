@@ -124,30 +124,33 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a stale quote fails only its own segment, in comment order" do
-    Given "a batch where the first quote no longer matches the body"
+  test "a quote not found in the body carries into the prompt as discussion context" do
+    Given "a batch quoting an earlier answer panel (text that was never in the body)"
     dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
-    comment = "> This text was edited away meanwhile.\n\n/edit tighten\n\n" \
+    comment = "> Not today — there is no such command in the repo.\n\n/edit record it as out of scope\n\n" \
               "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
     context = ContextBuilder.issue_comment(body: comment)
-    new_body = SNAPSHOT.sub("64m cells", "32m cells")
+    new_body = SNAPSHOT.sub("64m cells", "32m cells\n\nOut of scope: that command.")
     agent = FakeAgent.new([<<~OUTPUT]) { File.write(File.join(dir, PLAN_FILE), new_body) }
       <<<AI-FLOW:SEGMENT 1>>>
+      Recorded the command as out of scope.
+      <<<AI-FLOW:SEGMENT 2>>>
       Reduced streaming cells to 32m.
     OUTPUT
 
     When "running the batch"
     success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "the live segment applied; each result sits under its own segment"
-    success == false
+    Then "both segments run in one pass; the unmatched quote is flagged as context"
+    success == true
     github.issue(REPO, 7).body == new_body
+    agent.prompts.first.include?("this text is NOT in the document")
+    agent.prompts.first.include?("Not today — there is no such command in the repo.")
     edited = github.comment_edits.fetch(55)
-    edited.index("> ⚠️ The quoted text was not found") > edited.index("/edit tighten")
-    edited.index("> ⚠️ The quoted text was not found") < edited.index("> Chunks stream in 64m cells.")
-    edited.index("> ✅ **/edit**") > edited.index("/edit make cells 32m")
+    edited.index("> ✅ **/edit** — Recorded the command as out of scope.") > edited.index("/edit record it as out of scope")
+    edited.index("> ✅ **/edit** — Reduced streaming cells to 32m.") > edited.index("/edit make cells 32m")
 
     Cleanup
     FileUtils.rm_rf(dir)

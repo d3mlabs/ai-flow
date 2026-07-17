@@ -151,7 +151,8 @@ unit of change.
 ```mermaid
 flowchart TD
     snapshot["Take one body snapshot,<br/>write it to the plan file"] --> resolve["Phase 1: resolve every quote<br/>against the snapshot<br/>(exact, then markdown-insensitive;<br/>widened to paragraph spans)"]
-    resolve -->|stale quote| staleResult["Segment fails alone:<br/>re-quote and retry"]
+    resolve -->|"quote not in body (an answer<br/>panel, discussion, or drift)"| contextQuote["Quote carries into the prompt<br/>as verbatim discussion context"]
+    contextQuote --> agentPass
     resolve --> agentPass["Phase 2: ONE agent pass<br/>edits the plan file holistically<br/>(answers /ask segments inline)"]
     agentPass --> patch["Read the file back:<br/>ONE guarded PATCH<br/>(refuse if body moved<br/>since the snapshot)"]
     agentPass --> results["Per-segment ✅/⚠️ results interleave<br/>under their quotes; ONE combined<br/>collapsed Word/Source diff<br/>appends at the bottom"]

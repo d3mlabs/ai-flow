@@ -25,7 +25,8 @@ module AiFlow
     # @param body [String] the snapshot the reviewer read
     # @param quote [String] the quoted anchor text
     # @return [String, nil] the resolved source region, or nil when the quote
-    #   is genuinely stale (body changed between posting and execution)
+    #   is not in the body (quoted from an answer panel or discussion comment,
+    #   or body text that changed between posting and execution)
     def locate_quote(body, quote)
       return nil if quote.nil? || quote.strip.empty?
 

@@ -68,22 +68,15 @@ module AiFlow
         issue = @github.issue(@context.owner_repo, @context.number)
         snapshot = PlanBody.from_issue_body(issue.body)
 
-        resolved, stale = resolve_anchors(segments, snapshot)
-        stale_results = stale.map do |segment|
-          [segment, "⚠️ The quoted text was not found in the current body — it changed between " \
-                    "posting and execution. Re-quote against the current body and retry."]
-        end
+        resolved = resolve_anchors(segments, snapshot)
+        parsed, new_body = run_plan_file_pass(resolved, snapshot)
+        edits_applied = !new_body.nil?
+        results = issue_segment_results(resolved, parsed, edits_applied: edits_applied)
 
-        results = stale_results
         appendix = nil
-        if resolved.any?
-          parsed, new_body = run_plan_file_pass(resolved, snapshot)
-          edits_applied = !new_body.nil?
-          results += issue_segment_results(resolved, parsed, edits_applied: edits_applied)
-          if edits_applied
-            patch_body(snapshot, new_body)
-            appendix = plan_diff_appendix(snapshot, new_body)
-          end
+        if edits_applied
+          patch_body(snapshot, new_body)
+          appendix = plan_diff_appendix(snapshot, new_body)
         end
 
         deliver(segments, results, appendix: appendix)
@@ -123,30 +116,25 @@ module AiFlow
         "#{header}\n\n#{diff.collapsed}"
       end
 
-      # Phase 1: every quote resolves against the snapshot, or the segment is
-      # reported stale. Unscoped segments resolve to the whole document.
+      # Phase 1: each quote resolves to a document span when it matches the
+      # snapshot. A quote that doesn't match is not an error — reviewers also
+      # quote agent answers and discussion comments (text that was never in
+      # the body), so it carries into the prompt as verbatim context instead
+      # of a span. Unscoped segments focus the whole document.
       #
-      # @return [Array(Array<Array(Segment, String | nil)>, Array<Segment>)]
+      # @return [Array<Array(Segment, String | nil)>] segment + resolved span
       def resolve_anchors(segments, snapshot)
-        resolved = []
-        stale = []
-        segments.each do |segment|
-          if segment.quote.nil?
-            resolved << [segment, nil]
-          elsif (span = PlanBody.locate_quote(snapshot, segment.quote))
-            resolved << [segment, span]
-          else
-            stale << segment
-          end
+        segments.map do |segment|
+          span = segment.quote && PlanBody.locate_quote(snapshot, segment.quote)
+          [segment, span]
         end
-        [resolved, stale]
       end
 
       def issue_batch_prompt(resolved, snapshot)
         segment_descriptions = resolved.each_with_index.map do |(segment, span), index|
           <<~SEGMENT
             <<<SEGMENT #{index + 1}: /#{segment.command}>>>
-            #{span ? "Focus (the quoted section this feedback concerns):\n#{span}" : "Focus: the whole document"}
+            #{segment_focus(segment, span)}
             Instruction: #{segment.instruction.empty? ? "(none — the quote itself is the subject)" : segment.instruction}
           SEGMENT
         end.join("\n")
@@ -171,6 +159,22 @@ module AiFlow
           <<<AI-FLOW:SEGMENT 2>>>
           (…one block per segment, in order)
         PROMPT
+      end
+
+      # A quote that resolved to a document span is the feedback's location;
+      # one that didn't (an answer panel, a discussion comment, or body text
+      # that has since changed) is still real context the reviewer pointed
+      # at — hand it to the agent verbatim, flagged as not-in-document.
+      #
+      # @return [String]
+      def segment_focus(segment, span)
+        if span
+          "Focus (the quoted section this feedback concerns):\n#{span}"
+        elsif segment.quote
+          "Context (quoted by the reviewer from the discussion — this text is NOT in the document):\n#{segment.quote}"
+        else
+          "Focus: the whole document"
+        end
       end
 
       # @param edits_applied [Boolean] whether the plan document changed —
