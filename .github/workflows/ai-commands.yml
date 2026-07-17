@@ -130,12 +130,15 @@ jobs:
           path: .ai-flow
           token: ${{ steps.app-token.outputs.token || github.token }}
 
-      # Consumers track ai-flow@main (no pin), so the run itself must record
-      # exactly what code ran — the job log is ai-flow's observability
-      # surface. Version probes must never fail the job.
+      # The run must record exactly what code ran — the job log is ai-flow's
+      # observability surface. Two ai-flow versions are in play and can
+      # drift: this workflow YAML resolves from the caller's pin (the
+      # floating v1 tag), while the dispatcher checkout above tracks main.
+      # Version probes must never fail the job.
       - name: Log versions
         run: |
-          echo "ai-flow: $(git -C .ai-flow log -1 --format='%H (%s)')"
+          echo "ai-flow dispatcher: $(git -C .ai-flow log -1 --format='%H (%s)')"
+          echo "ai-flow workflow yaml: ${{ github.job_workflow_sha }}"
           echo "target repo: ${{ github.repository }}@$(git log -1 --format='%H')"
           echo "ruby: $(ruby --version)"
           echo "agent CLI: $("${AI_FLOW_AGENT_BIN:-agent}" --version 2>/dev/null || echo 'not found')"
