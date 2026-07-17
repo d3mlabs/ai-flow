@@ -68,12 +68,15 @@ module AiFlow
         deliver(segments, results)
       end
 
-      # The new document to PATCH. Anchored edits are spliced into the snapshot
+      # The new document to PATCH. Edits are integrated into the snapshot
       # deterministically from the per-segment rewrites — models reliably
       # rewrite the section they were pointed at but often return the BODY
       # echo unintegrated (observed in the wild: correct segments, untouched
-      # 15KB document). The agent's BODY output is used only where splicing
-      # can't work: unscoped edits, and spans invalidated by an earlier splice.
+      # document — for both anchored and unscoped edits). Anchored rewrites
+      # splice into their span; an unscoped rewrite IS the whole document per
+      # the output contract, so it replaces the working copy outright. The
+      # agent's BODY output is used only where neither works: spans
+      # invalidated by an earlier splice.
       #
       # @return [String, nil] nil when no change to write
       def integrated_body(resolved, parsed, snapshot)
@@ -86,7 +89,9 @@ module AiFlow
           text = parsed.segments[index + 1]
           next if text.nil? || text.start_with?("CONFLICT:")
 
-          if span && spliced.include?(span)
+          if span.nil?
+            spliced = "#{text.rstrip}\n"
+          elsif spliced.include?(span)
             spliced = spliced.sub(span) { text }
           else
             needs_agent_body = true

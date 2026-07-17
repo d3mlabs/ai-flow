@@ -92,6 +92,27 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     nil
   end
 
+  test "an unscoped edit lands from its segment even when the agent omits BODY" do
+    Given "an unscoped /edit whose agent returns the new document only as SEGMENT 1 (observed in the wild)"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
+    comment = "/edit replace the plan: streaming only"
+    context = ContextBuilder.issue_comment(body: comment)
+    new_body = "# Streaming only\n\nChunks stream in 64m cells.\n"
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\n#{new_body}"])
+
+    When "running the batch"
+    build_batch(github:, agent:, context:).run(parse(comment))
+
+    Then "the segment rewrite becomes the body and renders a ✅ diff"
+    github.calls.map(&:first).count(:update_issue_body) == 1
+    github.issue(REPO, 7).body == new_body
+    github.comment_edits.fetch(55).include?("✅ **/edit**")
+
+    Cleanup
+    nil
+  end
+
   test "a rewrite that cannot be integrated reports ⚠️ instead of a ✅ diff" do
     Given "two quotes in one paragraph — the first splice invalidates the second span"
     github = FakeGitHub.new
