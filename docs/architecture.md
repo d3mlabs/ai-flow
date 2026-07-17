@@ -151,7 +151,9 @@ unit of change.
 ```mermaid
 flowchart TD
     snapshot["Take one body snapshot,<br/>write it to the plan file"] --> resolve["Phase 1: resolve every quote<br/>against the snapshot<br/>(exact, then markdown-insensitive;<br/>widened to paragraph spans)"]
-    resolve -->|"quote not in body (an answer<br/>panel, discussion, or drift)"| contextQuote["Quote carries into the prompt<br/>as verbatim discussion context"]
+    resolve -->|"quote not in body (an answer<br/>panel, discussion, or drift)"| threadSearch["Search the thread: quote +<br/>its source comment (author, link,<br/>diff blocks stripped) as context"]
+    threadSearch -->|"found nowhere"| contextQuote["Last ditch: the quote verbatim<br/>as discussion context"]
+    threadSearch --> agentPass
     contextQuote --> agentPass
     resolve --> agentPass["Phase 2: ONE agent pass<br/>edits the plan file holistically<br/>(answers /ask segments inline)"]
     agentPass --> patch["Read the file back:<br/>ONE guarded PATCH<br/>(refuse if body moved<br/>since the snapshot)"]

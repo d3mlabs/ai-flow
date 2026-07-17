@@ -116,25 +116,64 @@ module AiFlow
         "#{header}\n\n#{diff.collapsed}"
       end
 
-      # Phase 1: each quote resolves to a document span when it matches the
-      # snapshot. A quote that doesn't match is not an error — reviewers also
-      # quote agent answers and discussion comments (text that was never in
-      # the body), so it carries into the prompt as verbatim context instead
-      # of a span. Unscoped segments focus the whole document.
+      # Phase 1, the resolution ladder: each quote resolves to a document
+      # span when it matches the snapshot (exact, then markdown-insensitive).
+      # A quote that doesn't match is not an error — reviewers also quote
+      # agent answers and discussion comments (text that was never in the
+      # body) — so the thread is searched for its source comment as context;
+      # the last rung is the quote verbatim. Unscoped segments focus the
+      # whole document.
       #
-      # @return [Array<Array(Segment, String | nil)>] segment + resolved span
+      # @return [Array<Array(Segment, String | nil, Hash | nil)>]
+      #   segment + resolved span + discussion source (see #discussion_source)
       def resolve_anchors(segments, snapshot)
+        comments = nil
         segments.map do |segment|
           span = segment.quote && PlanBody.locate_quote(snapshot, segment.quote)
-          [segment, span]
+          if span || segment.quote.nil?
+            [segment, span, nil]
+          else
+            # Fetched once per batch, and only when some quote missed the body.
+            comments ||= discussion_comments
+            [segment, span, discussion_source(segment.quote, comments)]
+          end
         end
       end
 
+      # The thread to search for quote sources: every comment except the one
+      # carrying the slash command (its own "> " quote lines would match
+      # trivially), with collapsed <details> blocks stripped — that's where
+      # appended word/source diffs live, pure noise describing stale document
+      # states.
+      #
+      # @return [Array<Hash>]
+      def discussion_comments
+        @github.issue_comments(@context.owner_repo, @context.number)
+               .reject { |comment| comment["id"] == @context.comment_id }
+               .map { |comment| comment.merge("body" => strip_details(comment["body"].to_s)) }
+      end
+
+      # The earliest comment containing the quote — later matches are usually
+      # re-quotes of the original.
+      #
+      # @return [Hash{Symbol => String}, nil] author, url, text
+      def discussion_source(quote, comments)
+        comment = comments.find { |candidate| PlanBody.locate_quote(candidate["body"], quote) }
+        return nil unless comment
+
+        { author: comment.dig("user", "login"), url: comment["html_url"], text: comment["body"] }
+      end
+
+      # @return [String]
+      def strip_details(text)
+        text.gsub(%r{<details>.*?</details>}m, "(collapsed diff omitted)")
+      end
+
       def issue_batch_prompt(resolved, snapshot)
-        segment_descriptions = resolved.each_with_index.map do |(segment, span), index|
+        segment_descriptions = resolved.each_with_index.map do |(segment, span, source), index|
           <<~SEGMENT
             <<<SEGMENT #{index + 1}: /#{segment.command}>>>
-            #{segment_focus(segment, span)}
+            #{segment_focus(segment, span, source)}
             Instruction: #{segment.instruction.empty? ? "(none — the quote itself is the subject)" : segment.instruction}
           SEGMENT
         end.join("\n")
@@ -161,15 +200,24 @@ module AiFlow
         PROMPT
       end
 
-      # A quote that resolved to a document span is the feedback's location;
-      # one that didn't (an answer panel, a discussion comment, or body text
-      # that has since changed) is still real context the reviewer pointed
-      # at — hand it to the agent verbatim, flagged as not-in-document.
+      # A quote that resolved to a document span is the feedback's location.
+      # One that didn't is still real context the reviewer pointed at: when
+      # its source comment was found in the thread, hand over the quote plus
+      # that comment (author, link, text); otherwise the quote verbatim,
+      # flagged as not-in-document.
       #
       # @return [String]
-      def segment_focus(segment, span)
+      def segment_focus(segment, span, source)
         if span
           "Focus (the quoted section this feedback concerns):\n#{span}"
+        elsif source
+          <<~FOCUS.strip
+            Context (quoted from @#{source[:author]}'s comment #{source[:url]} on this issue — this text is NOT in the document):
+            #{segment.quote}
+
+            The full source comment, for context:
+            #{source[:text]}
+          FOCUS
         elsif segment.quote
           "Context (quoted by the reviewer from the discussion — this text is NOT in the document):\n#{segment.quote}"
         else

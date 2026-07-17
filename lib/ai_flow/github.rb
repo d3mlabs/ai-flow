@@ -76,6 +76,15 @@ module AiFlow
       api("repos/#{owner_repo}/issues/#{number}/comments", method: "POST", payload: { body: body })
     end
 
+    # The issue's conversation, oldest first. One page of 100 covers our
+    # review threads; quote-context resolution degrades gracefully (verbatim
+    # fallback) if a source comment ever falls past the cap.
+    #
+    # @return [Array<Hash>] comments with "id", "body", "html_url", "user"
+    def issue_comments(owner_repo, number)
+      api("repos/#{owner_repo}/issues/#{number}/comments?per_page=100") || []
+    end
+
     # Edit an issue/PR-conversation comment in place (the noise-minimization
     # protocol: results append into the command comment, no reply comments).
     def update_issue_comment(owner_repo, comment_id, body:)

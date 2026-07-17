@@ -55,6 +55,19 @@ class FakeGitHub
     { "id" => 1, "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-1" }
   end
 
+  def seed_issue_comment(owner_repo, number, id:, body:, login: "jpduchesne")
+    @issue_comments ||= {}
+    (@issue_comments[[owner_repo, number]] ||= []) << {
+      "id" => id, "body" => body, "user" => { "login" => login },
+      "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{id}",
+    }
+  end
+
+  def issue_comments(owner_repo, number)
+    @calls << [:issue_comments, owner_repo, number]
+    (@issue_comments || {})[[owner_repo, number]] || []
+  end
+
   def update_issue_comment(owner_repo, comment_id, body:)
     @calls << [:update_issue_comment, owner_repo, comment_id]
     @comment_edits[comment_id] = body

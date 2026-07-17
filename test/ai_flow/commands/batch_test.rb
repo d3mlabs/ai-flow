@@ -124,8 +124,45 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a quote not found in the body carries into the prompt as discussion context" do
-    Given "a batch quoting an earlier answer panel (text that was never in the body)"
+  test "a quote of an earlier answer panel resolves to its source comment" do
+    Given "a thread where an earlier comment carries an answer panel with a collapsed diff"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
+    panel_comment = "> earlier question\n\n/ask why?\n\n> ✅ **/ask**\n>\n" \
+                    "> Not today — there is no such command in the repo.\n\n" \
+                    "<details>\n<summary>Word diff</summary>\nHUGE-DIFF-NOISE\n</details>"
+    github.seed_issue_comment(REPO, 7, id: 42, body: panel_comment)
+    comment = "> Not today — there is no such command in the repo.\n\n/edit record it as out of scope"
+    # The command comment itself is in the thread too — it must be excluded,
+    # or its own "> " quote lines would match trivially.
+    github.seed_issue_comment(REPO, 7, id: 55, body: comment)
+    context = ContextBuilder.issue_comment(body: comment)
+    new_body = "#{SNAPSHOT}\nOut of scope: that command.\n"
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nRecorded it as out of scope."]) do
+      File.write(File.join(dir, PLAN_FILE), new_body)
+    end
+
+    When "running the batch"
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
+
+    Then "the prompt carries the quote's source comment, diff noise stripped"
+    success == true
+    prompt = agent.prompts.first
+    prompt.include?("quoted from @jpduchesne's comment https://github.com/d3mlabs/demo/issues/7#issuecomment-42")
+    prompt.include?("The full source comment, for context:")
+    prompt.include?("> earlier question")
+    prompt.include?("(collapsed diff omitted)")
+    !prompt.include?("HUGE-DIFF-NOISE")
+    github.calls.map(&:first).count(:issue_comments) == 1
+    github.issue(REPO, 7).body == new_body
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a quote found nowhere falls back to verbatim discussion context" do
+    Given "a batch quoting text that is neither in the body nor in any thread comment"
     dir = Dir.mktmpdir("ai-flow-batch-test-")
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
@@ -143,10 +180,10 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     When "running the batch"
     success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "both segments run in one pass; the unmatched quote is flagged as context"
+    Then "both segments run in one pass; the unmatched quote is flagged as verbatim context"
     success == true
     github.issue(REPO, 7).body == new_body
-    agent.prompts.first.include?("this text is NOT in the document")
+    agent.prompts.first.include?("quoted by the reviewer from the discussion — this text is NOT in the document")
     agent.prompts.first.include?("Not today — there is no such command in the repo.")
     edited = github.comment_edits.fetch(55)
     edited.index("> ✅ **/edit** — Recorded the command as out of scope.") > edited.index("/edit record it as out of scope")
