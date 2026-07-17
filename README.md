@@ -113,10 +113,12 @@ hardware; per-dev runner registration tooling is deliberately deferred),
 and `allow_token_fallback` (explicit opt-in to run without the App).
 
 Shareability: if this repo is public, any org can reference
-`d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1` with its own secret and
-runner pool (same distribution model as action repos, one level up). Adopters
-without warm-environment needs can point the label inputs at GitHub-hosted
-runners.
+`d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` with its own secret
+and runner pool (same distribution model as action repos, one level up).
+Adopters without warm-environment needs can point the label inputs at
+GitHub-hosted runners. Callers reference `@main` deliberately: the dispatcher
+checkout inside the workflow always runs main, so pinning the YAML to a tag
+or SHA would only freeze half the system and silently split the two versions.
 
 ## Development
 

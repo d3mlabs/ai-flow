@@ -22,7 +22,9 @@ permissions:
 
 jobs:
   ai-commands:
-    uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1
+    # @main so the workflow YAML tracks the dispatcher code, which is also
+    # checked out at main — a tag pin here silently splits the two versions.
+    uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
