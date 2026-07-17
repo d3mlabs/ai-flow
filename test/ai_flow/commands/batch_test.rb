@@ -55,20 +55,21 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     When "running the batch"
     success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "one forced agent pass, one body PATCH, ordered results, one combined diff"
+    Then "one forced agent pass, one body PATCH, interleaved results, one bottom diff"
     success == true
     agent.prompts.size == 1
     agent.launches.first[:force] == true
     github.calls.map(&:first).count(:update_issue_body) == 1
     github.issue(REPO, 7).body == new_body
-    github.comment_edits.fetch(55).include?("/edit cover LOD1 too")
-    github.comment_edits.fetch(55).include?("\n\n---\n\n")
-    github.comment_edits.fetch(55).include?("> **1.** ✅ **/edit** — Extended the carve system to LOD1.")
-    github.comment_edits.fetch(55).include?("> **2.** ✅ **/edit** — Reduced streaming cells to 32m.")
-    github.comment_edits.fetch(55).scan("**Plan updated**").size == 1
-    github.comment_edits.fetch(55).scan("<summary>Word diff</summary>").size == 1
-    github.comment_edits.fetch(55).scan("<summary>Source diff</summary>").size == 1
-    github.comment_edits.fetch(55).include?("<ins>")
+    edited = github.comment_edits.fetch(55)
+    edited.index("> ✅ **/edit** — Extended the carve system to LOD1.") > edited.index("/edit cover LOD1 too")
+    edited.index("> ✅ **/edit** — Extended the carve system to LOD1.") < edited.index("> Chunks stream in 64m cells.")
+    edited.index("> ✅ **/edit** — Reduced streaming cells to 32m.") > edited.index("/edit make cells 32m")
+    edited.index("\n\n---\n\n") > edited.index("> ✅ **/edit** — Reduced streaming cells to 32m.")
+    edited.scan("**Plan updated**").size == 1
+    edited.scan("<summary>Word diff</summary>").size == 1
+    edited.scan("<summary>Source diff</summary>").size == 1
+    edited.include?("<ins>")
     !File.exist?(File.join(dir, PLAN_FILE))
 
     Cleanup
@@ -140,13 +141,13 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     When "running the batch"
     success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "the live segment applied; the stale one is first in the section"
+    Then "the live segment applied; each result sits under its own segment"
     success == false
     github.issue(REPO, 7).body == new_body
     edited = github.comment_edits.fetch(55)
-    edited.include?("⚠️ The quoted text was not found")
-    edited.include?("✅ **/edit**")
-    edited.index("**1.** ⚠️ The quoted text was not found") < edited.index("**2.** ✅ **/edit**")
+    edited.index("> ⚠️ The quoted text was not found") > edited.index("/edit tighten")
+    edited.index("> ⚠️ The quoted text was not found") < edited.index("> Chunks stream in 64m cells.")
+    edited.index("> ✅ **/edit**") > edited.index("/edit make cells 32m")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -194,11 +195,12 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     When "running the batch"
     success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
 
-    Then "the answer is in the edited comment, not a reply"
+    Then "the answer interleaves under its quote, not as a reply"
     success == true
     github.comments.empty?
-    github.comment_edits.fetch(55).include?("✅ **/ask**")
-    github.comment_edits.fetch(55).include?("Because carving happens at runtime.")
+    edited = github.comment_edits.fetch(55)
+    edited.index("> ✅ **/ask**\n>\n> Because carving happens at runtime.") > edited.index("/ask why?")
+    edited.index("> Because carving happens at runtime.") < edited.index("> Chunks stream in 64m cells.")
     github.issue(REPO, 7).body == new_body
 
     Cleanup

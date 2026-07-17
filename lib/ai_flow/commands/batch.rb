@@ -86,7 +86,7 @@ module AiFlow
           end
         end
 
-        deliver(segments, in_segment_order(segments, results), appendix: appendix)
+        deliver(segments, results, appendix: appendix)
       end
 
       # Phase 2: write the snapshot to the plan file, run one agent pass that
@@ -112,22 +112,15 @@ module AiFlow
         File.delete(path) if File.exist?(path)
       end
 
-      # The batch's single whole-document diff, appended after the per-segment
-      # result lines (one comment = one unit of change).
+      # The batch's single whole-document diff, appended once at the bottom of
+      # the command comment (one comment = one unit of change); per-segment
+      # results interleave under their quotes.
       #
       # @return [String]
       def plan_diff_appendix(snapshot, new_body)
         diff = @rich_diff.render(before: snapshot, after: new_body, backlink_url: @context.subject_url)
         header = ["**Plan updated**", diff.backlink].compact.join(" — ")
         "#{header}\n\n#{diff.collapsed}"
-      end
-
-      # Results are accumulated stale-first; the comment should read in the
-      # order the reviewer wrote the segments.
-      #
-      # @return [Array<Array(Segment, String)>]
-      def in_segment_order(segments, results)
-        results.sort_by { |segment, _text| segments.index { |candidate| candidate.equal?(segment) } }
       end
 
       # Phase 1: every quote resolves against the snapshot, or the segment is
@@ -313,7 +306,7 @@ module AiFlow
 
       # Standalone /ask gets a reply (a question-and-answer is a legitimate
       # two-comment conversation); everything else — including /ask inside a
-      # batch — lands in the command comment's appended result section.
+      # batch — lands interleaved in the command comment itself.
       #
       # @param appendix [String, nil] batch-level block (the plan diff)
       # @return [Boolean] whether every segment result is a success

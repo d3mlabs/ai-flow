@@ -5,7 +5,7 @@ require "support/fakes"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::ResultWriterTest < Minitest::Test
-  test "results append as one numbered section under a horizontal rule" do
+  test "results interleave under each segment, appendix at the bottom under ---" do
     Given "a two-segment batch comment"
     body = "> Q1\n\n/edit tighten\n\n> Q2\n\n/ask why?"
     segments = AiFlow::CommentParser.new.parse(body)
@@ -15,20 +15,22 @@ class AiFlow::ResultWriterTest < Minitest::Test
     updated = writer.render(
       body,
       [[segments[0], "RESULT-1\n\nline two"], [segments[1], "RESULT-2"]],
-      appendix: "THE-DIFF",
+      appendix: "THE-DIFF\n\ndiff body",
     )
 
-    Then "the human text is untouched, then ---, then the blockquoted section in order"
-    updated.start_with?("#{body}\n\n---\n\n")
-    updated.index("> **1.** RESULT-1") < updated.index("> **2.** RESULT-2")
-    updated.index("> **2.** RESULT-2") < updated.index("> THE-DIFF")
-    updated.include?("> **1.** RESULT-1\n>\n> line two")
+    Then "each result sits under its command; the appendix closes the comment"
+    updated.index("> RESULT-1") > updated.index("/edit tighten")
+    updated.index("> RESULT-1") < updated.index("> Q2")
+    updated.index("> RESULT-2") > updated.index("/ask why?")
+    updated.include?("> RESULT-1\n>\n> line two")
+    updated.index("> RESULT-2") < updated.index("\n\n---\n\n> THE-DIFF\n>\n> diff body")
+    updated.end_with?("> diff body")
 
     Cleanup
     nil
   end
 
-  test "a single result appends without numbering or appendix" do
+  test "without an appendix there is no horizontal rule" do
     Given "a one-segment comment"
     body = "/edit tighten"
     segments = AiFlow::CommentParser.new.parse(body)
@@ -38,7 +40,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
     updated = writer.render(body, [[segments.first, "RESULT"]])
 
     Then
-    updated == "/edit tighten\n\n---\n\n> RESULT"
+    updated == "/edit tighten\n\n> RESULT"
 
     Cleanup
     nil

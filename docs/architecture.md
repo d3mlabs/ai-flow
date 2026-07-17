@@ -81,7 +81,7 @@ sequenceDiagram
     Dispatcher->>Agent: prompt (workdir = checkout or worktree)
     Agent-->>Dispatcher: result text
     Dispatcher->>GitHub: guarded writes (body PATCH, push, PR, sub-issues)
-    Dispatcher->>GitHub: append the result section to the command comment
+    Dispatcher->>GitHub: edit the command comment with interleaved results + diff
 ```
 
 Two deliberate layers of filtering: the workflow-level `if` is a coarse
@@ -116,7 +116,7 @@ flowchart TD
 
     batchCmd --> planBody["PlanBody<br/>(body normalization, quote anchors)"]
     batchCmd --> richDiff["RichDiff<br/>(collapsed Word diff + Source diff,<br/>text-fragment backlink)"]
-    batchCmd --> resultWriter["ResultWriter<br/>(appends one blockquoted result<br/>section under a --- rule)"]
+    batchCmd --> resultWriter["ResultWriter<br/>(per-segment panels interleave<br/>under their quotes; batch diff<br/>appends under a --- rule)"]
     splitCmd --> resultWriter
     buildCmd --> resultWriter
     buildSplitCmd --> resultWriter
@@ -154,7 +154,7 @@ flowchart TD
     resolve -->|stale quote| staleResult["Segment fails alone:<br/>re-quote and retry"]
     resolve --> agentPass["Phase 2: ONE agent pass<br/>edits the plan file holistically<br/>(answers /ask segments inline)"]
     agentPass --> patch["Read the file back:<br/>ONE guarded PATCH<br/>(refuse if body moved<br/>since the snapshot)"]
-    agentPass --> results["One appended result section:<br/>per-segment ✅/⚠️ lines + ONE combined<br/>collapsed Word/Source diff"]
+    agentPass --> results["Per-segment ✅/⚠️ results interleave<br/>under their quotes; ONE combined<br/>collapsed Word/Source diff<br/>appends at the bottom"]
 ```
 
 ## The /build flow

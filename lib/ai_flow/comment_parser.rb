@@ -20,8 +20,10 @@ module AiFlow
 
     # One quote+command pair. `quote` is the anchor text (de-quoted, nil when
     # unscoped); `instruction` is the command line's remainder plus the free
-    # text it owns; `flags` are leading --options (e.g. /build --split).
-    Segment = Struct.new(:command, :flags, :quote, :instruction, keyword_init: true)
+    # text it owns; `flags` are leading --options (e.g. /build --split);
+    # `end_line` is the 0-based index of the last line the segment owns —
+    # the insertion point for its interleaved result.
+    Segment = Struct.new(:command, :flags, :quote, :instruction, :end_line, keyword_init: true)
 
     # @param prefix [String] optional command prefix for adopters with clashing
     #   bots (we default to none, so commands are /ask etc.)
@@ -39,7 +41,7 @@ module AiFlow
       pending_quote = []
       current_segment = nil
 
-      body.to_s.gsub("\r\n", "\n").split("\n", -1).each do |line|
+      body.to_s.gsub("\r\n", "\n").split("\n", -1).each_with_index do |line, index|
         if (match = @command_pattern.match(line.rstrip))
           flags, instruction = split_flags(match[2].to_s.strip)
           segments << (current_segment = Segment.new(
@@ -47,6 +49,7 @@ module AiFlow
             flags: flags,
             quote: dequote(pending_quote),
             instruction: instruction,
+            end_line: index,
           ))
           pending_quote = []
         elsif line.start_with?(">")
@@ -59,7 +62,10 @@ module AiFlow
           current_segment.instruction = "#{current_segment.instruction}\n" if current_segment
         else
           pending_quote = [] unless pending_quote.empty?
-          current_segment.instruction = [current_segment.instruction, line].join("\n") if current_segment
+          if current_segment
+            current_segment.instruction = [current_segment.instruction, line].join("\n")
+            current_segment.end_line = index
+          end
         end
       end
 
