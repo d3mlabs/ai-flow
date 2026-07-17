@@ -33,6 +33,7 @@ module AiFlow
       return if segments.empty?
 
       acknowledge
+      announce_running
       return if route(segments)
 
       # Soft failure: the per-segment ⚠️ is already on the comment; the run
@@ -53,6 +54,23 @@ module AiFlow
       )
     rescue GitHub::Error
       # A failed reaction must not block the command.
+    end
+
+    # Temporary "follow along" link on the command comment. Every final
+    # render starts from the payload body, so this line vanishes when the
+    # results land (the run link persists as the ResultWriter footer); the
+    # standalone-/ask reply path reverts it explicitly. Placed after the
+    # exact parse, so prose mentions never get it.
+    def announce_running
+      url = @context.run_url
+      return unless url
+
+      @result_writer.write_raw(
+        @context,
+        "#{@context.comment_body.rstrip}\n\n> ⏳ ai-flow is running — [follow the run](#{url})",
+      )
+    rescue GitHub::Error
+      # A failed status line must not block the command.
     end
 
     # @return [Boolean] whether the command(s) fully succeeded — only batches
@@ -107,6 +125,8 @@ module AiFlow
       if segments && !segments.empty?
         @result_writer.write(@context, [[segments.first, message]])
       else
+        footer = @result_writer.footer(@context.run_url)
+        message = "#{message}\n\n#{footer}" if footer
         @github.post_issue_comment(@context.owner_repo, @context.number, message)
       end
       warn "ai-flow: #{error.class}: #{error.message}"

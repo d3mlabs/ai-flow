@@ -17,21 +17,31 @@ module AiFlow
     # segment's owned region (descending, so earlier indices stay valid);
     # the human's text is otherwise untouched. Panels are blockquote-wrapped
     # so they read as one visual unit (the left accent bar) distinct from
-    # the human's command text.
+    # the human's command text. Batch-level material — the appendix (plan
+    # diff) and the permanent run-link footer — lands at the bottom under
+    # one --- rule.
     #
     # @param original_body [String] the command comment as posted
     # @param results [Array<Array(CommentParser::Segment, String)>]
     # @param appendix [String, nil] batch-level block (the plan diff)
+    # @param run_url [String, nil] the Actions run that produced the results
     # @return [String] the updated comment body
-    def render(original_body, results, appendix: nil)
+    def render(original_body, results, appendix: nil, run_url: nil)
       lines = original_body.gsub("\r\n", "\n").split("\n", -1)
       results.sort_by { |segment, _result| -segment.end_line }.each do |segment, result|
         lines.insert(segment.end_line + 1, "", *blockquote(result))
       end
 
       body = lines.join("\n").rstrip
-      body = "#{body}\n\n---\n\n#{blockquote(appendix).join("\n")}" if appendix
+      bottom = [appendix, footer(run_url)].compact.join("\n\n")
+      body = "#{body}\n\n---\n\n#{blockquote(bottom).join("\n")}" unless bottom.empty?
       body
+    end
+
+    # @param run_url [String, nil]
+    # @return [String, nil] the post-hoc observability link
+    def footer(run_url)
+      run_url && "⚙️ [workflow run](#{run_url})"
     end
 
     # @param text [String]
@@ -47,7 +57,16 @@ module AiFlow
     # @param appendix [String, nil]
     # @return [void]
     def write(context, results, appendix: nil)
-      body = render(context.comment_body, results, appendix: appendix)
+      write_raw(context, render(context.comment_body, results, appendix: appendix, run_url: context.run_url))
+    end
+
+    # Edit the command comment to an exact body — the status line while a
+    # command runs, and the reply path's revert of it.
+    #
+    # @param context [AiFlow::Context]
+    # @param body [String]
+    # @return [void]
+    def write_raw(context, body)
       if context.review_comment?
         @github.update_review_comment(context.owner_repo, context.comment_id, body: body)
       else

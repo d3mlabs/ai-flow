@@ -5,7 +5,7 @@
 
 # Records every GitHub call; issues are seeded and mutated in memory.
 class FakeGitHub
-  attr_reader :calls, :comments, :comment_edits
+  attr_reader :calls, :comments, :comment_edits, :comment_edit_history
 
   def initialize
     @issues = {}
@@ -13,6 +13,7 @@ class FakeGitHub
     @calls = []
     @comments = []
     @comment_edits = {}
+    @comment_edit_history = []
     @next_number = 100
   end
 
@@ -71,11 +72,13 @@ class FakeGitHub
   def update_issue_comment(owner_repo, comment_id, body:)
     @calls << [:update_issue_comment, owner_repo, comment_id]
     @comment_edits[comment_id] = body
+    @comment_edit_history << body
   end
 
   def update_review_comment(owner_repo, comment_id, body:)
     @calls << [:update_review_comment, owner_repo, comment_id]
     @comment_edits[comment_id] = body
+    @comment_edit_history << body
   end
 
   def reply_to_review_comment(owner_repo, pull_number, comment_id, body)
@@ -154,11 +157,13 @@ class FakeAgent
   end
 end unless defined?(FakeAgent)
 
-# Builds a Context from a synthetic webhook payload.
+# Builds a Context from a synthetic webhook payload. env defaults to {} (not
+# ENV) so tests stay hermetic — running the suite inside Actions must not
+# leak the real GITHUB_RUN_ID into contexts that expect a local run.
 module ContextBuilder
   module_function
 
-  def issue_comment(owner_repo: "d3mlabs/demo", number: 7, comment_id: 55, body:, association: "OWNER", pull_request: false)
+  def issue_comment(owner_repo: "d3mlabs/demo", number: 7, comment_id: 55, body:, association: "OWNER", pull_request: false, env: {})
     issue = { "number" => number }
     issue["pull_request"] = { "url" => "x" } if pull_request
     AiFlow::Context.new(
@@ -172,6 +177,7 @@ module ContextBuilder
           "user" => { "login" => "jpduchesne", "id" => 111 },
         },
       },
+      env: env,
     )
   end
 end unless defined?(ContextBuilder)

@@ -36,8 +36,10 @@ module AiFlow
 
     # @param event_name [String] GITHUB_EVENT_NAME
     # @param payload [Hash] parsed event JSON
-    def initialize(event_name:, payload:)
+    # @param env [Hash-like] injectable for tests; the Actions job env
+    def initialize(event_name:, payload:, env: ENV)
       @event_name = event_name
+      @env = env
       comment = payload.fetch("comment")
       @owner_repo = payload.fetch("repository").fetch("full_name")
       @comment_id = comment.fetch("id")
@@ -88,6 +90,19 @@ module AiFlow
     # @return [String] the issue/PR html URL (for text-fragment backlinks)
     def subject_url
       "https://github.com/#{owner_repo}/#{pull_request? ? "pull" : "issues"}/#{number}"
+    end
+
+    # The Actions run executing this dispatch — the observability surface
+    # linked from the command comment (status line while running, footer in
+    # the delivered results).
+    #
+    # @return [String, nil] nil outside Actions (local runs)
+    def run_url
+      run_id = @env["GITHUB_RUN_ID"]
+      return nil if run_id.nil? || run_id.empty?
+
+      server = @env["GITHUB_SERVER_URL"] || "https://github.com"
+      "#{server}/#{@env["GITHUB_REPOSITORY"]}/actions/runs/#{run_id}"
     end
   end
 end

@@ -30,6 +30,50 @@ class AiFlow::ResultWriterTest < Minitest::Test
     nil
   end
 
+  test "the run-link footer joins the appendix inside the bottom section" do
+    Given "a one-segment comment and an Actions run url"
+    body = "/edit tighten"
+    segments = AiFlow::CommentParser.new.parse(body)
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new)
+
+    When "rendering with an appendix and a run url"
+    updated = writer.render(
+      body,
+      [[segments.first, "RESULT"]],
+      appendix: "THE-DIFF",
+      run_url: "https://github.com/d3mlabs/demo/actions/runs/9",
+    )
+
+    Then "one --- section carries the diff, then the footer"
+    updated.scan("\n---\n").size == 1
+    updated.include?("> THE-DIFF\n>\n> ⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9)")
+    updated.end_with?("(https://github.com/d3mlabs/demo/actions/runs/9)")
+
+    Cleanup
+    nil
+  end
+
+  test "without an appendix the footer gets its own bottom section" do
+    Given "a one-segment comment and an Actions run url"
+    body = "/edit tighten"
+    segments = AiFlow::CommentParser.new.parse(body)
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new)
+
+    When "rendering with a run url only"
+    updated = writer.render(
+      body,
+      [[segments.first, "RESULT"]],
+      run_url: "https://github.com/d3mlabs/demo/actions/runs/9",
+    )
+
+    Then
+    updated == "/edit tighten\n\n> RESULT\n\n---\n\n" \
+               "> ⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9)"
+
+    Cleanup
+    nil
+  end
+
   test "without an appendix there is no horizontal rule" do
     Given "a one-segment comment"
     body = "/edit tighten"

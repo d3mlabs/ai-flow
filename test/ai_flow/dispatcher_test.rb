@@ -2,14 +2,16 @@
 
 require "test_helper"
 require "support/fakes"
+require "fileutils"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::DispatcherTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
-  def build_dispatcher(github:, agent:, context:)
+  def build_dispatcher(github:, agent:, context:, workdir: Dir.pwd)
     AiFlow::Dispatcher.new(
-      context: context, workdir: Dir.pwd, github: github, agent: agent,
+      context: context, workdir: workdir, github: github, agent: agent,
     )
   end
 
@@ -38,6 +40,53 @@ class AiFlow::DispatcherTest < Minitest::Test
 
     Then
     github.calls.empty?
+
+    Cleanup
+    nil
+  end
+
+  ACTIONS_ENV = {
+    "GITHUB_SERVER_URL" => "https://github.com",
+    "GITHUB_REPOSITORY" => "d3mlabs/demo",
+    "GITHUB_RUN_ID" => "42",
+  }.freeze
+  RUN_URL = "https://github.com/d3mlabs/demo/actions/runs/42"
+
+  test "a parsed command gets the ⏳ status line while running" do
+    Given "a batch /edit inside Actions"
+    dir = Dir.mktmpdir("ai-flow-dispatcher-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n\nBody.\n")
+    context = ContextBuilder.issue_comment(body: "/edit tighten the plan", env: ACTIONS_ENV)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nTightened."]) do
+      File.write(File.join(dir, "ai-flow-plan-7.md"), "# Plan\n\nTighter body.\n")
+    end
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context, workdir: dir).run
+
+    Then "the first comment edit is the follow-along line; the results replace it with the footer"
+    github.comment_edit_history.first ==
+      "/edit tighten the plan\n\n> ⏳ ai-flow is running — [follow the run](#{RUN_URL})"
+    !github.comment_edit_history.last.include?("⏳")
+    github.comment_edit_history.last.include?("⚙️ [workflow run](#{RUN_URL})")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "outside Actions there is no status line" do
+    Given "the same command without a run id in the env"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    context = ContextBuilder.issue_comment(body: "/ask why?")
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause."])
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context).run
+
+    Then "the command comment was never edited"
+    github.comment_edit_history.empty?
 
     Cleanup
     nil

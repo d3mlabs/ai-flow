@@ -79,10 +79,11 @@ sequenceDiagram
     Workflow->>Dispatcher: ruby dispatch.rb (GH_TOKEN = App token)
     Dispatcher->>Dispatcher: re-parse grammar + permission gate
     Dispatcher->>GitHub: react with eyes (deduped backstop of the ack job)
+    Dispatcher->>GitHub: append "⏳ follow the run" status line to the comment
     Dispatcher->>Agent: prompt (workdir = checkout or worktree)
     Agent-->>Dispatcher: result text
     Dispatcher->>GitHub: guarded writes (body PATCH, push, PR, sub-issues)
-    Dispatcher->>GitHub: edit the command comment with interleaved results + diff
+    Dispatcher->>GitHub: edit the command comment with interleaved results + diff<br/>(replaces the ⏳ line; run link stays as a ⚙️ footer)
 ```
 
 Two deliberate layers of filtering: the workflow-level `if` is a coarse

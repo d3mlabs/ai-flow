@@ -364,11 +364,21 @@ module AiFlow
       # @return [Boolean] whether every segment result is a success
       def deliver(segments, results, appendix: nil)
         if segments.size == 1 && segments.first.command == "ask" && appendix.nil?
-          reply(results.first.last)
+          reply(with_footer(results.first.last))
+          # The reply doesn't rewrite the command comment, so the dispatcher's
+          # ⏳ status line (only added inside Actions, where run_url is set)
+          # must be cleared explicitly.
+          @result_writer.write_raw(@context, @context.comment_body) if @context.run_url
         else
           @result_writer.write(@context, results, appendix: appendix)
         end
         results.none? { |_segment, text| text.to_s.start_with?("⚠️") }
+      end
+
+      # @return [String] the text with the run-link footer, when in Actions
+      def with_footer(text)
+        footer = @result_writer.footer(@context.run_url)
+        footer ? "#{text}\n\n#{footer}" : text
       end
 
       def reply(text)

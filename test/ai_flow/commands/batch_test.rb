@@ -216,6 +216,33 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a standalone /ask inside Actions carries the run footer and reverts the ⏳ line" do
+    Given "a bare question in an Actions run (the dispatcher's status line is on the comment)"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
+    run_url = "https://github.com/d3mlabs/demo/actions/runs/42"
+    context = ContextBuilder.issue_comment(
+      body: "/ask why LOD0 only?",
+      env: {
+        "GITHUB_SERVER_URL" => "https://github.com",
+        "GITHUB_REPOSITORY" => "d3mlabs/demo",
+        "GITHUB_RUN_ID" => "42",
+      },
+    )
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause carving happens at runtime."])
+
+    When "running"
+    build_batch(github:, agent:, context:, workdir: dir).run(parse("/ask why LOD0 only?"))
+
+    Then "the reply carries the footer; the command comment is reverted to the payload body"
+    github.comments.first.end_with?("⚙️ [workflow run](#{run_url})")
+    github.comment_edits.fetch(55) == "/ask why LOD0 only?"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "an /ask inside a batch lands in the appended section with the edit" do
     Given "a batch mixing /ask and /edit"
     dir = Dir.mktmpdir("ai-flow-batch-test-")
