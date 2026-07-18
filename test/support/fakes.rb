@@ -86,6 +86,29 @@ class FakeGitHub
     @comments << body
   end
 
+  def seed_owner_repos(owner, names)
+    @owner_repos ||= {}
+    @owner_repos[owner] = names
+  end
+
+  def owner_repos(owner)
+    @calls << [:owner_repos, owner]
+    (@owner_repos || {})[owner] || []
+  end
+
+  def seed_app_installed_repos(names)
+    @app_installed = names
+  end
+
+  def app_installed_repos
+    @app_installed || []
+  end
+
+  def open_issues(owner_repo, limit: 50)
+    @calls << [:open_issues, owner_repo]
+    @issues.values.select { |issue| issue.repo == owner_repo && issue.state == "open" }.first(limit)
+  end
+
   def seed_permission(login, permission)
     @permissions ||= {}
     @permissions[login] = permission
@@ -114,7 +137,18 @@ class FakeGitHub
     (@sub_issues[[owner_repo, number]] || []).map(&:dup)
   end
 
+  # Adoption of an issue already owned by another parent fails on the real
+  # API (one parent per issue); tests opt specific rest ids into that.
+  def fail_add_sub_issue_for(sub_issue_id)
+    @unadoptable ||= []
+    @unadoptable << sub_issue_id
+  end
+
   def add_sub_issue(owner_repo, parent_number, sub_issue_id)
+    if (@unadoptable || []).include?(sub_issue_id)
+      raise AiFlow::GitHub::Error, "issue already has a parent"
+    end
+
     @calls << [:add_sub_issue, owner_repo, parent_number, sub_issue_id]
   end
 
@@ -139,19 +173,33 @@ class FakeGitHub
 
   def api(path, method: nil, payload: nil)
     @calls << [:api, path, method]
-    { "id" => 424_242, "head" => { "ref" => "feature-branch" } }
+    # Rest-id lookups on specific issues resolve per issue (adoption needs
+    # distinct ids and a real miss for unseeded refs); everything else keeps
+    # the generic bot-identity shape.
+    if method.nil? && (match = path.match(%r{\Arepos/([^/]+/[^/]+)/issues/(\d+)\z}))
+      repo, number = match[1], Integer(match[2])
+      raise AiFlow::GitHub::Error, "gh api #{path} failed: HTTP 404" unless @issues.key?([repo, number])
+
+      { "id" => 400_000 + number }
+    else
+      { "id" => 424_242, "head" => { "ref" => "feature-branch" } }
+    end
   end
 
   def graphql(query, variables = {})
     @calls << [:graphql, variables]
     if query.include?("createIssue")
+      # The repository node id round-trips through the fake ("REPO:<repo>"),
+      # so created issues land in the repo the mutation targeted.
+      repo = variables[:repositoryId].to_s.sub("REPO:", "")
+      repo = "d3mlabs/demo" if repo.empty?
       number = (@next_number += 1)
-      # Seed the created issue so follow-up REST calls (dependency annotation)
-      # can resolve it. The fake pins one repo; tests only use d3mlabs/demo.
-      seed_issue("d3mlabs/demo", number, title: variables[:title], body: variables[:body] || "")
-      { "createIssue" => { "issue" => { "number" => number, "url" => "https://github.com/d3mlabs/demo/issues/#{number}" } } }
+      seed_issue(repo, number, title: variables[:title], body: variables[:body] || "")
+      { "createIssue" => { "issue" => { "number" => number, "url" => "https://github.com/#{repo}/issues/#{number}" } } }
+    elsif query.include?("issue(number:")
+      { "repository" => { "issue" => { "id" => "ISSUE_NODE" } } }
     else
-      { "repository" => { "id" => "REPO_NODE", "issue" => { "id" => "ISSUE_NODE" } } }
+      { "repository" => { "id" => "REPO:#{variables[:owner]}/#{variables[:name]}" } }
     end
   end
 end unless defined?(FakeGitHub)

@@ -188,6 +188,47 @@ module AiFlow
       api("repos/#{owner_repo}/collaborators/#{login}/permission").fetch("permission")
     end
 
+    # The owner's repositories — /split's routing menu. One page of 100
+    # covers the org; personal accounts (ai-flow on JPDuchesne/**) use the
+    # users endpoint instead. Memoized: the menu is read several times per
+    # run.
+    #
+    # @return [Array<String>] "owner/repo" names
+    def owner_repos(owner)
+      @owner_repos ||= {}
+      @owner_repos[owner] ||= begin
+        list = begin
+          api("orgs/#{owner}/repos?per_page=100")
+        rescue Error
+          api("users/#{owner}/repos?per_page=100")
+        end
+        (list || []).map { |repo| repo.fetch("full_name") }
+      end
+    end
+
+    # Repos this token's App installation can act on — exactly the repos
+    # /split may create sub-issues in. Empty under a plain token (local
+    # runs), which makes every cross-repo route fall back to the parent's
+    # repo: conservative, never over-permissive.
+    #
+    # @return [Array<String>] "owner/repo" names
+    def app_installed_repos
+      @app_installed_repos ||= (api("installation/repositories?per_page=100") || {})
+                               .fetch("repositories", [])
+                               .map { |repo| repo.fetch("full_name") }
+    rescue Error
+      @app_installed_repos = []
+    end
+
+    # Open issues (never PRs — the shared REST namespace mixes them in) —
+    # /split's discovery pool for existing-issue matching.
+    #
+    # @return [Array<Issue>]
+    def open_issues(owner_repo, limit: 50)
+      list = api("repos/#{owner_repo}/issues?state=open&per_page=#{limit}") || []
+      list.reject { |data| data.key?("pull_request") }.map { |data| to_issue(data) }
+    end
+
     private
 
     def to_review_thread(thread)

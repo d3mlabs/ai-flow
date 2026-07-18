@@ -15,30 +15,29 @@ scripts, and the templates each repo copies.
 
 Commands are recognized only at the start of a comment line. Quote-reply
 (select rendered text, press `r`) is the section anchor — the remote cmd+L.
-
-| Command | Where | What it does |
-|---|---|---|
 The consistency rule: `/ask` and `/edit` always operate on the document (the
 issue body or the PR description); `/build` always operates on code (open a
 PR from an issue, iterate on the branch from a PR).
 
-| Command | Where | What it does |
-|---|---|---|
-| `/ask <question>` | issues + PRs (conversation and review comments) | Answers read-only against the document + repo. Standalone `/ask` gets a reply comment (threaded when posted in a review thread); inside a batch the answer lands in place. A quote (or review-comment line anchor) scopes the question. |
-| `/edit <instruction>` | issues + PRs | Edits the document — the plan issue body or the PR description — as a file (a quote focuses the feedback but is not a boundary — implications land wherever the document needs them) and PATCHes it through a guarded sync. Each segment's ✅ one-line summary interleaves under its quote+command in the comment, and one combined collapsed "Word diff" (word-level `<ins>`/`<del>` prose, re-rendered mermaid) and "Source diff" (colored unified diff) appends at the bottom under a `---` rule. |
-| `/split` | issues | Proposes well-isolated subtasks and reconciles them against existing native sub-issues (create missing / close stale with comment / keep matching — idempotent). Dependencies land as `Depends on: #n` lines. |
-| `/build` | issues | Runs the agent in an isolated worktree on branch `ai/<n>-<slug>`, pushes, and opens a PR whose body carries `Closes owner/repo#n` plus an `<!-- ai-flow:build -->` marker (deterministic back-references for Projects automation). |
-| `/build [instruction]` | PRs (top-level comments) | Iterates on the PR's head branch. Bare `/build` sweeps the outstanding feedback — unresolved review threads plus conversation comments newer than the last ai-flow commit — and addresses it; an instruction takes priority with the sweep as context (CI is fair game: the agent can inspect failing checks with `gh`). Commits, pushes, and replies in each swept review thread with its disposition + the commit link (resolving stays with the human). In a review thread, `/build` is refused with a pointer to the conversation — leave thread feedback as plain comments and let the sweep pick them up. |
-| `/build --split` | issues | Orchestrates `/build` across the sub-issues in dependency order (topological waves), ensures a final integration sub-issue, and reports a live per-wave checklist edited in place. |
+| Command | One line |
+|---|---|
+| `/ask <question>` | Read-only Q&A against the document + repo; standalone gets a reply, in a batch it lands in place. |
+| `/edit <instruction>` | Edits the document as a file through one agent pass and one guarded PATCH, with interleaved results and a collapsed diff. |
+| `/split [--dry\|--apply]` | Two-phase plan/apply over sub-issues: `--dry` stages an editable `## Subtasks` yaml spec in the plan body, `--apply` executes it deterministically (per-subtask repo routing, `existing:` adoption); bare does both. |
+| `/build` (issue) | Builds the plan into a PR on branch `ai/<n>-<slug>` — state-aware: refuses on a staged split spec, notes open sub-issues. |
+| `/build [instruction]` (PR) | Iterates on the head branch, sweeping unresolved threads + fresh comments; replies per thread with disposition + commit link. |
+| `/build --split` (issue) | Orchestrates `/build` across sub-issues in dependency waves with a live checklist; skips undrivable nodes with warnings. |
+
+The normative reference — every command per surface, flags, decision
+tables, and each refusal message verbatim — is
+[docs/commands.md](docs/commands.md). The end-to-end story (author,
+canonize, split, build, iterate, close) with all body conventions is
+[docs/plan-lifecycle.md](docs/plan-lifecycle.md).
 
 Batches: one comment may hold several quote+command pairs (`/ask`//`/edit`
-only) — the review work unit. All quotes resolve against one body snapshot,
-all edits integrate in one agent pass, one guarded PATCH, and per-segment
-results append under each command in the same comment.
-
-Noise protocol: acting commands never reply. The dispatcher edits the command
-comment in place (👀 reaction while running); the one exception is a
-standalone `/ask`, which gets a reply.
+only) — the review work unit. Noise protocol: acting commands never reply;
+the dispatcher edits the command comment in place (👀 reaction while
+running); the one exception is a standalone `/ask`, which gets a reply.
 
 ## Layout
 
@@ -53,8 +52,11 @@ see [docs/architecture.md](docs/architecture.md).
 - `templates/caller-workflow.yml` — the ~10-line workflow each repo copies.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
   repos using `dev plan`.
-- `docs/` — [architecture.md](docs/architecture.md) (how it's put together)
-  and [attribution.md](docs/attribution.md) (who authors what, and why).
+- `docs/` — [commands.md](docs/commands.md) (the normative command
+  reference), [plan-lifecycle.md](docs/plan-lifecycle.md) (the end-to-end
+  narrative and body conventions), [architecture.md](docs/architecture.md)
+  (how it's put together), and [attribution.md](docs/attribution.md) (who
+  authors what, and why).
 
 ## Identity: the ai-flow GitHub App
 
