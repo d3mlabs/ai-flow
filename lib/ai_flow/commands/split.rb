@@ -17,6 +17,13 @@ module AiFlow
     # Bare /split does both phases in one run. At apply, canonicity
     # transfers to the created sub-issues and the section is rewritten into
     # a linked map.
+    #
+    # Sub-issues are thin tracking shards of the plan — the parent plan body
+    # is the spec, so the staged entries carry no bodies (titles must be
+    # self-explanatory) and created sub-issues get a templated body: a
+    # human-facing `Part of owner/repo#n.` line plus the `Depends on:` /
+    # `Intended repo:` conventions. /build reconstructs a sub-issue's scope
+    # from the parent plan via the native parent relationship.
     class Split
       REPOSITORY_ID_QUERY = <<~GRAPHQL
         query($owner: String!, $name: String!) {
@@ -120,10 +127,10 @@ module AiFlow
 
           #{segment.instruction.empty? ? "" : "Additional instruction: #{segment.instruction}"}
 
-          Propose the FULL desired set of subtasks (not a delta): well-isolated, independently buildable where possible. Route each subtask to the repository its work lands in ("repo"). When a subtask depends on another, reference it by its 0-based index in your list. Reuse the exact title of any existing sub-issue that should stay — titles are the reconciliation key. If integration work across subtasks is needed, include a final integration subtask depending on the others.
+          Propose the FULL desired set of subtasks (not a delta): well-isolated, independently buildable where possible. Do NOT write subtask bodies — the parent plan is the spec, and sub-issues are thin tracking shards of it, so each title must be self-explanatory about its scope. Route each subtask to the repository its work lands in ("repo"). When a subtask depends on another, reference it by its 0-based index in your list. Reuse the exact title of any existing sub-issue that should stay — titles are the reconciliation key. If integration work across subtasks is needed, include a final integration subtask depending on the others.
 
           OUTPUT FORMAT — exactly one JSON array, no other text ("depends_on" and "existing" are optional):
-          [{"title": "…", "body": "…", "repo": "owner/repo", "depends_on": [0, 2], "existing": "owner/repo#12"}, …]
+          [{"title": "…", "repo": "owner/repo", "depends_on": [0, 2], "existing": "owner/repo#12"}, …]
         PROMPT
       end
 
@@ -310,9 +317,13 @@ module AiFlow
       # Reality enforcement, never judgment: a repo without the App cannot
       # receive the issue, so it is created on the parent's repo with an
       # `Intended repo:` note and a panel warning — never a silent reroute.
+      # The body is a thin template (the parent plan is the spec): the
+      # `Part of` line is human-facing decoration — /build trusts the native
+      # parent relationship, not prose. Bespoke context belongs on the
+      # created sub-issue, added after apply.
       def create_sub_issue(entry, report)
         target = entry.fetch("repo")
-        body = entry.fetch("body", "")
+        body = "Part of #{@context.owner_repo}##{@context.number}.\n"
         unless installed_repos.include?(target)
           report[:warnings] << "#{target} has no ai-flow App installation — created #{entry.fetch("title").inspect} " \
                                "on #{@context.owner_repo} instead (`Intended repo: #{target}`); " \

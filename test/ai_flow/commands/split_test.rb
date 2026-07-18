@@ -34,8 +34,8 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     github.seed_sub_issues(REPO, 7, [kept, stale])
     agent = FakeAgent.new([<<~JSON])
       [
-        {"title": "Server API", "body": "Build the API.", "depends_on": []},
-        {"title": "Client UI", "body": "Build the UI.", "depends_on": [0]}
+        {"title": "Server API", "depends_on": []},
+        {"title": "Client UI", "depends_on": [0]}
       ]
     JSON
 
@@ -62,17 +62,18 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     github.seed_sub_issues(REPO, 7, [existing])
     agent = FakeAgent.new([<<~JSON])
       [
-        {"title": "Server API", "body": "Build the API.", "depends_on": []},
-        {"title": "Client UI", "body": "Build the UI.", "depends_on": [0]}
+        {"title": "Server API", "depends_on": []},
+        {"title": "Client UI", "depends_on": [0]}
       ]
     JSON
 
     When "splitting"
     run_split(github: github, agent: agent)
 
-    Then "the created issue's body carries the dependency, qualified with its repo"
+    Then "the created issue's body is the thin template plus the dependency, qualified with its repo"
     created = github.issue(REPO, 101)
     created.title == "Client UI"
+    created.body.include?("Part of #{REPO}#7.")
     created.body.include?("Depends on: #{REPO}#1")
 
     Cleanup
@@ -86,8 +87,8 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     github.seed_app_installed_repos(["d3mlabs/server"])
     agent = FakeAgent.new([<<~JSON])
       [
-        {"title": "Server API", "body": "Build the API.", "repo": "d3mlabs/server"},
-        {"title": "Docs", "body": "Write the docs."}
+        {"title": "Server API", "repo": "d3mlabs/server"},
+        {"title": "Docs"}
       ]
     JSON
 
@@ -112,7 +113,7 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Parent", body: "# Parent plan\n\nTarget repos: d3mlabs/private\n")
     agent = FakeAgent.new([<<~JSON])
-      [{"title": "Private work", "body": "Do it.", "repo": "d3mlabs/private"}]
+      [{"title": "Private work", "repo": "d3mlabs/private"}]
     JSON
 
     When "splitting"
@@ -120,6 +121,7 @@ class AiFlow::Commands::SplitTest < Minitest::Test
 
     Then "the sub-issue was created on the parent's repo, notes its intended home, and the panel warns"
     created = github.issue(REPO, 101)
+    created.body.include?("Part of #{REPO}#7.")
     created.body.include?("Intended repo: d3mlabs/private")
     github.comment_edits.fetch(55).include?("d3mlabs/private has no ai-flow App installation")
 
@@ -132,17 +134,18 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Parent", body: "# Parent plan\n\nTarget repos: #{REPO}\n")
     agent = FakeAgent.new([<<~JSON])
-      [{"title": "Server API", "body": "Build the API."}]
+      [{"title": "Server API"}]
     JSON
 
     When "staging"
     run_split(github: github, agent: agent, comment: "/split --dry")
 
-    Then "the body carries the editable spec, nothing was created, and the panel points at --apply"
+    Then "the body carries the title-only editable spec, nothing was created, and the panel points at --apply"
     body = github.issue(REPO, 7).body
     body.include?(AiFlow::SubtasksSection::SPEC_MARKER)
     body.include?("```yaml")
     body.include?("- title: \"Server API\"")
+    !body.include?("body:")
     github.calls.none? { |kind, _arg| kind == :create_issue }
     github.calls.none? { |kind, arg| kind == :graphql && arg.is_a?(Hash) && arg.key?(:title) }
     github.comment_edits.fetch(55).include?("/split --apply")
@@ -152,7 +155,7 @@ class AiFlow::Commands::SplitTest < Minitest::Test
   end
 
   test "/split --apply consumes a hand-edited spec without calling the agent" do
-    Given "a staged spec whose repo line was hand-edited"
+    Given "a staged spec whose repo line was hand-edited, with a stray key outside the interface"
     github = FakeGitHub.new
     github.seed_app_installed_repos(["d3mlabs/server"])
     github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
@@ -173,9 +176,11 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     When "applying"
     run_split(github: github, agent: agent, comment: "/split --apply")
 
-    Then "the agent never ran and the hand-edited routing was honored"
+    Then "the agent never ran, routing was honored, and the stray body: key was ignored"
     agent.prompts.empty?
     github.issue("d3mlabs/server", 101).title == "Server API"
+    github.issue("d3mlabs/server", 101).body.include?("Part of #{REPO}#7.")
+    !github.issue("d3mlabs/server", 101).body.include?("Build the API.")
     github.issue(REPO, 7).body.include?(AiFlow::SubtasksSection::APPLIED_MARKER)
 
     Cleanup
@@ -225,12 +230,10 @@ class AiFlow::Commands::SplitTest < Minitest::Test
       - title: "Adoptable work"
         repo: d3mlabs/demo
         existing: d3mlabs/other#42
-        body: ""
 
       - title: "Owned elsewhere"
         repo: d3mlabs/demo
         existing: d3mlabs/other#43
-        body: ""
       ```
     BODY
     github.seed_issue("d3mlabs/other", 42, title: "Adoptable work", body: "")
@@ -258,7 +261,7 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     github.seed_issue(REPO, 7, title: "Server API rework plan", body: "# Plan\n\nTarget repos: d3mlabs/server\n")
     github.seed_issue("d3mlabs/server", 31, title: "Server API rework", body: "")
     agent = FakeAgent.new([<<~JSON])
-      [{"title": "Server API rework", "body": "Do the rework.", "repo": "d3mlabs/server"}]
+      [{"title": "Server API rework", "repo": "d3mlabs/server"}]
     JSON
 
     When "staging"

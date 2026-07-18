@@ -200,6 +200,12 @@ On an issue, `/build` first reads the split state: a staged (unapplied)
 `## Subtasks` spec is a refusal, open sub-issues are a note on the result
 panel (decision table in [commands.md](commands.md)).
 
+Sub-issues carry thin bodies (the parent plan is the spec), so on a
+sub-issue the prompt reconstructs the subtask's scope: `GitHub#parent_issue`
+resolves the native parent relationship via GraphQL, the parent's body
+rides along as `<<<PARENT PLAN>>>`, and the sibling subtask titles are
+listed as explicitly out of scope.
+
 `/build --split` wraps this: it reads the parent's native sub-issues,
 topologically sorts them by their `Depends on: owner/repo#n` lines into
 waves, runs `Build#build_issue` per sub-issue, ensures a final integration

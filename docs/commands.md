@@ -98,21 +98,24 @@ same-repo form visually).
 ```yaml
 - title: "Hosted authorize job gating dispatch"
   repo: d3mlabs/ai-flow
-  body: |
-    Add an `authorize` job on ubuntu-latest to ai-commands.yml.
 
 - title: "Restrict Default runner group"
   repo: d3mlabs/plans
   depends_on: [0]
   existing: d3mlabs/plans#9
   # possible match: d3mlabs/plans#12 "Runner group hardening"
-  body: |
-    visibility: selected; pinned reusable workflow.
 ```
 ~~~
 
+- Entries are **title-only** — the parent plan is the spec, and sub-issues
+  are thin tracking shards of it, so titles must be self-explanatory about
+  their scope. There is no per-subtask body in the interface; keys outside
+  it are ignored. Bespoke context belongs on the created sub-issue, added
+  after apply.
 - `title` is the reconciliation key — editing a title means "different
-  subtask" (the old one closes as stale, a new one is created).
+  subtask" (the old one closes as stale, a new one is created). Because
+  matching sub-issues are kept untouched, context added directly to a
+  sub-issue survives later reconciliations.
 - `depends_on` holds 0-based entry indices within the section; rendered as
   qualified `Depends on:` lines only at apply time, once numbers exist.
 - `existing: owner/repo#n` marks a subtask already tracked by an open
@@ -120,6 +123,11 @@ same-repo form visually).
   `# possible match:` comment (Ruby-added suggestions from a per-title
   search; resolve or delete them, they are never decisions).
 - The HTML comment carries the format version.
+
+Created sub-issues get a thin templated body: a `Part of owner/repo#n.`
+line (human-facing decoration — `/build` trusts the native parent
+relationship, not prose), plus the `Depends on:` / `Intended repo:` lines
+when applicable.
 
 At apply, an `existing:` entry is never created: a **parentless** issue is
 *adopted* as a native sub-issue of the plan; one already owned by another
@@ -162,6 +170,12 @@ reads the split state and reacts:
 The asymmetry is principled: an unapplied spec is the human's own staging
 left in limbo (refuse); applied sub-issues are a committed valid state
 (inform and proceed).
+
+**On a sub-issue**, the prompt reconstructs the subtask's scope from the
+plan: the parent's body rides along as `<<<PARENT PLAN>>>` (located via the
+native parent relationship, so it works for adopted issues too) and the
+sibling subtask titles are listed as explicitly out of scope — the
+sub-issue's own thin body never has to duplicate the plan.
 
 The refusal, verbatim:
 
