@@ -8,6 +8,10 @@ module AiFlow
   # listens on: issue_comment (issues + PR conversation comments — PRs fire
   # issue_comment too) and pull_request_review_comment (line-anchored).
   class Context
+    # Payload associations that authorize on their own. Not exhaustive:
+    # review-comment payloads under-report (an org MEMBER can arrive as
+    # CONTRIBUTOR), so the dispatcher backstops a miss here with the
+    # collaborator-permission API.
     ALLOWED_ASSOCIATIONS = %w[OWNER MEMBER COLLABORATOR].freeze
 
     # @return [String] "owner/repo"

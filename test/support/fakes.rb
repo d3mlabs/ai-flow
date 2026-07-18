@@ -86,6 +86,16 @@ class FakeGitHub
     @comments << body
   end
 
+  def seed_permission(login, permission)
+    @permissions ||= {}
+    @permissions[login] = permission
+  end
+
+  def collaborator_permission(owner_repo, login)
+    @calls << [:collaborator_permission, owner_repo, login]
+    (@permissions || {})[login] || "none"
+  end
+
   def seed_review_threads(owner_repo, number, threads)
     @review_threads ||= {}
     @review_threads[[owner_repo, number]] = threads

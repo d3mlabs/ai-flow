@@ -24,7 +24,7 @@ module AiFlow
 
     # @return [void]
     def run
-      unless @context.authorized?
+      unless authorized?
         warn "ai-flow: comment author is #{@context.author_association} — not authorized, ignoring."
         return
       end
@@ -45,6 +45,20 @@ module AiFlow
     end
 
     private
+
+    # The payload's author_association is the cheap first gate, but
+    # review-comment payloads under-report it (an org MEMBER can arrive as
+    # CONTRIBUTOR), so a miss falls back to the collaborator-permission API —
+    # the authoritative answer. A failed lookup denies (fail closed).
+    def authorized?
+      return true if @context.authorized?
+      return false unless @context.commenter_login
+
+      permission = @github.collaborator_permission(@context.owner_repo, @context.commenter_login)
+      %w[admin write].include?(permission)
+    rescue GitHub::Error
+      false
+    end
 
     # 👀 while running — acknowledgement is a reaction, never a status comment.
     def acknowledge

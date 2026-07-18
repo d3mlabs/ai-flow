@@ -182,6 +182,12 @@ module AiFlow
       api("repos/#{owner_repo}").fetch("default_branch")
     end
 
+    # @return [String] the user's effective permission on the repo:
+    #   "admin", "write", "read", or "none"
+    def collaborator_permission(owner_repo, login)
+      api("repos/#{owner_repo}/collaborators/#{login}/permission").fetch("permission")
+    end
+
     private
 
     def to_review_thread(thread)

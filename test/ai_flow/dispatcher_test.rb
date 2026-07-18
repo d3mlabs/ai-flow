@@ -16,15 +16,31 @@ class AiFlow::DispatcherTest < Minitest::Test
   end
 
   test "an unauthorized commenter is ignored entirely" do
-    Given "a command comment from a non-member"
+    Given "a command comment from a non-member without repo access"
     github = FakeGitHub.new
     context = ContextBuilder.issue_comment(body: "/ask anything?", association: "NONE")
 
     When "dispatching"
     build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
 
-    Then "no API call was made at all"
-    github.calls.empty?
+    Then "the only API call is the fail-closed permission probe — no writes"
+    github.calls == [[:collaborator_permission, REPO, "jpduchesne"]]
+
+    Cleanup
+    nil
+  end
+
+  test "an under-reported association falls back to the permission API and runs" do
+    Given "a CONTRIBUTOR payload (review-comment under-reporting) whose author has write access"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    context = ContextBuilder.issue_comment(body: "looks good, no command here", association: "CONTRIBUTOR")
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+
+    Then "the gate passed via the API (the comment itself is a clean no-op)"
+    github.calls == [[:collaborator_permission, REPO, "jpduchesne"]]
 
     Cleanup
     nil

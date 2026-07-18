@@ -71,10 +71,15 @@ jobs:
   # reactions API dedupes (two identities would render 👀 2). Coarse-filter
   # caveat: a prose mention that passes the contains() check gets eyes even
   # though the dispatcher will exit quietly — acceptable noise.
+  #
+  # CONTRIBUTOR passes the coarse association filter because review-comment
+  # payloads under-report membership (an org MEMBER can arrive as
+  # CONTRIBUTOR); the dispatcher re-checks authorization against the
+  # collaborator-permission API and fails closed.
   ack:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
       (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
@@ -110,11 +115,13 @@ jobs:
   # a job (no billed no-op runs — free anyway on self-hosted, but noisy). It
   # is a coarse contains() filter; the exact line-start command grammar and
   # the permission gate are re-checked by the Ruby dispatcher, which exits
-  # cleanly on a mid-line prose mention.
+  # cleanly on a mid-line prose mention. CONTRIBUTOR is allowed through for
+  # the same reason as in the ack job: review-comment payloads under-report
+  # membership, and the dispatcher's API-backed gate is the real one.
   dispatch:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
       (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
