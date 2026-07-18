@@ -96,7 +96,7 @@ module AiFlow
 
       def iterate_on_pull_request(segment)
         branch = checkout_head_branch
-        threads = @github.unresolved_review_threads(@context.owner_repo, @context.number)
+        threads = sweepable_threads
         comments = fresh_conversation_comments
         if segment.instruction.empty? && threads.empty? && comments.empty?
           @result_writer.write(
@@ -124,6 +124,16 @@ module AiFlow
         run!("git", "fetch", "origin", branch, chdir: @workdir)
         run!("git", "checkout", branch, chdir: @workdir)
         branch
+      end
+
+      # Unresolved review threads, minus those a command started (a threaded
+      # /ask and its answer are a handled conversation, not outstanding
+      # feedback).
+      #
+      # @return [Array<Hash>]
+      def sweepable_threads
+        @github.unresolved_review_threads(@context.owner_repo, @context.number)
+               .reject { |thread| command_comment?(thread["comments"].first&.fetch("body", nil).to_s) }
       end
 
       # Conversation comments have no resolved state, so "unaddressed" is a
