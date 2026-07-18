@@ -92,6 +92,22 @@ class AiFlow::DispatcherTest < Minitest::Test
     nil
   end
 
+  test "/build --split on a PR is refused as a parse-style failure" do
+    Given "a --split command on a pull request"
+    github = FakeGitHub.new
+    context = ContextBuilder.issue_comment(body: "/build --split", pull_request: true)
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+
+    Then "the run fails and the comment carries the reason"
+    raises SystemExit
+    github.comment_edits.fetch(55).include?("/build --split runs on plan issues, not pull requests")
+
+    Cleanup
+    nil
+  end
+
   test "a command comment is acknowledged with the eyes reaction and routed" do
     Given "a standalone /ask on a plan issue"
     github = FakeGitHub.new

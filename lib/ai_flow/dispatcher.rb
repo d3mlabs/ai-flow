@@ -82,6 +82,10 @@ module AiFlow
         split.run(segments.first)
         true
       elsif segments.first.flags.include?("--split")
+        if @context.pull_request?
+          raise CommentParser::ParseError, "/build --split runs on plan issues, not pull requests."
+        end
+
         build_split.run(segments.first)
         true
       else
@@ -92,7 +96,7 @@ module AiFlow
 
     def batch
       Commands::Batch.new(
-        context: @context, github: @github, agent: @agent, executor: @executor,
+        context: @context, github: @github, agent: @agent,
         rich_diff: RichDiff.new(executor: @executor),
         result_writer: @result_writer, workdir: @workdir,
       )
@@ -108,7 +112,7 @@ module AiFlow
     def build
       Commands::Build.new(
         context: @context, github: @github, agent: @agent, executor: @executor,
-        result_writer: @result_writer, workdir: @workdir,
+        result_writer: @result_writer, workdir: @workdir, prefix: @prefix,
       )
     end
 

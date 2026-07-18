@@ -25,7 +25,7 @@ flowchart LR
 
 ai-flow partitions attribution per flow, not globally:
 
-| Surface | Local Cursor work | Web-initiated work (/build, /edit on PRs) |
+| Surface | Local Cursor work | Web-initiated work (/build on issues and PRs) |
 |---|---|---|
 | Commit author + committer | the dev (their git identity) | `ai-flow[bot]` |
 | Commit trailer | none | `Co-authored-by: <login> <id+login@users.noreply.github.com>` (the requesting human) |

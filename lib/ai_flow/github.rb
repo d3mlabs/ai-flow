@@ -104,6 +104,38 @@ module AiFlow
       )
     end
 
+    # Thread resolution state only exists in GraphQL, not REST.
+    UNRESOLVED_THREADS_QUERY = <<~GRAPHQL
+      query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100) {
+              nodes {
+                isResolved
+                path
+                comments(first: 50) {
+                  nodes { databaseId body diffHunk url author { login } }
+                }
+              }
+            }
+          }
+        }
+      }
+    GRAPHQL
+
+    # The PR's unresolved review threads — /build's feedback sweep. Each
+    # thread carries its line anchor and conversation, plus the first
+    # comment's REST id (the replies API anchors on it).
+    #
+    # @return [Array<Hash>] threads with "path", "diff_hunk",
+    #   "first_comment_id", and "comments" ("author"/"body"/"url")
+    def unresolved_review_threads(owner_repo, number)
+      owner, name = owner_repo.split("/", 2)
+      data = graphql(UNRESOLVED_THREADS_QUERY, owner: owner, name: name, number: number)
+      threads = data.dig("repository", "pullRequest", "reviewThreads", "nodes") || []
+      threads.reject { |thread| thread["isResolved"] }.map { |thread| to_review_thread(thread) }
+    end
+
     # Acknowledge a command with a reaction (👀 while running) — never a
     # status comment.
     def react_to_comment(owner_repo, comment_id, reaction, review_comment: false)
@@ -151,6 +183,18 @@ module AiFlow
     end
 
     private
+
+    def to_review_thread(thread)
+      comments = thread.dig("comments", "nodes") || []
+      {
+        "path" => thread["path"],
+        "diff_hunk" => comments.first&.dig("diffHunk"),
+        "first_comment_id" => comments.first&.dig("databaseId"),
+        "comments" => comments.map do |comment|
+          { "author" => comment.dig("author", "login"), "body" => comment["body"], "url" => comment["url"] }
+        end,
+      }
+    end
 
     def to_issue(data)
       Issue.new(

@@ -123,7 +123,6 @@ flowchart TD
     buildCmd --> resultWriter
     buildSplitCmd --> resultWriter
     buildCmd --> commitIdentity["CommitIdentity<br/>(bot author, human co-author<br/>trailer — attribution.md)"]
-    batchCmd --> commitIdentity
 
     batchCmd --> agent["Agent#launch<br/>(the one seam invoking the CLI;<br/>swap the backend here)"]
     splitCmd --> agent
@@ -140,15 +139,25 @@ Routing rules (in `Dispatcher#route`): a comment whose segments are all
 `/ask`//`/edit` runs as one `Batch` — the review work unit. `/split` and
 `/build` are lifecycle operations and must be a comment's only command
 (enforced by `CommentParser#validate!`); `/build --split` goes to the
-orchestrator.
+orchestrator (and is refused on PRs).
+
+The command-surface consistency rule: `/ask` and `/edit` always operate on
+the document — the issue body or the PR description (the issues API covers
+both, so `Batch` has one flow). `/build` always operates on code: on an
+issue it opens a PR; on a PR (top-level comments only) it iterates on the
+head branch, sweeping unresolved review threads and fresh conversation
+comments as its scope and replying in each swept thread with a disposition
+and the commit link. A `/build` posted inside a review thread is refused
+with a pointer to the conversation.
 
 ## The batch two-phase flow
 
-Issue-mode editing is file-based, mirroring a Cursor chat message with
+Document editing is file-based, mirroring a Cursor chat message with
 several cmd+L selections: quotes are focus anchors, not edit boundaries —
 the agent owns the whole document's consistency and an instruction's
 implications land wherever the document needs them. One comment is one
-unit of change.
+unit of change. A batch launched from a review thread carries the thread's
+line anchor (path + diff hunk) as context; the document stays the target.
 
 ```mermaid
 flowchart TD
@@ -164,8 +173,8 @@ flowchart TD
 
 ## The /build flow
 
-`/build` runs the agent in a disposable worktree so concurrent builds never
-share a workspace, then authors the PR itself — deterministic
+On an issue, `/build` runs the agent in a disposable worktree so concurrent
+builds never share a workspace, then authors the PR itself — deterministic
 back-references, not agent-written ones:
 
 ```mermaid
@@ -183,6 +192,19 @@ flowchart TD
 topologically sorts them by their `Depends on: #n` lines into waves, runs
 `Build#build_issue` per sub-issue, ensures a final integration sub-issue
 exists, and reports a live per-wave checklist edited in place.
+
+On a PR, `/build` iterates on the head branch in the job checkout instead:
+
+```mermaid
+flowchart TD
+    checkout["Checkout the PR head branch"] --> sweep["Sweep the outstanding feedback:<br/>unresolved review threads (GraphQL)<br/>+ conversation comments newer than<br/>the last ai-flow commit"]
+    sweep -->|"nothing outstanding,<br/>no instruction"| noop["Friendly no-op panel"]
+    sweep --> agentIterate["ONE agent pass: instruction first<br/>(sweep as context), threads numbered,<br/>gh available for failing checks"]
+    agentIterate -->|no changes| noChange["⚠️ panel: no changes"]
+    agentIterate --> commitPush["Commit as ai-flow[bot]<br/>+ Co-authored-by: requester, push"]
+    commitPush --> threadReplies["Reply in each swept thread:<br/>disposition + commit link<br/>(never resolves threads)"]
+    threadReplies --> panel["✅ panel: commit link + summary"]
+```
 
 ## Extension points
 

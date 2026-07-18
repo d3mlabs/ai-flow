@@ -18,10 +18,17 @@ Commands are recognized only at the start of a comment line. Quote-reply
 
 | Command | Where | What it does |
 |---|---|---|
-| `/ask <question>` | issues + PRs (conversation and review comments) | Answers read-only. Standalone `/ask` gets a reply comment; inside a batch the answer lands in place. A quote (or review-comment line anchor) scopes the question. |
-| `/edit <instruction>` | issues + PRs | On a plan issue: the agent edits the plan document as a file (a quote focuses the feedback but is not a boundary — implications land wherever the document needs them) and the body PATCHes through a guarded sync. Each segment's ✅ one-line summary interleaves under its quote+command in the comment, and one combined collapsed "Word diff" (word-level `<ins>`/`<del>` prose, re-rendered mermaid) and "Source diff" (colored unified diff) appends at the bottom under a `---` rule. On a code PR: applies the instruction on the PR branch, commits, pushes, and appends the commit link. |
+The consistency rule: `/ask` and `/edit` always operate on the document (the
+issue body or the PR description); `/build` always operates on code (open a
+PR from an issue, iterate on the branch from a PR).
+
+| Command | Where | What it does |
+|---|---|---|
+| `/ask <question>` | issues + PRs (conversation and review comments) | Answers read-only against the document + repo. Standalone `/ask` gets a reply comment (threaded when posted in a review thread); inside a batch the answer lands in place. A quote (or review-comment line anchor) scopes the question. |
+| `/edit <instruction>` | issues + PRs | Edits the document — the plan issue body or the PR description — as a file (a quote focuses the feedback but is not a boundary — implications land wherever the document needs them) and PATCHes it through a guarded sync. Each segment's ✅ one-line summary interleaves under its quote+command in the comment, and one combined collapsed "Word diff" (word-level `<ins>`/`<del>` prose, re-rendered mermaid) and "Source diff" (colored unified diff) appends at the bottom under a `---` rule. |
 | `/split` | issues | Proposes well-isolated subtasks and reconciles them against existing native sub-issues (create missing / close stale with comment / keep matching — idempotent). Dependencies land as `Depends on: #n` lines. |
 | `/build` | issues | Runs the agent in an isolated worktree on branch `ai/<n>-<slug>`, pushes, and opens a PR whose body carries `Closes owner/repo#n` plus an `<!-- ai-flow:build -->` marker (deterministic back-references for Projects automation). |
+| `/build [instruction]` | PRs (top-level comments) | Iterates on the PR's head branch. Bare `/build` sweeps the outstanding feedback — unresolved review threads plus conversation comments newer than the last ai-flow commit — and addresses it; an instruction takes priority with the sweep as context (CI is fair game: the agent can inspect failing checks with `gh`). Commits, pushes, and replies in each swept review thread with its disposition + the commit link (resolving stays with the human). In a review thread, `/build` is refused with a pointer to the conversation — leave thread feedback as plain comments and let the sweep pick them up. |
 | `/build --split` | issues | Orchestrates `/build` across the sub-issues in dependency order (topological waves), ensures a final integration sub-issue, and reports a live per-wave checklist edited in place. |
 
 Batches: one comment may hold several quote+command pairs (`/ask`//`/edit`
@@ -73,10 +80,10 @@ loudly. Adopters who want to try ai-flow before registering an App can set
 
 Attribution model (who authors what, and why): see
 [docs/attribution.md](docs/attribution.md). Short form — local Cursor work is
-dev-authored; web-initiated work (`/build`, `/edit` on PRs) is authored by
-`ai-flow[bot]` with a `Co-authored-by` trailer crediting the requesting
-human, whose accountability lives on the PR (`Requested by @login`, PR
-assignee, merge record).
+dev-authored; web-initiated code work (`/build` on issues and PRs) is
+authored by `ai-flow[bot]` with a `Co-authored-by` trailer crediting the
+requesting human, whose accountability lives on the PR (`Requested by
+@login`, PR assignee, merge record).
 
 ## Adoption checklist (per repo)
 

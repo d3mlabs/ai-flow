@@ -86,6 +86,16 @@ class FakeGitHub
     @comments << body
   end
 
+  def seed_review_threads(owner_repo, number, threads)
+    @review_threads ||= {}
+    @review_threads[[owner_repo, number]] = threads
+  end
+
+  def unresolved_review_threads(owner_repo, number)
+    @calls << [:unresolved_review_threads, owner_repo, number]
+    (@review_threads || {})[[owner_repo, number]] || []
+  end
+
   def react_to_comment(owner_repo, comment_id, reaction, review_comment: false)
     @calls << [:react_to_comment, comment_id, reaction]
   end
@@ -174,6 +184,23 @@ module ContextBuilder
         "comment" => {
           "id" => comment_id, "body" => body, "author_association" => association,
           "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{comment_id}",
+          "user" => { "login" => "jpduchesne", "id" => 111 },
+        },
+      },
+      env: env,
+    )
+  end
+
+  def review_comment(owner_repo: "d3mlabs/demo", number: 3, comment_id: 9, body:, association: "OWNER", env: {})
+    AiFlow::Context.new(
+      event_name: "pull_request_review_comment",
+      payload: {
+        "repository" => { "full_name" => owner_repo },
+        "pull_request" => { "number" => number, "head" => { "ref" => "feature-branch" } },
+        "comment" => {
+          "id" => comment_id, "body" => body, "author_association" => association,
+          "html_url" => "https://github.com/#{owner_repo}/pull/#{number}#discussion_r#{comment_id}",
+          "diff_hunk" => "@@ -1 +1 @@\n-old\n+new", "path" => "lib/thing.rb",
           "user" => { "login" => "jpduchesne", "id" => 111 },
         },
       },

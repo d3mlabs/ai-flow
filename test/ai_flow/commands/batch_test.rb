@@ -27,7 +27,6 @@ class AiFlow::Commands::BatchTest < Minitest::Test
       agent: agent,
       rich_diff: AiFlow::RichDiff.new,
       result_writer: AiFlow::ResultWriter.new(github: github),
-      executor: AiFlow::Executor.new,
       workdir: workdir,
     )
   end
@@ -91,7 +90,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     Then "no PATCH, a loud ⚠️, and the batch reports failure"
     success == false
     !github.calls.map(&:first).include?(:update_issue_body)
-    github.comment_edits.fetch(55).include?("⚠️ **/edit** — the agent made no change to the plan document.")
+    github.comment_edits.fetch(55).include?("⚠️ **/edit** — the agent made no change to the document.")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -269,6 +268,54 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     edited.index("> ✅ **/ask**\n>\n> Because carving happens at runtime.") > edited.index("/ask why?")
     edited.index("> Because carving happens at runtime.") < edited.index("> Chunks stream in 64m cells.")
     github.issue(REPO, 7).body == new_body
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "/edit on a PR conversation comment PATCHes the PR description" do
+    Given "a PR whose description is the document"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
+    comment = "> Chunks stream in 64m cells.\n\n/edit make cells 32m"
+    context = ContextBuilder.issue_comment(body: comment, pull_request: true)
+    new_body = SNAPSHOT.sub("64m cells", "32m cells")
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nReduced streaming cells to 32m."]) do
+      File.write(File.join(dir, PLAN_FILE), new_body)
+    end
+
+    When "running the batch"
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse(comment))
+
+    Then "the description PATCHes through the issues namespace, no git activity"
+    success == true
+    agent.prompts.first.include?("the description of a GitHub pull request")
+    github.calls.map(&:first).count(:update_issue_body) == 1
+    github.issue(REPO, 7).body == new_body
+    github.comment_edits.fetch(55).include?("**Description updated**")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a standalone /ask in a review thread carries the code anchor and replies threaded" do
+    Given "an /ask posted on a code review thread"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 3, title: "Carve system", body: SNAPSHOT)
+    context = ContextBuilder.review_comment(body: "/ask why LOD0 only?")
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause carving happens at runtime."])
+
+    When "running"
+    success = build_batch(github:, agent:, context:, workdir: dir).run(parse("/ask why LOD0 only?"))
+
+    Then "the prompt carries the thread's line anchor and the answer lands in the thread"
+    success == true
+    agent.prompts.first.include?("code review thread anchored at `lib/thing.rb`")
+    agent.prompts.first.include?("@@ -1 +1 @@")
+    github.calls.include?([:reply_to_review_comment, REPO, 3, 9])
+    github.comments.first.include?("Because carving happens at runtime.")
 
     Cleanup
     FileUtils.rm_rf(dir)
