@@ -243,8 +243,10 @@ module AiFlow
       # @param segment [CommentParser::Segment]
       # @return [String, nil] the pushed commit sha, nil when nothing changed
       def commit_and_push(segment)
-        run!("git", "add", "-A", chdir: @workdir)
-        status, = @executor.capture("git", "status", "--porcelain", chdir: @workdir)
+        # The job checks the dispatcher out into .ai-flow inside this
+        # workspace — a bare `git add -A` would commit it as a gitlink.
+        run!("git", "add", "-A", "--", ":(exclude).ai-flow", chdir: @workdir)
+        status, = @executor.capture("git", "status", "--porcelain", "--", ":(exclude).ai-flow", chdir: @workdir)
         return nil if status.strip.empty?
 
         headline = segment.instruction.lines.first.to_s.strip[0, 60]

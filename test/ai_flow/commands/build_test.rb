@@ -96,6 +96,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     agent.prompts.first.include?("<<<THREAD 1>>> (lib/thing.rb)")
     agent.prompts.first.include?("this walk is O(n^2)")
     executor.command_lines.any? { |line| line.include?("commit -m") && line.include?("ai-flow /build: fix the failing CI") }
+    executor.command_lines.include?("git add -A -- :(exclude).ai-flow")
     executor.command_lines.include?("git push")
     github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
     github.calls.include?([:reply_to_review_comment, REPO, 7, 91])
