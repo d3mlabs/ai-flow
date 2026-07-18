@@ -187,7 +187,6 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       ```yaml
       - title: "Server API"
         repo: #{REPO}
-        body: ""
       ```
     BODY
     executor = RecordingExecutor.new
@@ -224,6 +223,40 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.calls.map(&:first).include?(:create_pull_request)
     github.comment_edits.fetch(55).include?("✅ **/build**")
     github.comment_edits.fetch(55).include?("open sub-issue(s) (#{REPO}#12)")
+
+    Cleanup
+    nil
+  end
+
+  test "/build on a sub-issue carries the parent plan and sibling scope in the prompt" do
+    Given "a thin sub-issue whose native parent is the plan, with a sibling subtask"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 12, title: "Server API", body: "Part of #{REPO}#7.\n")
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n\nThe full spec lives here.\n")
+    github.seed_parent(REPO, 12, github.issue(REPO, 7))
+    github.seed_sub_issues(REPO, 7, [
+      AiFlow::GitHub::Issue.new(
+        number: 12, title: "Server API", body: "Part of #{REPO}#7.\n", updated_at: "2026-07-13T00:00:00Z",
+        html_url: "https://github.com/#{REPO}/issues/12", state: "open", repo: REPO,
+      ),
+      AiFlow::GitHub::Issue.new(
+        number: 13, title: "Client UI", body: "Part of #{REPO}#7.\n", updated_at: "2026-07-13T00:00:00Z",
+        html_url: "https://github.com/#{REPO}/issues/13", state: "open", repo: REPO,
+      ),
+    ])
+    agent = FakeAgent.new(["done"])
+    context = ContextBuilder.issue_comment(number: 12, body: "/build")
+
+    When "building the sub-issue"
+    run_build(github: github, executor: RecordingExecutor.new, context: context, agent: agent)
+
+    Then "the prompt holds the parent plan body and fences the sibling out of scope"
+    agent.prompts.first.include?("subtask of the parent plan #{REPO}#7: Carve system")
+    agent.prompts.first.include?("<<<PARENT PLAN>>>")
+    agent.prompts.first.include?("The full spec lives here.")
+    agent.prompts.first.include?("OUT OF SCOPE")
+    agent.prompts.first.include?("- Client UI")
+    !agent.prompts.first.include?("- Server API")
 
     Cleanup
     nil

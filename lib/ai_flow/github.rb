@@ -136,6 +136,40 @@ module AiFlow
       threads.reject { |thread| thread["isResolved"] }.map { |thread| to_review_thread(thread) }
     end
 
+    # The native sub-issue relationship, from the child side (only GraphQL
+    # exposes it).
+    PARENT_ISSUE_QUERY = <<~GRAPHQL
+      query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          issue(number: $number) {
+            parent { number title body url state repository { nameWithOwner } }
+          }
+        }
+      }
+    GRAPHQL
+
+    # The plan a sub-issue belongs to — how /build reconstructs a subtask's
+    # scope (sub-issues carry thin bodies; the parent plan is the spec).
+    # Works for adopted issues too, since adoption creates the same native
+    # relationship.
+    #
+    # @return [Issue, nil] nil when the issue has no parent
+    def parent_issue(owner_repo, number)
+      owner, name = owner_repo.split("/", 2)
+      data = graphql(PARENT_ISSUE_QUERY, owner: owner, name: name, number: number)
+      parent = data.dig("repository", "issue", "parent")
+      return nil unless parent
+
+      Issue.new(
+        number: parent.fetch("number"),
+        title: parent.fetch("title"),
+        body: parent["body"] || "",
+        html_url: parent["url"],
+        state: parent["state"]&.downcase,
+        repo: parent.dig("repository", "nameWithOwner"),
+      )
+    end
+
     # Acknowledge a command with a reaction (👀 while running) — never a
     # status comment.
     def react_to_comment(owner_repo, comment_id, reaction, review_comment: false)

@@ -357,10 +357,36 @@ module AiFlow
           #{PlanBody.from_issue_body(issue.body)}
           <<<END BODY>>>
 
+          #{parent_context(issue)}
           #{extra_instruction.empty? ? "" : "Additional instruction: #{extra_instruction}"}
 
           Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
         PROMPT
+      end
+
+      # Sub-issues are thin tracking shards — the parent plan is the spec.
+      # The native parent relationship (never prose) locates it, and the
+      # sibling titles bound this subtask's scope so wave-built sub-issues
+      # don't overlap.
+      #
+      # @return [String] empty for parentless issues
+      def parent_context(issue)
+        issue_repo = issue.repo || @context.owner_repo
+        parent = @github.parent_issue(issue_repo, issue.number)
+        return "" unless parent
+
+        siblings = @github.sub_issues(parent.repo, parent.number)
+                          .reject { |sub| sub.number == issue.number && (sub.repo || parent.repo) == issue_repo }
+        sibling_list = siblings.map { |sub| "- #{sub.title}" }.join("\n")
+        <<~CONTEXT
+          This issue is one subtask of the parent plan #{parent.repo}##{parent.number}: #{parent.title}
+          <<<PARENT PLAN>>>
+          #{PlanBody.from_issue_body(parent.body)}
+          <<<END PARENT PLAN>>>
+
+          Sibling subtasks — OUT OF SCOPE here, implement only this issue's subtask:
+          #{sibling_list.empty? ? "(none)" : sibling_list}
+        CONTEXT
       end
 
       # @return [Boolean] whether there was anything to commit

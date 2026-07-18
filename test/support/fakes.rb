@@ -137,6 +137,16 @@ class FakeGitHub
     (@sub_issues[[owner_repo, number]] || []).map(&:dup)
   end
 
+  def seed_parent(owner_repo, number, parent)
+    @parents ||= {}
+    @parents[[owner_repo, number]] = parent
+  end
+
+  def parent_issue(owner_repo, number)
+    @calls << [:parent_issue, owner_repo, number]
+    (@parents || {})[[owner_repo, number]]&.dup
+  end
+
   # Adoption of an issue already owned by another parent fails on the real
   # API (one parent per issue); tests opt specific rest ids into that.
   def fail_add_sub_issue_for(sub_issue_id)

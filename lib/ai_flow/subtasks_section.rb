@@ -31,8 +31,8 @@ module AiFlow
     end
 
     # @param body [String]
-    # @return [Array<Hash>] entries with "title", "repo", "body",
-    #   "depends_on" (indices), and optional "existing" ("owner/repo#n")
+    # @return [Array<Hash>] entries with "title", "repo", "depends_on"
+    #   (indices), and optional "existing" ("owner/repo#n")
     # @raise [Error] when the section is missing or hand-edits broke it
     def parse_spec(body)
       section = section_text(body)
@@ -112,6 +112,10 @@ module AiFlow
       [start, finish]
     end
 
+    # The interface is exactly these four keys — sub-issue bodies are not
+    # part of the spec (the parent plan is the spec; created sub-issues get
+    # a thin templated body). Unknown keys are ignored.
+    #
     # @return [Hash] the entry, shape-checked with defaults filled in
     def validate_entry(entry)
       raise Error, "each subtask must be a yaml mapping, got: #{entry.inspect}" unless entry.is_a?(Hash)
@@ -132,7 +136,6 @@ module AiFlow
       {
         "title" => title,
         "repo" => entry["repo"].to_s.strip,
-        "body" => entry["body"].to_s,
         "depends_on" => depends_on,
         "existing" => existing&.to_s,
       }.compact
@@ -147,13 +150,6 @@ module AiFlow
       depends_on = entry["depends_on"] || []
       lines << "  depends_on: [#{depends_on.join(", ")}]" unless depends_on.empty?
       match_lines.each { |line| lines << "  # possible match: #{line}" }
-      body = entry["body"].to_s.rstrip
-      if body.empty?
-        lines << "  body: \"\""
-      else
-        lines << "  body: |"
-        body.split("\n").each { |line| lines << (line.empty? ? "" : "    #{line}") }
-      end
       "#{lines.join("\n")}\n"
     end
   end

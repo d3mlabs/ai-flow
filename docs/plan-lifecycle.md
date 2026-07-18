@@ -51,23 +51,27 @@ stateDiagram-v2
    reviewing it) evolve the body; `dev plan pull` brings it back to Cursor
    whenever local editing is more comfortable.
 4. **Split, in two phases.** `/split --dry` stages the proposal as an
-   editable `## Subtasks` yaml section in the plan body — routing
-   per-subtask (`repo:`), dependency indices, `existing:` adoptions, and
-   Ruby-suggested `# possible match:` comments. The human reviews and edits
-   the section like any other body content (it round-trips through
-   `dev plan pull/push`). `/split --apply` executes exactly what the
-   section says — no agent, no drift between what was reviewed and what
-   runs. Bare `/split` does both in one shot when staging review isn't
-   needed. At apply, canonicity transfers to the sub-issues and the section
-   becomes a linked map.
+   editable `## Subtasks` yaml section in the plan body — title-only
+   entries (the plan is the spec; sub-issues are thin tracking shards of
+   it) with routing per-subtask (`repo:`), dependency indices, `existing:`
+   adoptions, and Ruby-suggested `# possible match:` comments. The human
+   reviews and edits the section like any other body content (it
+   round-trips through `dev plan pull/push`). `/split --apply` executes
+   exactly what the section says — no agent, no drift between what was
+   reviewed and what runs. Bare `/split` does both in one shot when staging
+   review isn't needed. At apply, canonicity transfers to the sub-issues
+   (created with thin `Part of owner/repo#n.` bodies — add bespoke context
+   directly on a sub-issue, it survives later reconciliations) and the
+   section becomes a linked map.
 5. **Build.** Either `/build` on the plan for one whole-plan PR (the
    simple-plan path stays first-class — splitting is a scoping choice for
    blast radius and reviewability, never an obligation), `/build` on
-   individual sub-issues, or `/build --split` on the parent to orchestrate
-   all of them in dependency waves with a live checklist. Nodes the
-   orchestrator cannot drive (intended-repo fallbacks, adopted/referenced
-   external issues) are skipped with warnings and their dependents reported
-   blocked.
+   individual sub-issues (the prompt reconstructs the subtask's scope: the
+   parent plan body rides along and sibling titles are fenced out of
+   scope), or `/build --split` on the parent to orchestrate all of them in
+   dependency waves with a live checklist. Nodes the orchestrator cannot
+   drive (intended-repo fallbacks, adopted/referenced external issues) are
+   skipped with warnings and their dependents reported blocked.
 6. **Iterate.** On each PR, review feedback accumulates as threads and
    comments; `/build` on the PR sweeps and addresses it, replying in each
    thread with its disposition and the commit link. Humans resolve threads
@@ -86,6 +90,7 @@ Everything ai-flow reads from or writes into issue bodies, in one place:
 | `## Subtasks` linked map | plan body | `/split` at apply | humans; `/build --split` (adopted/referenced annotations mark undrivable nodes) |
 | `existing: owner/repo#n` | spec entry | agent or human | `/split --apply` (adopt parentless / reference parented, never create) |
 | `# possible match: owner/repo#n "title"` | spec entry | `/split --dry` (deterministic title search) | human — promote into `existing:` or delete |
+| `Part of owner/repo#n.` | sub-issue body | `/split` at apply (thin templated body) | humans — decoration only; `/build` locates the parent via the native sub-issue relationship, not prose |
 | `Depends on: owner/repo#n, …` | sub-issue body | `/split` at apply (always fully qualified) | `/build --split` (wave ordering; open external deps block dependents) |
 | `Intended repo: owner/repo` | sub-issue body | `/split` fallback (App not installed on the target) | `/build --split` (skips the node), humans (install the App there, re-run `/split`) |
 | `<!-- ai-flow:build #n -->` | PR body | `/build` | Projects automation, humans |
