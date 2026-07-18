@@ -175,6 +175,60 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "/build refuses on a plan with a staged /split proposal" do
+    Given "an issue whose body carries an unapplied Subtasks spec"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: <<~BODY)
+      # Carve system
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::SPEC_MARKER}
+
+      ```yaml
+      - title: "Server API"
+        repo: #{REPO}
+        body: ""
+      ```
+    BODY
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new([])
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent)
+
+    Then "no agent, no git, an ℹ️ panel naming /split --apply"
+    agent.prompts.empty?
+    executor.command_lines.empty?
+    github.comment_edits.fetch(55).include?("staged /split proposal")
+    github.comment_edits.fetch(55).include?("/split --apply")
+
+    Cleanup
+    nil
+  end
+
+  test "/build on a plan with open sub-issues proceeds and notes them" do
+    Given "an issue with applied sub-issues still open"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    github.seed_sub_issues(REPO, 7, [
+      AiFlow::GitHub::Issue.new(
+        number: 12, title: "Server API", body: "", updated_at: "2026-07-13T00:00:00Z",
+        html_url: "https://github.com/#{REPO}/issues/12", state: "open", repo: REPO,
+      ),
+    ])
+
+    When "building"
+    run_build(github: github, executor: RecordingExecutor.new)
+
+    Then "the whole-plan PR opened and the panel names the open sub-issues"
+    github.calls.map(&:first).include?(:create_pull_request)
+    github.comment_edits.fetch(55).include?("✅ **/build**")
+    github.comment_edits.fetch(55).include?("open sub-issue(s) (#{REPO}#12)")
+
+    Cleanup
+    nil
+  end
+
   test "/build with no agent changes opens no PR and reports it" do
     Given "an issue and an agent run that changes nothing"
     github = FakeGitHub.new

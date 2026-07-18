@@ -46,6 +46,8 @@ module AiFlow
         return iterate_on_pull_request(segment) if @context.pull_request?
 
         issue = @github.issue(@context.owner_repo, @context.number)
+        return refuse_staged_spec(segment) if SubtasksSection.spec?(issue.body)
+
         pr = build_issue(issue, extra_instruction: segment.instruction)
         result =
           if pr
@@ -53,7 +55,7 @@ module AiFlow
           else
             "⚠️ **/build** — the agent made no changes, so no PR was opened."
           end
-        @result_writer.write(@context, [[segment, result]])
+        @result_writer.write(@context, [[segment, [result, open_sub_issues_note].compact.join("\n\n")]])
       end
 
       # Build one issue end to end. Shared with the --split orchestrator.
@@ -79,6 +81,34 @@ module AiFlow
       end
 
       private
+
+      # ---- Split-state guards (issue mode) ----
+
+      # An unapplied /split proposal makes the plan-of-record ambiguous;
+      # building past it would silently discard the human's own staging —
+      # refuse, naming the next command (never silent).
+      def refuse_staged_spec(segment)
+        @result_writer.write(
+          @context,
+          [[segment, "ℹ️ **/build** — this plan has a staged /split proposal. `/split --apply` it " \
+                     "or delete the `#{SubtasksSection::HEADER}` section, then re-run /build."]],
+        )
+      end
+
+      # Applied sub-issues are a committed valid state: building the whole
+      # plan across them is a legitimate deliberate call, so the human is
+      # informed, never blocked.
+      #
+      # @return [String, nil]
+      def open_sub_issues_note
+        open_subs = @github.sub_issues(@context.owner_repo, @context.number)
+                           .select { |issue| issue.state == "open" }
+        return nil if open_subs.empty?
+
+        listing = open_subs.map { |issue| "#{issue.repo || @context.owner_repo}##{issue.number}" }.join(", ")
+        "ℹ️ This plan has #{open_subs.size} open sub-issue(s) (#{listing}) — this /build covered the " \
+          "whole plan; close or /build them individually if they were meant to scope the work."
+      end
 
       # ---- PR-iteration mode ----
 

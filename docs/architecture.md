@@ -2,8 +2,10 @@
 
 How ai-flow is put together: the system's three halves, what happens between
 a slash-command comment and its in-place result, and how the Ruby dispatcher
-is structured. Identity and authorship live in their own doc —
-[attribution.md](attribution.md).
+is structured. Command semantics per surface (flags, decision tables,
+refusals) live in [commands.md](commands.md); the end-to-end plan story and
+body conventions in [plan-lifecycle.md](plan-lifecycle.md); identity and
+authorship in [attribution.md](attribution.md).
 
 ## System overview
 
@@ -116,6 +118,9 @@ flowchart TD
     disp --> buildCmd["Commands::Build"]
     disp --> buildSplitCmd["Commands::BuildSplit<br/>(orchestrates Build per wave)"]
 
+    splitCmd --> subtasksSection["SubtasksSection<br/>(## Subtasks spec/map<br/>parser + writer)"]
+    buildCmd --> subtasksSection
+    buildSplitCmd --> subtasksSection
     batchCmd --> planBody["PlanBody<br/>(body normalization, quote anchors)"]
     batchCmd --> richDiff["RichDiff<br/>(collapsed Word diff + Source diff,<br/>text-fragment backlink)"]
     batchCmd --> resultWriter["ResultWriter<br/>(per-segment panels interleave<br/>under their quotes; batch diff<br/>appends under a --- rule)"]
@@ -139,7 +144,10 @@ Routing rules (in `Dispatcher#route`): a comment whose segments are all
 `/ask`//`/edit` runs as one `Batch` — the review work unit. `/split` and
 `/build` are lifecycle operations and must be a comment's only command
 (enforced by `CommentParser#validate!`); `/build --split` goes to the
-orchestrator (and is refused on PRs).
+orchestrator (and is refused on PRs). `/split`'s `--dry`/`--apply` flags
+are resolved inside `Commands::Split`; the staged proposal lives in the
+plan body as the `## Subtasks` section (`SubtasksSection` owns its
+format — see [commands.md](commands.md)).
 
 The command-surface consistency rule: `/ask` and `/edit` always operate on
 the document — the issue body or the PR description (the issues API covers
@@ -188,10 +196,18 @@ flowchart TD
     push --> openPr["Open PR: Closes owner/repo#n,<br/>Requested by, assignee = requester,<br/>ai-flow:build marker"]
 ```
 
+On an issue, `/build` first reads the split state: a staged (unapplied)
+`## Subtasks` spec is a refusal, open sub-issues are a note on the result
+panel (decision table in [commands.md](commands.md)).
+
 `/build --split` wraps this: it reads the parent's native sub-issues,
-topologically sorts them by their `Depends on: #n` lines into waves, runs
-`Build#build_issue` per sub-issue, ensures a final integration sub-issue
-exists, and reports a live per-wave checklist edited in place.
+topologically sorts them by their `Depends on: owner/repo#n` lines into
+waves, runs `Build#build_issue` per sub-issue, ensures a final integration
+sub-issue exists, and reports a live per-wave checklist edited in place.
+Nodes it cannot drive — intended-repo fallbacks and adopted/referenced
+external issues (read from the applied `## Subtasks` map) — are skipped
+with explicit warnings, and their dependents (including anything depending
+on an open issue outside the set) are reported blocked.
 
 On a PR, `/build` iterates on the head branch in the job checkout instead:
 

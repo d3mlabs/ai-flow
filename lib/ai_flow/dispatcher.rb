@@ -40,7 +40,7 @@ module AiFlow
       # itself must still go red so a failed command is visible from Actions.
       warn "ai-flow: one or more segments failed — see the command comment."
       exit 1
-    rescue CommentParser::ParseError, GitHub::Error, Agent::Error => e
+    rescue CommentParser::ParseError, GitHub::Error, Agent::Error, SubtasksSection::Error => e
       report_failure(segments, e)
     end
 
