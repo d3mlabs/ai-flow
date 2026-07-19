@@ -39,7 +39,7 @@ flowchart LR
     hook --> devPlan
     devPlan <-->|"guarded body sync (gh api)"| issue
     comments -->|"issue_comment /<br/>pull_request_review_comment"| actions
-    actions -->|"routes by labels<br/>(ai-light / ai-build)"| dispatcher
+    actions -->|"routes by per-command labels<br/>(ai-ask / ai-edit / ai-split / ai-build)"| dispatcher
     app -->|"1h installation token"| actions
     dispatcher --> agentCli
     dispatcher -->|"writes as ai-flow[bot]"| issue
@@ -53,8 +53,8 @@ Division of labor, and why:
   queueing, and routing are operated by GitHub and cost nothing on
   self-hosted runners. There is no always-on service anywhere in ai-flow.
 - **Self-hosted runners are the execution layer** — normal agent billing,
-  per-command model control (`Agent::MODELS`), and warm dev environments
-  for `/build`.
+  per-command model control (`.github/ai-flow.yml`), and warm dev
+  environments for `/build`.
 - **The GitHub App is identity only** — no hosted component; the workflow
   mints a short-lived installation token each job. App tokens (unlike the
   default `GITHUB_TOKEN`) trigger downstream workflows, which is what gives
@@ -75,7 +75,7 @@ sequenceDiagram
     Human->>GitHub: comment "/edit tighten this section"
     GitHub->>Workflow: issue_comment event (job-level if filter passed)
     Note over Workflow: ack job (GitHub-hosted, outside the<br/>concurrency group) reacts 👀 within<br/>seconds, before dispatch even starts
-    Note over Workflow: runs-on picks the pool:<br/>/build to ai-build, rest to ai-light<br/>(or dev-login when per_actor_runners)
+    Note over Workflow: runs-on picks the per-command label,<br/>heaviest command wins in a batch<br/>(or dev-login when per_actor_runners)
     Workflow->>GitHub: mint App installation token (required)
     Workflow->>Workflow: checkout target repo + ai-flow
     Workflow->>Dispatcher: ruby dispatch.rb (GH_TOKEN = App token)
@@ -233,11 +233,36 @@ flowchart TD
 - **Agent backend**: `Agent#launch` is the single seam that invokes the
   `agent` CLI — an alternative backend (cloud REST API, another vendor's
   CLI) is a change here, not in the command scripts.
-- **Model policy**: `Agent::MODELS` maps command to model; `AI_FLOW_MODEL`
-  overrides per run.
-- **Runner routing**: `light_runner_labels` / `build_runner_labels` inputs,
-  or `per_actor_runners` for per-dev pools.
+- **Model policy**: per-repo config, not workflow inputs (see below).
+- **Runner routing**: fixed per-command labels (`ai-<command>`), or
+  `per_actor_runners` for per-dev pools. Custom labels per repo are
+  deliberately not supported — a repo with exotic needs adjusts which boxes
+  carry which labels, not ai-flow.
 - **Command prefix**: `command_prefix` input for orgs with clashing
   slash-command bots.
 - **Identity**: the App secrets; the bot login self-configures from the
   App's slug (`AI_FLOW_BOT_LOGIN`).
+
+## Per-repo config: .github/ai-flow.yml
+
+Knobs split by consumer: values read by workflow-engine expressions
+(`command_prefix`, runner routing, `per_actor_runners`) must be workflow
+inputs, which are scalar-only; values read by the Ruby dispatcher live in
+`.github/ai-flow.yml` in the target repo — real nested YAML, versioned and
+reviewable, read from the checkout by `RepoConfig` (probot-style, like
+`dependabot.yml` / `labeler.yml`). Today it holds model policy:
+
+```yaml
+models:
+  default: claude-fable-5-high
+  # build: <heavier model>   # optional per-command override
+```
+
+Resolution per command (blank values are unset at every link):
+`AI_FLOW_MODEL` env on the runner (ops escape hatch) > `models.<command>` >
+`models.default` > `Agent::MODELS` (code fallback, all nil) > the CLI's
+account default. The file is optional; a malformed file fails the run
+loudly (failure panel on the command comment) rather than silently falling
+back. Valid model names come from `agent --list-models` — every run's
+`Log versions` step prints both the repo config and the current model menu,
+so a typo'd model is diagnosable from the run page alone.

@@ -6,7 +6,11 @@
 #   into degraded mode with `with: { allow_token_fallback: true }`)
 # - this repo in each org secret's selected-repos list (our org secrets use
 #   `selected` visibility; see the README's adoption checklist, step 2)
-# - self-hosted runners labeled ai-light / ai-build (see d3mlabs/ai-flow README)
+# - self-hosted runners labeled per command: ai-ask / ai-edit / ai-split /
+#   ai-build (one box can carry all four labels; see d3mlabs/ai-flow README)
+#
+# Optional: model policy lives in .github/ai-flow.yml (see
+# templates/ai-flow.yml), not here — workflow inputs are scalar-only.
 name: ai-commands
 
 on:

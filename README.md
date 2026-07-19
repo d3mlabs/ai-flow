@@ -101,31 +101,54 @@ requesting human, whose accountability lives on the PR (`Requested by
    --repos <list>`). Note `private` visibility excludes public repos
    entirely — a public caller's job fails at the "Require the ai-flow App"
    step until the secret is shared with it.
-3. Register self-hosted runners with the labels the workflow routes on:
-   `ai-light` (chat-heavy commands) and `ai-build` (build-heavy — a box with
-   a warm native dev environment; /build runs the full agent loop including
-   tests, so it needs a real dev machine, not a bare runner). One registered
-   runner instance = one concurrent job; register N instances for N parallel
-   jobs. Repos using `dev` can run `dev runner-setup`.
+3. Register self-hosted runners with the per-command labels the workflow
+   routes on: `ai-ask`, `ai-edit`, `ai-split`, `ai-build`. The topology is a
+   deployment choice — one box can carry all four labels, or a beefy box
+   takes `ai-build` alone (/build runs the full agent loop including tests,
+   so it needs a real dev machine, not a bare runner) while a light box
+   takes the rest. One registered runner instance = one concurrent job;
+   register N instances for N parallel jobs. Repos using `dev` can run
+   `dev runner-setup`.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
    and make sure it — and a Ruby >= 3.0 — is on the runner service's PATH
    (the dispatcher is a stdlib-only Ruby script).
-5. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
+5. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
+   model policy (`models.default`, per-command overrides — see
+   [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));
+   valid names come from `agent --list-models`, which every run also prints
+   in its job log. Without the file, the agent CLI's account default applies.
+6. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
    auto-push via `dev plan`.
 
 Configuration inputs (set in the caller workflow's `with:`): `command_prefix`
 (default none; set e.g. `ai-` if you run other slash-command bots),
-`light_runner_labels`, `build_runner_labels`, `per_actor_runners`
-(multi-dev orgs: route every job to the commenter's own runner, labeled
-`dev-<login>`, instead of the shared pools — compute scoping without shared
-hardware; per-dev runner registration tooling is deliberately deferred),
-and `allow_token_fallback` (explicit opt-in to run without the App).
+`per_actor_runners` (multi-dev orgs: route every job to the commenter's own
+runner, labeled `dev-<login>`, instead of the shared pools — compute scoping
+without shared hardware; per-dev runner registration tooling is deliberately
+deferred), and `allow_token_fallback` (explicit opt-in to run without the
+App). Runner labels are deliberately not configurable (convention over
+configuration), and model policy lives in `.github/ai-flow.yml`, not in
+workflow inputs — inputs are scalar-only, and the config file keeps the
+caller workflow an untouched copy-paste.
+
+Why self-hosted runners are the contract (not just our preference): (a) warm
+machines — engine toolchains, derived-data caches, checkouts, and the agent
+CLI stay resident, where ephemeral hosted runners start cold every command;
+(b) billing — GitHub's standard hosted runners are free on public repos but
+too small for build workloads (2-core/7GB/14GB SSD), and larger runners bill
+even on public repos (Linux 8-core $0.032/min, 16-core $0.064/min — a 30-min
+/build on 16-core is ~$1.92/run, ~$288/mo at 150 runs, vs $0 marginal on
+boxes we already own); (c) model control — the CLI exposes the full
+`--list-models` menu including parameterized bracket overrides, where Cursor
+Cloud Agents run a curated model subset at API pricing. Hosted-runner mode
+(a CLI install step plus a routing escape hatch) is a possible future
+feature, not a current one — today a job on a runner without the agent CLI
+fails at the first agent invocation.
 
 Shareability: if this repo is public, any org can reference
 `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` with its own secret
 and runner pool (same distribution model as action repos, one level up).
-Adopters without warm-environment needs can point the label inputs at
-GitHub-hosted runners. Callers reference `@main` deliberately: the dispatcher
+Callers reference `@main` deliberately: the dispatcher
 checkout inside the workflow always runs main, so pinning the YAML to a tag
 or SHA would only freeze half the system and silently split the two versions.
 
