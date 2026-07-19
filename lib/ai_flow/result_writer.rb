@@ -47,18 +47,21 @@ module AiFlow
     def footer(run_url)
       return nil unless run_url
 
-      "⚙️ #{["[workflow run](#{run_url})", models_note].compact.join(" · ")}"
+      note = self.class.models_note(@agent&.models_used || {})
+      "⚙️ #{["[workflow run](#{run_url})", note].compact.join(" · ")}"
     end
 
     # One distinct model (the common case, whatever the command mix)
     # collapses to a single name; distinct models are attributed per
-    # command. nil when no agent pass happened (failure before launch,
-    # /split --apply) so the footer stays run-link-only.
+    # command. nil for an empty hash (no agent pass: failure before launch,
+    # /split --apply) so the caller's line stays run-link-only. A class
+    # method so the dispatcher's ⏳ status line renders its pre-launch
+    # prediction with the same grammar as the footer.
     #
+    # @param models [Hash{String => String}] command => model
     # @return [String, nil]
-    def models_note
-      models = @agent&.models_used
-      return nil if models.nil? || models.empty?
+    def self.models_note(models)
+      return nil if models.empty?
 
       distinct = models.values.uniq
       return "model: `#{distinct.first}`" if distinct.size == 1

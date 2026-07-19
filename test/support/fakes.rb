@@ -236,6 +236,12 @@ class FakeAgent
     @on_launch&.call(prompt)
     @outputs.shift or raise AiFlow::Agent::Error, "no canned output left"
   end
+
+  # Mirrors Agent#model_for's pre-launch prediction: the canned model, as
+  # nil (CLI default) when the fake was built without one.
+  def model_for(_command, _workdir)
+    @model
+  end
 end unless defined?(FakeAgent)
 
 # Builds a Context from a synthetic webhook payload. env defaults to {} (not
