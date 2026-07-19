@@ -19,7 +19,7 @@ module AiFlow
       @executor = executor
       @github = github || GitHub.new(executor: executor)
       @agent = agent || Agent.new(executor: executor)
-      @result_writer = ResultWriter.new(github: @github)
+      @result_writer = ResultWriter.new(github: @github, agent: @agent)
     end
 
     # @return [void]

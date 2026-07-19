@@ -242,6 +242,8 @@ Refusals, verbatim:
 - **Noise protocol**: acting commands never reply — results append into the
   command comment (👀 reaction while running, a ⏳ "follow the run" status
   line during execution, a permanent ⚙️ workflow-run footer with the
-  results). Standalone `/ask` is the one reply exception.
+  results). The footer also names the model the agent ran on (per command
+  when a batch used distinct models). Standalone `/ask` is the one reply
+  exception.
 - **Failures land on the comment** as a ⚠️ panel and the Actions run goes
   red — never silent.

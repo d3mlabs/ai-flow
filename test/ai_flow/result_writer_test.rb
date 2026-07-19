@@ -90,6 +90,56 @@ class AiFlow::ResultWriterTest < Minitest::Test
     nil
   end
 
+  test "one distinct model collapses to a single footer name, whatever the command mix" do
+    Given "an agent whose /ask and /edit both resolved to the same model"
+    agent = FakeAgent.new(["out", "out"], model: "claude-fable-5-high")
+    agent.launch(prompt: "p", workdir: ".", command: "ask")
+    agent.launch(prompt: "p", workdir: ".", command: "edit")
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
+
+    When "rendering the footer"
+    footer = writer.footer("https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then
+    footer == "⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9) · model: `claude-fable-5-high`"
+
+    Cleanup
+    nil
+  end
+
+  test "distinct models are attributed per command" do
+    Given "an agent seeded with a different model per command"
+    agent = FakeAgent.new([], model: nil)
+    agent.models_used["ask"] = "claude-fable-5-high"
+    agent.models_used["edit"] = "gpt-5.3-codex"
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
+
+    When "rendering the footer"
+    footer = writer.footer("https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then
+    footer == "⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9) · " \
+              "models: /ask `claude-fable-5-high`, /edit `gpt-5.3-codex`"
+
+    Cleanup
+    nil
+  end
+
+  test "no agent pass leaves the footer run-link-only" do
+    Given "an agent that never launched (e.g. /split --apply)"
+    agent = FakeAgent.new([])
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
+
+    When "rendering the footer"
+    footer = writer.footer("https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then
+    footer == "⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9)"
+
+    Cleanup
+    nil
+  end
+
   test "review comments are edited through the pulls namespace" do
     Given "a review-comment context"
     github = FakeGitHub.new

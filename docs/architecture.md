@@ -265,4 +265,8 @@ account default. The file is optional; a malformed file fails the run
 loudly (failure panel on the command comment) rather than silently falling
 back. Valid model names come from `agent --list-models` — every run's
 `Log versions` step prints both the repo config and the current model menu,
-so a typo'd model is diagnosable from the run page alone.
+so a typo'd model is diagnosable from the run page alone. The resolved
+model is also visible per pass — an `ai-flow model (/<command>): ...` line
+in the job log, and a model note on the ⚙️ footer of every result comment
+(one name when the run used a single model, per-command attribution when a
+batch mixed models).

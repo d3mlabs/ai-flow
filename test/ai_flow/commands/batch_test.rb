@@ -26,7 +26,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
       github: github,
       agent: agent,
       rich_diff: AiFlow::RichDiff.new,
-      result_writer: AiFlow::ResultWriter.new(github: github),
+      result_writer: AiFlow::ResultWriter.new(github: github, agent: agent),
       workdir: workdir,
     )
   end
@@ -234,8 +234,8 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     When "running"
     build_batch(github:, agent:, context:, workdir: dir).run(parse("/ask why LOD0 only?"))
 
-    Then "the reply carries the footer; the command comment is reverted to the payload body"
-    github.comments.first.end_with?("⚙️ [workflow run](#{run_url})")
+    Then "the reply carries the footer with the model note; the command comment is reverted to the payload body"
+    github.comments.first.end_with?("⚙️ [workflow run](#{run_url}) · model: `fake-model`")
     github.comment_edits.fetch(55) == "/ask why LOD0 only?"
 
     Cleanup
