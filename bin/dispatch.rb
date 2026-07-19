@@ -7,6 +7,10 @@
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
+# The Actions run page live-streams a running step's stdout; unbuffered
+# writes are what make the agent's progress lines appear as they happen.
+$stdout.sync = true
+
 require "ai_flow"
 
 context = AiFlow::Context.from_event_file(

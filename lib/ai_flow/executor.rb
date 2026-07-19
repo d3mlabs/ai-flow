@@ -21,5 +21,38 @@ module AiFlow
     rescue Errno::ENOENT => e
       ["", e.message, false]
     end
+
+    # Like capture, but yields stdout line by line as the subprocess emits
+    # it — the live half of the Actions job log (a running step streams its
+    # stdout to the run page). stdin is written on a thread so a large
+    # prompt can't deadlock against a filling stdout pipe; stderr drains on
+    # a thread for the same reason.
+    #
+    # @param argv [Array<String>] command and arguments
+    # @param stdin [String, nil] data piped to the subprocess
+    # @param chdir [String, nil] working directory
+    # @yieldparam line [String] one stdout line, as emitted
+    # @return [Array(String, Boolean)] stderr, success?
+    def stream(*argv, stdin: nil, chdir: nil)
+      opts = chdir ? { chdir: chdir } : {}
+      err = ""
+      status = Open3.popen3(*argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
+        writer = Thread.new do
+          stdin_io.write(stdin) if stdin
+          stdin_io.close
+        rescue Errno::EPIPE
+          # The subprocess died before reading the prompt; its stderr and
+          # exit status carry the story.
+        end
+        drain = Thread.new { stderr_io.read }
+        stdout_io.each_line { |line| yield line }
+        writer.join
+        err = drain.value.to_s
+        wait_thread.value
+      end
+      [err, status.success?]
+    rescue Errno::ENOENT => e
+      [e.message, false]
+    end
   end
 end

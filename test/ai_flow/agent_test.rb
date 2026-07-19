@@ -5,18 +5,25 @@ require "tmpdir"
 require "fileutils"
 require "json"
 
-# Captures every capture() argv so tests assert on the exact agent CLI
-# invocation; replies with a canned success envelope.
+# Captures every stream() argv so tests assert on the exact agent CLI
+# invocation; replays a canned NDJSON stream (default: one terminal result
+# event) line by line, like the real CLI in stream-json mode.
 class RecordingExecutor
+  DEFAULT_STREAM = [%({"type":"result","subtype":"success","is_error":false,"result":"ok"})].freeze
+
   attr_reader :captures
 
-  def initialize
+  def initialize(lines: DEFAULT_STREAM, err: "", ok: true)
+    @lines = lines
+    @err = err
+    @ok = ok
     @captures = []
   end
 
-  def capture(*argv, stdin: nil, chdir: nil, env: {})
+  def stream(*argv, stdin: nil, chdir: nil)
     @captures << argv
-    [JSON.generate({ "result" => "ok" }), "", true]
+    @lines.each { |line| yield "#{line}\n" }
+    [@err, @ok]
   end
 end unless defined?(RecordingExecutor)
 
@@ -214,6 +221,99 @@ class AiFlow::AgentTest < Minitest::Test
 
     Then
     model_flag(executor).nil?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the CLI runs in stream-json mode and the terminal result event is the answer" do
+    Given "a stream with assistant chatter, a tool call, and a result event"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new(lines: [
+      %({"type":"system","subtype":"init","model":"Fable 5 High","session_id":"s"}),
+      %({"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"rake test"}}}}),
+      %({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working on it."}]}}),
+      %({"type":"result","subtype":"success","is_error":false,"result":"THE ANSWER"}),
+    ])
+
+    When "launching"
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+
+    Then "the result event wins and the argv asked for the streaming format"
+    answer == "THE ANSWER"
+    executor.captures.fetch(0).each_cons(2).include?(["--output-format", "stream-json"])
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a stream that ends without a result event falls back to the assistant text" do
+    Given "a truncated stream (two assistant messages, no terminal event) that still exits 0"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new(lines: [
+      %({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"First."}]}}),
+      %({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Second."}]}}),
+    ])
+
+    When "launching"
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+
+    Then
+    answer == "First.\n\nSecond."
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "non-JSON junk and unknown event types degrade to noise, never a crash" do
+    Given "a stream with a raw line, an unknown event type, and a result"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new(lines: [
+      "some non-json narration",
+      %({"type":"connection","subtype":"reconnecting"}),
+      %({"type":"result","subtype":"success","is_error":false,"result":"ok"}),
+    ])
+
+    When "launching"
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+
+    Then
+    answer == "ok"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failed run raises" do
+    Given "a failing executor with stderr"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new(lines: [], err: "boom from the CLI", ok: false)
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+
+    Then
+    raises AiFlow::Agent::Error
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a silent failure points at the streamed log" do
+    Given "a failing executor with no stderr and an empty stream"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new(lines: [], err: "", ok: false)
+
+    When "launching and capturing the failure"
+    error = begin
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+      nil
+    rescue AiFlow::Agent::Error => e
+      e
+    end
+
+    Then
+    error.message.include?("see the streamed agent log above")
 
     Cleanup
     FileUtils.rm_rf(dir)

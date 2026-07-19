@@ -41,6 +41,11 @@ module AiFlow
 
     # Run the headless agent to completion and return its final answer text.
     #
+    # The CLI runs in stream-json mode (one NDJSON event per assistant
+    # message / tool call) and each event prints as a concise progress line
+    # the moment it arrives — the Actions run page live-streams a running
+    # step's stdout, so this is what makes "follow the run" worth following.
+    #
     # @param prompt [String]
     # @param workdir [String] repo checkout the agent works in
     # @param command [String] ai-flow command name, for model policy
@@ -51,7 +56,7 @@ module AiFlow
     def launch(prompt:, workdir:, command:, force: false)
       # --trust: headless runs can't answer the workspace-trust prompt, and the
       # workdir is always a CI checkout of a repo we dispatched for.
-      argv = [binary, "-p", "--output-format", "json", "--trust"]
+      argv = [binary, "-p", "--output-format", "stream-json", "--trust"]
       model = model_for(command, workdir)
       @models_used[command] = model || "cursor default"
       # Ungrouped so the effective model is scannable on the run page next
@@ -60,12 +65,28 @@ module AiFlow
       argv += ["--model", model] if model
       argv << "--force" if force
 
-      out, err, ok = @executor.capture(*argv, stdin: prompt, chdir: workdir)
-      log_run(command, prompt, out, err)
-      raise Error, "agent CLI not found — install the Cursor agent CLI on this runner" if err.include?("No such file")
-      raise Error, "agent run failed: #{err.strip.empty? ? out.strip : err.strip}" unless ok
+      log_group("ai-flow agent prompt (/#{command})", prompt)
+      result = nil
+      assistant_texts = []
+      err, ok = @executor.stream(*argv, stdin: prompt, chdir: workdir) do |line|
+        event = parse_event(line)
+        result = event["result"].to_s if event && event["type"] == "result"
+        render_event(command, line, event, assistant_texts)
+      end
 
-      parse_result(out)
+      # The stream already scrolled by live, so the post-hoc groups carry
+      # only the prompt (above), the final text, and any stderr.
+      final_text = result || assistant_texts.join("\n\n")
+      log_group("ai-flow agent final result (/#{command})", final_text)
+      log_group("ai-flow agent stderr (/#{command})", err) unless err.strip.empty?
+      raise Error, "agent CLI not found — install the Cursor agent CLI on this runner" if err.include?("No such file")
+      unless ok
+        detail = err.strip.empty? ? final_text.strip : err.strip
+        detail = "see the streamed agent log above" if detail.empty?
+        raise Error, "agent run failed: #{detail}"
+      end
+
+      final_text
     end
 
     # Model precedence: AI_FLOW_MODEL env (ops escape hatch on the runner
@@ -88,15 +109,67 @@ module AiFlow
 
     private
 
-    # The workflow job log is ai-flow's observability surface: every agent
-    # pass logs its prompt and raw output as collapsed groups, so a bad run
-    # can be diagnosed from the run page without reproducing it. `::group::`
-    # is the Actions log-grouping command; the runner only processes workflow
-    # commands on stdout, and outside Actions the lines are harmless.
-    def log_run(command, prompt, out, err)
-      log_group("ai-flow agent prompt (/#{command})", prompt)
-      log_group("ai-flow agent raw output (/#{command})", out)
-      log_group("ai-flow agent stderr (/#{command})", err) unless err.strip.empty?
+    # @param line [String] one NDJSON line from the stream
+    # @return [Hash, nil] nil when the line isn't a JSON event (format drift)
+    def parse_event(line)
+      parsed = JSON.parse(line)
+      parsed.is_a?(Hash) ? parsed : nil
+    rescue JSON::ParserError
+      nil
+    end
+
+    # One concise progress line per event, printed as it arrives. Unknown
+    # event types print nothing (CLI additions must never break a run);
+    # unparseable lines print raw so a format drift degrades to noise, not
+    # silence. The `[/command]` prefix attributes interleaved passes — a
+    # batch runs one pass per segment and /build --split fans out further.
+    #
+    # @param command [String]
+    # @param line [String] the raw NDJSON line
+    # @param event [Hash, nil] the parsed event
+    # @param assistant_texts [Array<String>] accumulator for the result
+    #   fallback when the stream ends without a terminal result event
+    def render_event(command, line, event, assistant_texts)
+      unless event
+        $stdout.puts line.chomp unless line.strip.empty?
+        return
+      end
+
+      case event["type"]
+      when "system"
+        $stdout.puts "[/#{command}] session started (model: #{event["model"]})" if event["subtype"] == "init"
+      when "assistant"
+        text = event.dig("message", "content", 0, "text").to_s
+        return if text.empty?
+
+        assistant_texts << text
+        $stdout.puts "[/#{command}] assistant: #{truncate(text.lines.first.to_s.strip)}"
+      when "tool_call"
+        $stdout.puts "[/#{command}] → #{tool_summary(event)}" if event["subtype"] == "started"
+      end
+    end
+
+    # "shell: bundle exec rake test", "read: lib/thing.rb", or the bare tool
+    # name when no headline argument is recognizable. The tool kind is the
+    # one `*ToolCall` key of the event's tool_call object (observed shape,
+    # matching the CLI reference).
+    #
+    # @param event [Hash] a tool_call event
+    # @return [String]
+    def tool_summary(event)
+      kind, payload = (event["tool_call"] || {}).find { |key, _value| key.end_with?("ToolCall") }
+      return "tool call" unless kind
+
+      name = kind.sub(/ToolCall\z/, "")
+      args = payload.is_a?(Hash) ? (payload["args"] || {}) : {}
+      detail = args["command"] || args["path"] || args["pattern"] || args["query"]
+      detail ? "#{name}: #{truncate(detail.to_s)}" : name
+    end
+
+    # @param text [String]
+    # @return [String] at most ~120 chars, ellipsized
+    def truncate(text, max = 120)
+      text.length > max ? "#{text[0, max - 1]}…" : text
     end
 
     def log_group(title, content)
@@ -108,18 +181,6 @@ module AiFlow
     # @return [String]
     def binary
       ENV.fetch("AI_FLOW_AGENT_BIN", "agent")
-    end
-
-    # The CLI emits a JSON envelope with the final text in "result"; fall back
-    # to raw stdout so a format drift degrades gracefully instead of failing.
-    #
-    # @param out [String]
-    # @return [String]
-    def parse_result(out)
-      parsed = JSON.parse(out)
-      parsed.is_a?(Hash) ? (parsed["result"] || parsed["text"] || out).to_s : out
-    rescue JSON::ParserError
-      out
     end
   end
 end
