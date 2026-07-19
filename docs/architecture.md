@@ -270,3 +270,8 @@ model is also visible per pass — an `ai-flow model (/<command>): ...` line
 in the job log, a pre-launch prediction on the ⏳ status line, and a model
 note on the ⚙️ footer of every result comment (one name when the run used
 a single model, per-command attribution when a batch mixed models).
+
+The run page is live, not just post-hoc: the agent CLI runs in stream-json
+mode and every event prints as it happens (`[/build] → shell: rake test`,
+`[/build] assistant: …`), so "follow the run" shows the agent working in
+real time. The prompt and final result stay as collapsed groups.

@@ -38,6 +38,8 @@ Batches: one comment may hold several quote+command pairs (`/ask`//`/edit`
 only) — the review work unit. Noise protocol: acting commands never reply;
 the dispatcher edits the command comment in place (👀 reaction while
 running); the one exception is a standalone `/ask`, which gets a reply.
+While a command runs, the linked Actions run page streams the agent's
+activity live — one line per assistant message and tool call.
 
 ## Layout
 
