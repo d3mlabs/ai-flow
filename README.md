@@ -107,8 +107,12 @@ requesting human, whose accountability lives on the PR (`Requested by
    takes `ai-build` alone (/build runs the full agent loop including tests,
    so it needs a real dev machine, not a bare runner) while a light box
    takes the rest. One registered runner instance = one concurrent job;
-   register N instances for N parallel jobs. Repos using `dev` can run
-   `dev runner-setup`.
+   register N instances for N parallel jobs. New hosts: repos with a
+   `runner:` block in dev.yml can run `dev runner-setup` (labels via the
+   block or `--labels`, `--org` for an org-wide runner). Already-registered
+   runners don't re-register to change labels — edit the custom labels in
+   place (runner settings on GitHub, or
+   `gh api -X PUT <scope>/actions/runners/<id>/labels`).
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
    and make sure it — and a Ruby >= 3.0 — is on the runner service's PATH
    (the dispatcher is a stdlib-only Ruby script).
