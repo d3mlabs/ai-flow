@@ -107,8 +107,8 @@ class AiFlow::ResultWriterTest < Minitest::Test
     nil
   end
 
-  test "distinct models are attributed per command" do
-    Given "an agent seeded with a different model per command"
+  test "distinct model values list out (defensive — a job launches under one policy)" do
+    Given "an agent seeded with two distinct models"
     agent = FakeAgent.new([], model: nil)
     agent.models_used["ask"] = "claude-fable-5-high"
     agent.models_used["edit"] = "gpt-5.3-codex"
@@ -119,7 +119,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
 
     Then
     footer == "⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9) · " \
-              "models: /ask `claude-fable-5-high`, /edit `gpt-5.3-codex`"
+              "model: `claude-fable-5-high`, `gpt-5.3-codex`"
 
     Cleanup
     nil

@@ -243,7 +243,8 @@ Refusals, verbatim:
   command comment (👀 reaction while running, a ⏳ "follow the run" status
   line during execution, a permanent ⚙️ workflow-run footer with the
   results). Both the ⏳ line (as a pre-launch prediction) and the footer
-  name the model the agent runs on (per command when a batch uses distinct
-  models). Standalone `/ask` is the one reply exception.
+  name the model the agent runs on — one model per job, since a batch is a
+  single agent pass (run under the /edit policy when any edit is present).
+  Standalone `/ask` is the one reply exception.
 - **Failures land on the comment** as a ⚠️ panel and the Actions run goes
   red — never silent.

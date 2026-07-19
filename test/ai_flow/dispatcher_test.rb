@@ -109,6 +109,32 @@ class AiFlow::DispatcherTest < Minitest::Test
     nil
   end
 
+  test "a mixed batch predicts the /edit model — the single pass runs under the edit policy" do
+    Given "an /ask + /edit batch with distinct per-command models"
+    dir = Dir.mktmpdir("ai-flow-dispatcher-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n\nBody.\n")
+    comment = "/ask why?\n\n/edit tighten the plan"
+    context = ContextBuilder.issue_comment(body: comment, env: ACTIONS_ENV)
+    models = { "ask" => "cheap-ask-model", "edit" => "strong-edit-model" }
+    agent = FakeAgent.new(
+      ["<<<AI-FLOW:SEGMENT 1>>>\nBecause.\n<<<AI-FLOW:SEGMENT 2>>>\nTightened."],
+      models_by_command: models,
+    ) { File.write(File.join(dir, "ai-flow-plan-7.md"), "# Plan\n\nTighter body.\n") }
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context, workdir: dir).run
+
+    Then "the ⏳ prediction and the ⚙️ footer both carry the edit model, never the ask model"
+    github.comment_edit_history.first ==
+      "#{comment}\n\n> ⏳ ai-flow is running — [follow the run](#{RUN_URL}) · model: `strong-edit-model`"
+    github.comment_edit_history.last.include?("model: `strong-edit-model`")
+    !github.comment_edit_history.last.include?("cheap-ask-model")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a malformed repo config fails as the ⚠️ panel, not a crash" do
     Given "a real Agent over a workdir whose .github/ai-flow.yml is invalid YAML"
     dir = Dir.mktmpdir("ai-flow-dispatcher-test-")
