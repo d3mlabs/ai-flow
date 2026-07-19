@@ -9,8 +9,11 @@ module AiFlow
   # diff) appends once at the bottom under a horizontal rule.
   class ResultWriter
     # @param github [AiFlow::GitHub]
-    def initialize(github:)
+    # @param agent [AiFlow::Agent, nil] source of truth for the models the
+    #   run actually used; nil (e.g. in tests) leaves the footer run-link-only
+    def initialize(github:, agent: nil)
       @github = github
+      @agent = agent
     end
 
     # Pure body transformation. Per-segment panels insert after each
@@ -39,9 +42,28 @@ module AiFlow
     end
 
     # @param run_url [String, nil]
-    # @return [String, nil] the post-hoc observability link
+    # @return [String, nil] the post-hoc observability line: run link, plus
+    #   the model(s) the agent actually ran on when it ran at all
     def footer(run_url)
-      run_url && "⚙️ [workflow run](#{run_url})"
+      return nil unless run_url
+
+      "⚙️ #{["[workflow run](#{run_url})", models_note].compact.join(" · ")}"
+    end
+
+    # One distinct model (the common case, whatever the command mix)
+    # collapses to a single name; distinct models are attributed per
+    # command. nil when no agent pass happened (failure before launch,
+    # /split --apply) so the footer stays run-link-only.
+    #
+    # @return [String, nil]
+    def models_note
+      models = @agent&.models_used
+      return nil if models.nil? || models.empty?
+
+      distinct = models.values.uniq
+      return "model: `#{distinct.first}`" if distinct.size == 1
+
+      "models: #{models.map { |command, model| "/#{command} `#{model}`" }.join(", ")}"
     end
 
     # @param text [String]

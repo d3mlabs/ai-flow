@@ -218,18 +218,21 @@ end unless defined?(FakeGitHub)
 # on each launch (receiving the prompt) — file-based tests use it to edit the
 # plan file exactly like the real agent would.
 class FakeAgent
-  attr_reader :prompts, :launches
+  attr_reader :prompts, :launches, :models_used
 
-  def initialize(outputs, &on_launch)
+  def initialize(outputs, model: "fake-model", &on_launch)
     @outputs = outputs
+    @model = model
     @on_launch = on_launch
     @prompts = []
     @launches = []
+    @models_used = {}
   end
 
   def launch(prompt:, workdir:, command:, force: false)
     @prompts << prompt
     @launches << { command: command, force: force, workdir: workdir }
+    @models_used[command] = @model
     @on_launch&.call(prompt)
     @outputs.shift or raise AiFlow::Agent::Error, "no canned output left"
   end

@@ -25,9 +25,18 @@ module AiFlow
       "build" => nil,
     }.freeze
 
+    # What each command actually ran on, keyed by command so a batch that
+    # launches the same command repeatedly records one entry. Feeds the
+    # ResultWriter footer's model note.
+    #
+    # @return [Hash{String => String}] command => model ("cursor default"
+    #   when no policy resolved and the CLI's account default applied)
+    attr_reader :models_used
+
     # @param executor [AiFlow::Executor]
     def initialize(executor: Executor.new)
       @executor = executor
+      @models_used = {}
     end
 
     # Run the headless agent to completion and return its final answer text.
@@ -44,6 +53,10 @@ module AiFlow
       # workdir is always a CI checkout of a repo we dispatched for.
       argv = [binary, "-p", "--output-format", "json", "--trust"]
       model = model_for(command, workdir)
+      @models_used[command] = model || "cursor default"
+      # Ungrouped so the effective model is scannable on the run page next
+      # to the config + --list-models printout from the Log versions step.
+      $stdout.puts "ai-flow model (/#{command}): #{model || "(CLI account default)"}"
       argv += ["--model", model] if model
       argv << "--force" if force
 

@@ -168,6 +168,41 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "models_used records the resolved model per command, once per command" do
+    Given "a config with a default model and two launches of the same command"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(dir, "models:\n  default: gpt-5\n")
+    executor = RecordingExecutor.new
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching /ask twice and /build once"
+    agent.launch(prompt: "p", workdir: dir, command: "ask")
+    agent.launch(prompt: "p", workdir: dir, command: "ask")
+    agent.launch(prompt: "p", workdir: dir, command: "build")
+
+    Then
+    agent.models_used == { "ask" => "gpt-5", "build" => "gpt-5" }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "models_used records 'cursor default' when no policy resolved" do
+    Given "a workdir without a config file"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching /ask"
+    agent.launch(prompt: "p", workdir: dir, command: "ask")
+
+    Then
+    agent.models_used == { "ask" => "cursor default" }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a models section that is not a mapping is treated as empty" do
     Given "a config where models is a scalar (user's file, unknown shapes ignored)"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
