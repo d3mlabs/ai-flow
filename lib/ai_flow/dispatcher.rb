@@ -94,11 +94,27 @@ module AiFlow
     end
 
     # @param segments [Array<CommentParser::Segment>]
-    # @return [Hash{String => String}] command => model, one entry per
-    #   distinct command (same shape as Agent#models_used)
+    # @return [Hash{String => String}] the effective command => its model
+    #   (same shape as Agent#models_used, which will hold exactly this
+    #   entry after the pass)
     def predicted_models(segments)
-      segments.map(&:command).uniq.to_h do |command|
-        [command, @agent.model_for(command, @workdir) || "cursor default"]
+      command = effective_command(segments)
+      { command => @agent.model_for(command, @workdir) || "cursor default" }
+    end
+
+    # The command the job will actually launch under, mirroring #route: a
+    # batch is one agent pass, run under the /edit policy when any edit is
+    # present; /build --split drives /build passes.
+    #
+    # @param segments [Array<CommentParser::Segment>]
+    # @return [String]
+    def effective_command(segments)
+      if segments.all? { |segment| CommentParser::BATCHABLE_COMMANDS.include?(segment.command) }
+        segments.any? { |segment| segment.command == "edit" } ? "edit" : "ask"
+      elsif segments.first.command == "split"
+        "split"
+      else
+        "build"
       end
     end
 

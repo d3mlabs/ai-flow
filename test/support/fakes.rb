@@ -220,9 +220,13 @@ end unless defined?(FakeGitHub)
 class FakeAgent
   attr_reader :prompts, :launches, :models_used
 
-  def initialize(outputs, model: "fake-model", &on_launch)
+  # @param models_by_command [Hash{String => String}, nil] per-command
+  #   models, for tests exercising which policy a pass launches under;
+  #   `model` is the flat answer otherwise
+  def initialize(outputs, model: "fake-model", models_by_command: nil, &on_launch)
     @outputs = outputs
     @model = model
+    @models_by_command = models_by_command
     @on_launch = on_launch
     @prompts = []
     @launches = []
@@ -232,15 +236,15 @@ class FakeAgent
   def launch(prompt:, workdir:, command:, force: false)
     @prompts << prompt
     @launches << { command: command, force: force, workdir: workdir }
-    @models_used[command] = @model
+    @models_used[command] = model_for(command, workdir) || "cursor default"
     @on_launch&.call(prompt)
     @outputs.shift or raise AiFlow::Agent::Error, "no canned output left"
   end
 
   # Mirrors Agent#model_for's pre-launch prediction: the canned model, as
   # nil (CLI default) when the fake was built without one.
-  def model_for(_command, _workdir)
-    @model
+  def model_for(command, _workdir)
+    @models_by_command ? @models_by_command[command] : @model
   end
 end unless defined?(FakeAgent)
 

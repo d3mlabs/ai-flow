@@ -121,8 +121,9 @@ module AiFlow
     # One concise progress line per event, printed as it arrives. Unknown
     # event types print nothing (CLI additions must never break a run);
     # unparseable lines print raw so a format drift degrades to noise, not
-    # silence. The `[/command]` prefix attributes interleaved passes — a
-    # batch runs one pass per segment and /build --split fans out further.
+    # silence. The `[/command]` prefix names the policy the pass runs
+    # under — a batch is a single pass (as /edit when any edit is present),
+    # and /build --split runs one /build pass per sub-issue.
     #
     # @param command [String]
     # @param line [String] the raw NDJSON line

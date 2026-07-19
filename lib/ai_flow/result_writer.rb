@@ -51,22 +51,22 @@ module AiFlow
       "⚙️ #{["[workflow run](#{run_url})", note].compact.join(" · ")}"
     end
 
-    # One distinct model (the common case, whatever the command mix)
-    # collapses to a single name; distinct models are attributed per
-    # command. nil for an empty hash (no agent pass: failure before launch,
-    # /split --apply) so the caller's line stays run-link-only. A class
-    # method so the dispatcher's ⏳ status line renders its pre-launch
-    # prediction with the same grammar as the footer.
+    # In practice this renders one name: a job launches under a single
+    # command policy (a batch is one agent pass — run as /edit when any
+    # edit is present — and /build --split's fan-out passes all share the
+    # "build" key), so models_used holds one entry. Distinct values (if
+    # per-segment passes ever exist) list out. nil for an empty hash (no
+    # agent pass: failure before launch, /split --apply) so the caller's
+    # line stays run-link-only. A class method so the dispatcher's ⏳
+    # status line renders its pre-launch prediction with the same grammar
+    # as the footer.
     #
     # @param models [Hash{String => String}] command => model
     # @return [String, nil]
     def self.models_note(models)
       return nil if models.empty?
 
-      distinct = models.values.uniq
-      return "model: `#{distinct.first}`" if distinct.size == 1
-
-      "models: #{models.map { |command, model| "/#{command} `#{model}`" }.join(", ")}"
+      "model: #{models.values.uniq.map { |model| "`#{model}`" }.join(", ")}"
     end
 
     # @param text [String]
