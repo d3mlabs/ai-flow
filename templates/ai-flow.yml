@@ -1,0 +1,12 @@
+# ai-flow per-repo configuration — copy to .github/ai-flow.yml in each
+# participating repo. The whole file is optional: without it, ai-flow ships
+# no model opinion and the agent CLI's account default applies.
+#
+# models: command name => agent model, plus an optional `default` blanket
+# covering unlisted commands. Valid names come from `agent --list-models`
+# on the runner (every ai-flow run also prints the list in its job log).
+# Precedence per command: models.<command> > models.default > CLI default.
+models:
+  default: claude-fable-5-high
+  # Per-command overrides, e.g. a heavier model for the code-writing pass:
+  # build: claude-fable-5-thinking-high

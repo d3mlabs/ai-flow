@@ -23,14 +23,6 @@ on:
           bots (e.g. "ai-" turns /ask into /ai-ask). We default to none.
         type: string
         default: ""
-      light_runner_labels:
-        description: Runner labels for /ask, /edit, and /split.
-        type: string
-        default: '["self-hosted", "ai-light"]'
-      build_runner_labels:
-        description: Runner labels for /build (heavier, e.g. warm Unreal envs).
-        type: string
-        default: '["self-hosted", "ai-build"]'
       per_actor_runners:
         description: >-
           Route every job to the commenter's own runner (labels
@@ -126,11 +118,20 @@ jobs:
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)))
-    # per_actor_runners routes to the commenter's own box; otherwise /build
-    # goes to the build pool and everything else to the light pool. Coarse (a
-    # prose mention of /build in an /edit comment routes heavy), which errs on
-    # the safe side: the build pool can run anything.
-    runs-on: ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login)) || (contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) && fromJSON(inputs.build_runner_labels) || fromJSON(inputs.light_runner_labels)) }}
+    # per_actor_runners routes to the commenter's own box; otherwise each
+    # command routes to its own fixed label, ai-<command> — convention over
+    # configuration (deployment decides the topology: one box can carry all
+    # four labels, or a beefy box takes ai-build alone). A batch comment can
+    # mix commands but the job runs on one box, so route by the heaviest
+    # command present. Coarse contains() (a prose mention of /build in an
+    # /edit comment routes heavy), which errs on the safe side: a heavier
+    # pool can run anything lighter.
+    runs-on: >-
+      ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login))
+          || contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-build"]')
+          || contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-split"]')
+          || contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-edit"]')
+          || fromJSON('["self-hosted", "ai-ask"]') }}
     # Serialize runs per issue/PR: batches assume a stable body snapshot.
     concurrency:
       group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
@@ -185,14 +186,24 @@ jobs:
       # observability surface. Two ai-flow versions are in play and can
       # drift: this workflow YAML resolves from the caller's pin (the
       # floating v1 tag), while the dispatcher checkout above tracks main.
-      # Version probes must never fail the job.
+      # The model policy (.github/ai-flow.yml) and the menu of valid model
+      # names (--list-models) are logged side by side, so a typo'd model is
+      # diagnosable from the run page alone. Probes must never fail the job.
       - name: Log versions
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: |
           echo "ai-flow dispatcher: $(git -C .ai-flow log -1 --format='%H (%s)')"
           echo "ai-flow workflow yaml: ${{ github.job_workflow_sha || '(empty on this runner — see referenced_workflows on the run API)' }}"
           echo "target repo: ${{ github.repository }}@$(git log -1 --format='%H')"
           echo "ruby: $(ruby --version)"
           echo "agent CLI: $("${AI_FLOW_AGENT_BIN:-agent}" --version 2>/dev/null || echo 'not found')"
+          echo "::group::repo config (.github/ai-flow.yml)"
+          [ -f .github/ai-flow.yml ] && cat .github/ai-flow.yml || echo "no .github/ai-flow.yml — code policy / CLI default"
+          echo "::endgroup::"
+          echo "::group::available models (agent --list-models)"
+          "${AI_FLOW_AGENT_BIN:-agent}" --list-models 2>/dev/null || echo 'unavailable'
+          echo "::endgroup::"
 
       - name: Dispatch
         env:

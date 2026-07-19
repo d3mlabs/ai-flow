@@ -2,6 +2,7 @@
 
 require "ai_flow/executor"
 require "ai_flow/github"
+require "ai_flow/repo_config"
 require "ai_flow/agent"
 require "ai_flow/agent_output"
 require "ai_flow/comment_parser"

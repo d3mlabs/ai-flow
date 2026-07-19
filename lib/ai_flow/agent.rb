@@ -8,15 +8,16 @@ module AiFlow
   # self-hosted runner; an alternative backend (e.g. the cloud REST API) would
   # be a change here, not in the four command scripts.
   #
-  # Invocation details owned here: binary path (AI_FLOW_AGENT_BIN), per-command
-  # model policy (MODELS), working directory, prompt passing, output parsing.
-  # Runaway runs are bounded by the workflow job's timeout-minutes, not here.
+  # Invocation details owned here: binary path (AI_FLOW_AGENT_BIN), model
+  # resolution (repo config via RepoConfig, env override, MODELS fallback),
+  # working directory, prompt passing, output parsing. Runaway runs are
+  # bounded by the workflow job's timeout-minutes, not here.
   class Agent
     class Error < StandardError; end
 
-    # Per-command model policy — the fine model/mode control that motivated
-    # self-hosting (one-file change, per the plan). nil = the CLI's default.
-    # Override per run with AI_FLOW_MODEL.
+    # Code-level model fallback. Deliberately all-nil: ai-flow code carries
+    # no model opinion — per-repo policy lives in .github/ai-flow.yml (see
+    # RepoConfig), and nil means the CLI's account default.
     MODELS = {
       "ask" => nil,
       "edit" => nil,
@@ -42,7 +43,7 @@ module AiFlow
       # --trust: headless runs can't answer the workspace-trust prompt, and the
       # workdir is always a CI checkout of a repo we dispatched for.
       argv = [binary, "-p", "--output-format", "json", "--trust"]
-      model = ENV["AI_FLOW_MODEL"] || MODELS[command]
+      model = model_for(command, workdir)
       argv += ["--model", model] if model
       argv << "--force" if force
 
@@ -55,6 +56,23 @@ module AiFlow
     end
 
     private
+
+    # Model precedence: AI_FLOW_MODEL env (ops escape hatch on the runner
+    # box) > models.<command> > models.default (both from the repo's
+    # .github/ai-flow.yml) > MODELS[command] (code fallback) > nil, meaning
+    # the CLI's account default. Blanks are unset per link, so e.g.
+    # `build: ""` falls through to `default` rather than passing
+    # `--model ""` to the CLI.
+    #
+    # @param command [String]
+    # @param workdir [String]
+    # @return [String, nil]
+    def model_for(command, workdir)
+      models = RepoConfig.load(workdir).models
+      [ENV["AI_FLOW_MODEL"], models[command], models["default"], MODELS[command]]
+        .map { |candidate| candidate.to_s.strip }
+        .find { |candidate| !candidate.empty? }
+    end
 
     # The workflow job log is ai-flow's observability surface: every agent
     # pass logs its prompt and raw output as collapsed groups, so a bad run
