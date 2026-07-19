@@ -68,14 +68,13 @@ module AiFlow
       parse_result(out)
     end
 
-    private
-
     # Model precedence: AI_FLOW_MODEL env (ops escape hatch on the runner
     # box) > models.<command> > models.default (both from the repo's
     # .github/ai-flow.yml) > MODELS[command] (code fallback) > nil, meaning
     # the CLI's account default. Blanks are unset per link, so e.g.
     # `build: ""` falls through to `default` rather than passing
-    # `--model ""` to the CLI.
+    # `--model ""` to the CLI. Public and pure: the dispatcher calls it
+    # pre-launch to predict the model for the ⏳ status line.
     #
     # @param command [String]
     # @param workdir [String]
@@ -86,6 +85,8 @@ module AiFlow
         .map { |candidate| candidate.to_s.strip }
         .find { |candidate| !candidate.empty? }
     end
+
+    private
 
     # The workflow job log is ai-flow's observability surface: every agent
     # pass logs its prompt and raw output as collapsed groups, so a bad run

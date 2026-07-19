@@ -81,11 +81,51 @@ class AiFlow::DispatcherTest < Minitest::Test
     When "dispatching"
     build_dispatcher(github: github, agent: agent, context: context, workdir: dir).run
 
-    Then "the first comment edit is the follow-along line; the results replace it with the footer"
+    Then "the first comment edit is the follow-along line with the predicted model; the results replace it with the footer"
     github.comment_edit_history.first ==
-      "/edit tighten the plan\n\n> ⏳ ai-flow is running — [follow the run](#{RUN_URL})"
+      "/edit tighten the plan\n\n> ⏳ ai-flow is running — [follow the run](#{RUN_URL}) · model: `fake-model`"
     !github.comment_edit_history.last.include?("⏳")
     github.comment_edit_history.last.include?("⚙️ [workflow run](#{RUN_URL})")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "with no model policy the status line predicts the cursor default" do
+    Given "an /ask inside Actions with an agent that resolves no model"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    context = ContextBuilder.issue_comment(body: "/ask why?", env: ACTIONS_ENV)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause."], model: nil)
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context).run
+
+    Then
+    github.comment_edit_history.first ==
+      "/ask why?\n\n> ⏳ ai-flow is running — [follow the run](#{RUN_URL}) · model: `cursor default`"
+
+    Cleanup
+    nil
+  end
+
+  test "a malformed repo config fails as the ⚠️ panel, not a crash" do
+    Given "a real Agent over a workdir whose .github/ai-flow.yml is invalid YAML"
+    dir = Dir.mktmpdir("ai-flow-dispatcher-test-")
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "models: [unclosed\n")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    context = ContextBuilder.issue_comment(body: "/ask why?", env: ACTIONS_ENV)
+    agent = AiFlow::Agent.new
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context, workdir: dir).run
+
+    Then "the run goes red and the comment carries the config error"
+    raises SystemExit
+    github.comment_edits.fetch(55).include?("ai-flow failed")
+    github.comment_edits.fetch(55).include?(".github/ai-flow.yml is not valid YAML")
 
     Cleanup
     FileUtils.rm_rf(dir)

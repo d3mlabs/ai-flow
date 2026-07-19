@@ -33,14 +33,14 @@ module AiFlow
       return if segments.empty?
 
       acknowledge
-      announce_running
+      announce_running(segments)
       return if route(segments)
 
       # Soft failure: the per-segment ⚠️ is already on the comment; the run
       # itself must still go red so a failed command is visible from Actions.
       warn "ai-flow: one or more segments failed — see the command comment."
       exit 1
-    rescue CommentParser::ParseError, GitHub::Error, Agent::Error, SubtasksSection::Error => e
+    rescue CommentParser::ParseError, GitHub::Error, Agent::Error, SubtasksSection::Error, RepoConfig::Error => e
       report_failure(segments, e)
     end
 
@@ -70,21 +70,36 @@ module AiFlow
       # A failed reaction must not block the command.
     end
 
-    # Temporary "follow along" link on the command comment. Every final
-    # render starts from the payload body, so this line vanishes when the
-    # results land (the run link persists as the ResultWriter footer); the
-    # standalone-/ask reply path reverts it explicitly. Placed after the
-    # exact parse, so prose mentions never get it.
-    def announce_running
+    # Temporary "follow along" link on the command comment, carrying the
+    # model(s) the run is about to use — a pre-launch prediction through the
+    # same resolution chain as the launch itself, so it can't drift from
+    # what the footer later reports. Every final render starts from the
+    # payload body, so this line vanishes when the results land (the run
+    # link persists as the ResultWriter footer); the standalone-/ask reply
+    # path reverts it explicitly. Placed after the exact parse, so prose
+    # mentions never get it.
+    #
+    # @param segments [Array<CommentParser::Segment>]
+    def announce_running(segments)
       url = @context.run_url
       return unless url
 
+      status = ["⏳ ai-flow is running — [follow the run](#{url})", ResultWriter.models_note(predicted_models(segments))]
       @result_writer.write_raw(
         @context,
-        "#{@context.comment_body.rstrip}\n\n> ⏳ ai-flow is running — [follow the run](#{url})",
+        "#{@context.comment_body.rstrip}\n\n> #{status.compact.join(" · ")}",
       )
     rescue GitHub::Error
       # A failed status line must not block the command.
+    end
+
+    # @param segments [Array<CommentParser::Segment>]
+    # @return [Hash{String => String}] command => model, one entry per
+    #   distinct command (same shape as Agent#models_used)
+    def predicted_models(segments)
+      segments.map(&:command).uniq.to_h do |command|
+        [command, @agent.model_for(command, @workdir) || "cursor default"]
+      end
     end
 
     # @return [Boolean] whether the command(s) fully succeeded — only batches
