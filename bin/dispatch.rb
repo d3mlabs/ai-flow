@@ -18,8 +18,14 @@ context = AiFlow::Context.from_event_file(
   event_path: ENV.fetch("GITHUB_EVENT_PATH"),
 )
 
+# Built first: from_env removes the App private key from the process
+# environment, so every subprocess spawned after this line (the agent above
+# all) sees only short-lived installation tokens, never the key.
+token_provider = AiFlow::TokenProvider.from_env
+
 AiFlow::Dispatcher.new(
   context: context,
   workdir: ENV.fetch("AI_FLOW_WORKDIR", Dir.pwd),
   prefix: ENV.fetch("AI_FLOW_COMMAND_PREFIX", ""),
+  executor: AiFlow::Executor.new(token_provider: token_provider),
 ).run

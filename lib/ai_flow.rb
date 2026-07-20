@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "ai_flow/token_provider"
 require "ai_flow/executor"
 require "ai_flow/github"
 require "ai_flow/repo_config"

@@ -106,6 +106,22 @@ corner-pair sacrifice is needed globally: local work gets 1+3 naturally
   offline, per-dev infrastructure — all to preserve an authorship claim the
   flow split shows was miscast in the first place.
 
+### The workflows permission, denied by design
+
+The App deliberately does not hold the `workflows` write permission, and
+this is a security wall, not an oversight. GitHub structurally rejects any
+push touching `.github/workflows/**` from a token without that scope — and
+that guardrail matters here because a workflow file pushed to a branch can
+execute on `pull_request` events *before any human merges it*, on the
+self-hosted runner fleet. The human merge gate — the checkpoint where a
+session's outputs are inert artifacts until reviewed — does not cover that
+window; denying the scope does. `/build` therefore excludes workflow files
+from every commit and surfaces the excluded diff in its result panel as a
+suggested patch. Applying it is a human act with a human credential: a
+user's push carries the `workflows` scope, the App's never will. The
+distinction is not who authors the YAML (the same model writes it either
+way) — it is whose credential pushes it.
+
 ### Signing, phased
 
 /build commits ship unsigned today (plain git in the worktree — corner 2

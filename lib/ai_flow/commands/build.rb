@@ -21,6 +21,13 @@ module AiFlow
     # sweep as context. Each swept thread gets a threaded reply with its
     # disposition and the commit link; resolving stays with the human.
     class Build
+      # The App deliberately lacks the `workflows` permission (see
+      # docs/attribution.md): GitHub rejects any App push touching workflow
+      # files wholesale, and a workflow pushed to a branch could execute on
+      # pull_request events before any human merges it. Excluded from every
+      # commit; the diff surfaces in the result panel as a suggested patch.
+      WORKFLOWS_DIR = ".github/workflows"
+
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
       # @param agent [AiFlow::Agent]
@@ -55,7 +62,10 @@ module AiFlow
           else
             "⚠️ **/build** — the agent made no changes, so no PR was opened."
           end
-        @result_writer.write(@context, [[segment, [result, open_sub_issues_note].compact.join("\n\n")]])
+        @result_writer.write(
+          @context,
+          [[segment, [result, workflows_note, open_sub_issues_note].compact.join("\n\n")]],
+        )
       end
 
       # Build one issue end to end. Shared with the --split orchestrator.
@@ -73,6 +83,9 @@ module AiFlow
           @agent.launch(
             prompt: build_prompt(issue, extra_instruction), workdir: worktree, command: "build", force: true,
           )
+          # The agent may have run for close to the token's lifetime; the
+          # write phase (commit, push, PR) starts on a fresh mint.
+          @executor.refresh_auth!
           next nil unless commit_all(worktree, issue)
 
           push_branch(worktree, branch)
@@ -142,6 +155,9 @@ module AiFlow
           workdir: @workdir, command: "build", force: true,
         )
         parsed = AgentOutput.parse(output)
+        # The agent may have run for close to the token's lifetime; the
+        # write phase (push + replies + panel) starts on a fresh mint.
+        @executor.refresh_auth!
         sha = commit_and_push(segment)
         reply_to_threads(threads, parsed, sha)
         @result_writer.write(@context, [[segment, iteration_result(parsed, threads, sha)]])
@@ -272,7 +288,54 @@ module AiFlow
           else
             "⚠️ **/build** — the agent made no changes."
           end
-        [headline, summary].compact.join("\n\n")
+        [headline, summary, workflows_note].compact.join("\n\n")
+      end
+
+      # ---- Workflow-file exclusion (both modes) ----
+
+      # Capture the staged #{WORKFLOWS_DIR} diff, then unstage and revert
+      # those files so the commit never carries them. Ordered checkout-last:
+      # the diff must be read before the working tree is restored.
+      def extract_workflows_patch(dir)
+        # Reset first: a Build instance is reused across --split sub-issue
+        # builds, and one sub-issue's patch must not haunt the next panel.
+        @workflows_patch = nil
+        patch, = @executor.capture(
+          "git", "diff", "--cached", "--", WORKFLOWS_DIR, chdir: dir,
+        )
+        return if patch.strip.empty?
+
+        @workflows_patch = patch
+        # Always in the run log too — the --split orchestrator's checklist
+        # panel doesn't carry per-build notes, so the log is the guaranteed
+        # surface.
+        $stdout.puts "::group::ai-flow: excluded workflow changes (App has no workflows permission)"
+        $stdout.puts patch
+        $stdout.puts "::endgroup::"
+        run!("git", "reset", "-q", "HEAD", "--", WORKFLOWS_DIR, chdir: dir)
+        # Working-tree restore is hygiene (the commit reads the index only)
+        # and best-effort: checkout errors when the agent only *added*
+        # workflow files (no tracked paths match), which clean covers.
+        @executor.capture("git", "checkout", "-q", "--", WORKFLOWS_DIR, chdir: dir)
+        @executor.capture("git", "clean", "-fdq", "--", WORKFLOWS_DIR, chdir: dir)
+      end
+
+      # @return [String, nil] the suggested-patch panel block, nil when the
+      #   agent never touched workflow files
+      def workflows_note
+        return nil unless @workflows_patch
+
+        <<~NOTE.strip
+          ⚠️ The agent proposed changes under `#{WORKFLOWS_DIR}/` — the ai-flow App has no `workflows` permission (by design; see d3mlabs/ai-flow docs/attribution.md), so they were left out of the commit. Apply them yourself if wanted:
+
+          <details><summary>suggested workflow patch</summary>
+
+          ```diff
+          #{@workflows_patch.strip}
+          ```
+
+          </details>
+        NOTE
       end
 
       # @return [String]
@@ -286,7 +349,8 @@ module AiFlow
         # The job checks the dispatcher out into .ai-flow inside this
         # workspace — a bare `git add -A` would commit it as a gitlink.
         run!("git", "add", "-A", "--", ":(exclude).ai-flow", chdir: @workdir)
-        status, = @executor.capture("git", "status", "--porcelain", "--", ":(exclude).ai-flow", chdir: @workdir)
+        extract_workflows_patch(@workdir)
+        status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: @workdir)
         return nil if status.strip.empty?
 
         headline = segment.instruction.lines.first.to_s.strip[0, 60]
@@ -392,7 +456,8 @@ module AiFlow
       # @return [Boolean] whether there was anything to commit
       def commit_all(worktree, issue)
         run!("git", "add", "-A", chdir: worktree)
-        status, = @executor.capture("git", "status", "--porcelain", chdir: worktree)
+        extract_workflows_patch(worktree)
+        status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: worktree)
         return false if status.strip.empty?
 
         message = CommitIdentity.message_with_requester("ai-flow /build: #{issue.title}", @context)
