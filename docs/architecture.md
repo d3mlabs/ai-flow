@@ -55,10 +55,18 @@ Division of labor, and why:
 - **Self-hosted runners are the execution layer** — normal agent billing,
   per-command model control (`.github/ai-flow.yml`), and warm dev
   environments for `/build`.
-- **The GitHub App is identity only** — no hosted component; the workflow
-  mints a short-lived installation token each job. App tokens (unlike the
-  default `GITHUB_TOKEN`) trigger downstream workflows, which is what gives
-  /build PRs their CI runs.
+- **The GitHub App is identity only** — no hosted component. App tokens
+  (unlike the default `GITHUB_TOKEN`) trigger downstream workflows, which is
+  what gives /build PRs their CI runs. Installation tokens are hard-capped
+  at 1 hour by GitHub — shorter than a long `/build` — so the dispatcher
+  mints its own lazily (`TokenProvider`): every subprocess spawn checks
+  token age and re-mints past 50 minutes, and the write phase (push,
+  comments) re-mints unconditionally. Git auth is injected per invocation
+  through the environment (`GIT_CONFIG_*`) rather than baked into the
+  checkout's git config (`persist-credentials: false`), so no git call ever
+  relies on a mint-time credential. The App private key enters the Dispatch
+  step's env, is read once, and is scrubbed before any subprocess spawns —
+  the agent only ever sees short-lived installation tokens.
 
 ## Job lifecycle
 
@@ -77,8 +85,9 @@ sequenceDiagram
     Note over Workflow: ack job (GitHub-hosted, outside the<br/>concurrency group) reacts 👀 within<br/>seconds, before dispatch even starts
     Note over Workflow: runs-on picks the per-command label,<br/>heaviest command wins in a batch<br/>(or dev-login when per_actor_runners)
     Workflow->>GitHub: mint App installation token (required)
-    Workflow->>Workflow: checkout target repo + ai-flow
-    Workflow->>Dispatcher: ruby dispatch.rb (GH_TOKEN = App token)
+    Workflow->>Workflow: checkout target repo + ai-flow (persist-credentials off)
+    Workflow->>Dispatcher: ruby dispatch.rb (App id + key in env)
+    Dispatcher->>Dispatcher: TokenProvider reads the key, scrubs it from env;<br/>every subprocess gets an age-checked fresh token
     Dispatcher->>Dispatcher: re-parse grammar + permission gate
     Dispatcher->>GitHub: react with eyes (deduped backstop of the ack job)
     Dispatcher->>GitHub: append "⏳ follow the run" status line<br/>+ predicted model to the comment
@@ -136,8 +145,9 @@ flowchart TD
     splitCmd --> gh
     buildCmd --> gh
     buildSplitCmd --> gh
-    agent --> exec["Executor<br/>(subprocess boundary)"]
+    agent --> exec["Executor<br/>(subprocess boundary;<br/>injects fresh auth per spawn)"]
     gh --> exec
+    exec --> tokenProvider["TokenProvider<br/>(lazy App-token mint,<br/>50-min age check per call)"]
 ```
 
 Routing rules (in `Dispatcher#route`): a comment whose segments are all

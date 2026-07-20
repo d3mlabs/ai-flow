@@ -9,21 +9,30 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
   # Records every subprocess invocation as a joined command line (strings
   # survive RSpock's block-parameter destructuring where arrays don't);
-  # `dirty` controls whether `git status --porcelain` reports changes (i.e.
-  # whether the agent "wrote" anything).
+  # `dirty` controls whether the staged diff reports changes (i.e. whether
+  # the agent "wrote" anything), `workflows_patch` seeds a staged diff under
+  # .github/workflows (the exclusion path).
   class RecordingExecutor
-    attr_reader :command_lines
+    attr_reader :command_lines, :refreshes
 
-    def initialize(dirty: true)
+    def initialize(dirty: true, workflows_patch: "")
       @dirty = dirty
+      @workflows_patch = workflows_patch
       @command_lines = []
+      @refreshes = 0
+    end
+
+    def refresh_auth!
+      @refreshes += 1
     end
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
       out =
-        if argv.take(3) == %w[git status --porcelain] && @dirty
-          " M lib/thing.rb\n"
+        if argv.join(" ").start_with?("git diff --cached -- .github/workflows")
+          @workflows_patch
+        elsif argv.take(4) == %w[git diff --cached --name-only] && @dirty
+          "lib/thing.rb\n"
         elsif argv.take(2) == %w[git rev-parse]
           "abc1234def5678\n"
         else
@@ -257,6 +266,94 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     agent.prompts.first.include?("OUT OF SCOPE")
     agent.prompts.first.include?("- Client UI")
     !agent.prompts.first.include?("- Server API")
+
+    Cleanup
+    nil
+  end
+
+  test "workflow-file changes are excluded from the commit and panelled as a suggested patch" do
+    Given "an agent run that edited a workflow file alongside code"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    patch = "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n+    extra: step\n"
+    executor = RecordingExecutor.new(workflows_patch: patch)
+
+    When "building"
+    run_build(github: github, executor: executor)
+    lines = executor.command_lines
+
+    Then "workflows are unstaged before the commit, and the panel carries the patch"
+    lines.include?("git reset -q HEAD -- .github/workflows")
+    lines.include?("git checkout -q -- .github/workflows")
+    lines.include?("git clean -fdq -- .github/workflows")
+    lines.index { |line| line.include?("reset -q HEAD") } < lines.index { |line| line.include?(" commit -m ") }
+    github.calls.map(&:first).include?(:create_pull_request)
+    github.comment_edits.fetch(55).include?("no `workflows` permission")
+    github.comment_edits.fetch(55).include?("extra: step")
+
+    Cleanup
+    nil
+  end
+
+  test "an agent run that only touched workflow files commits nothing but still surfaces the patch" do
+    Given "a staged diff living entirely under .github/workflows"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    patch = "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n+    extra: step\n"
+    executor = RecordingExecutor.new(dirty: false, workflows_patch: patch)
+
+    When "building"
+    run_build(github: github, executor: executor)
+
+    Then "no commit, no PR — but the human still gets the patch to apply"
+    executor.command_lines.none? { |line| line.include?(" commit -m ") }
+    github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
+    github.comment_edits.fetch(55).include?("⚠️ **/build** — the agent made no changes, so no PR was opened.")
+    github.comment_edits.fetch(55).include?("extra: step")
+
+    Cleanup
+    nil
+  end
+
+  test "PR iteration excludes workflow files the same way" do
+    Given "a PR iteration whose agent touched a workflow file"
+    github = FakeGitHub.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build tweak CI", pull_request: true)
+    patch = "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n+    extra: step\n"
+    executor = RecordingExecutor.new(workflows_patch: patch)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nDone."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build tweak CI", context: context, agent: agent)
+
+    Then "the commit excludes workflows and the panel carries the patch"
+    executor.command_lines.include?("git reset -q HEAD -- .github/workflows")
+    executor.command_lines.any? { |line| line.include?(" commit -m ") }
+    github.comment_edits.fetch(55).include?("✅ **/build** — committed")
+    github.comment_edits.fetch(55).include?("no `workflows` permission")
+    github.comment_edits.fetch(55).include?("extra: step")
+
+    Cleanup
+    nil
+  end
+
+  test "the write phase re-mints auth after the agent run — both build modes" do
+    Given "an issue build and a PR iteration"
+    issue_github = FakeGitHub.new
+    issue_github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    issue_executor = RecordingExecutor.new
+    pr_github = FakeGitHub.new
+    pr_context = ContextBuilder.issue_comment(number: 7, body: "/build fix", pull_request: true)
+    pr_executor = RecordingExecutor.new
+    pr_agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed."])
+
+    When "running both"
+    run_build(github: issue_github, executor: issue_executor)
+    run_build(github: pr_github, executor: pr_executor, body: "/build fix", context: pr_context, agent: pr_agent)
+
+    Then "each ran exactly one unconditional refresh before its writes"
+    issue_executor.refreshes == 1
+    pr_executor.refreshes == 1
 
     Cleanup
     nil

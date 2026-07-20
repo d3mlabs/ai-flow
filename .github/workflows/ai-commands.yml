@@ -167,10 +167,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # The resolved token also lands in the persisted git credentials,
-          # so /build pushes act as the App — App-pushed branches and PRs
-          # trigger CI, which the default GITHUB_TOKEN suppresses.
           token: ${{ steps.app-token.outputs.token || github.token }}
+          # Never bake the mint-time token into the repo's git config: App
+          # tokens die at 1 hour and a long agent run outlives them (the
+          # gh-34 failure). The dispatcher injects a fresh token per git
+          # invocation instead (Executor + TokenProvider), so pushes still
+          # act as the App — App-pushed branches and PRs trigger CI, which
+          # the default GITHUB_TOKEN suppresses.
+          persist-credentials: false
 
       # github.token is scoped to the triggering repo, so it can't read a
       # private ai-flow — the App token can (installed org-wide). Public
@@ -181,6 +185,9 @@ jobs:
           repository: d3mlabs/ai-flow
           path: .ai-flow
           token: ${{ steps.app-token.outputs.token || github.token }}
+          # Read-only checkout — nothing pushes from here, so no credential
+          # should linger in its git config for the agent to read.
+          persist-credentials: false
 
       # The run must record exactly what code ran — the job log is ai-flow's
       # observability surface. Two ai-flow versions are in play and can
@@ -207,7 +214,14 @@ jobs:
 
       - name: Dispatch
         env:
+          # Fallback only: with App credentials the dispatcher mints its own
+          # tokens per call (TokenProvider) — a pre-minted token dies at
+          # GitHub's 1-hour cap, which a long agent run outlives.
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          # The dispatcher reads the key once and scrubs it from its env
+          # before any subprocess (above all the agent) is spawned.
+          AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
+          AI_FLOW_APP_PRIVATE_KEY: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           AI_FLOW_COMMAND_PREFIX: ${{ inputs.command_prefix }}
           AI_FLOW_WORKDIR: ${{ github.workspace }}

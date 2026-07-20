@@ -70,17 +70,29 @@ comparison that settled it:
 |---|---|---|---|
 | /build PRs trigger CI | no (by design) | yes | yes |
 | Acting identity | `github-actions[bot]` | the PAT's human — overclaims authorship | `ai-flow[bot]` — truthful |
-| Expiry / rotation | per-job, automatic | 90d ceremony per dev | non-expiring key, 1h installation tokens minted per job |
+| Expiry / rotation | per-job, automatic | 90d ceremony per dev | non-expiring key; 1h installation tokens minted lazily per call (long runs outlive any single token) |
 | Scope | the one repo | the dev's whole account | exactly the repos the App is installed on |
 | Audit trail | anonymous-ish | indistinguishable from the human | first-class bot actor |
 
 Setup is a one-time org task: register the App (permissions: contents,
-issues, pull requests — read/write), install it on participating repos, and
-store `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` as org secrets. The App
-is intrinsic to the attribution model, so a job without the secrets fails
-loudly. Adopters who want to try ai-flow before registering an App can set
+issues, pull requests — read/write; **never** `workflows`, a deliberate
+security wall — see [docs/attribution.md](docs/attribution.md)), install it
+on participating repos, and store `AI_FLOW_APP_ID` /
+`AI_FLOW_APP_PRIVATE_KEY` as org secrets. The App is intrinsic to the
+attribution model, so a job without the secrets fails loudly. Adopters who
+want to try ai-flow before registering an App can set
 `allow_token_fallback: true` to knowingly run degraded on `github.token`
 (writes act as `github-actions[bot]`, /build PRs don't trigger CI).
+
+GitHub caps App installation tokens at 1 hour — shorter than a long
+`/build` — so the dispatcher never trusts a pre-minted token: the private
+key enters the Dispatch step, a `TokenProvider` mints lazily with an age
+check on every subprocess spawn, and the write phase (push, comments)
+re-mints unconditionally. The key is scrubbed from the environment before
+the agent (or any subprocess) starts; the agent only ever sees short-lived
+installation tokens. Because the App lacks the `workflows` scope, `/build`
+excludes `.github/workflows/**` from its commits and panels the diff as a
+suggested patch for a human — with a human's credential — to apply.
 
 Attribution model (who authors what, and why): see
 [docs/attribution.md](docs/attribution.md). Short form — local Cursor work is
