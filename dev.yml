@@ -1,5 +1,4 @@
 name: ai-flow
-ruby: "3.3"
 commands:
   up:
     desc: Install gems
