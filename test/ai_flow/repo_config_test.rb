@@ -16,14 +16,13 @@ class AiFlow::RepoConfigTest < Minitest::Test
     end
   end
 
-  test "the defaults: no knowledge repo, build capture on, auto-learn off" do
+  test "the defaults: no knowledge repo, build capture on" do
     Given "no ai-flow.yml at all"
     config = load_config(nil)
 
     Expect "the loop-friendly defaults"
     config.knowledge_repo.nil?
     config.learn_on_build? == true
-    config.learn_auto? == false
 
     Cleanup
     nil
@@ -31,12 +30,11 @@ class AiFlow::RepoConfigTest < Minitest::Test
 
   test "the learn section and knowledge_repo read through" do
     Given "a fully configured file"
-    config = load_config("knowledge_repo: d3mlabs/knowledge\nlearn:\n  on_build: false\n  auto: true\n")
+    config = load_config("knowledge_repo: d3mlabs/knowledge\nlearn:\n  on_build: false\n")
 
     Expect
     config.knowledge_repo == "d3mlabs/knowledge"
     config.learn_on_build? == false
-    config.learn_auto? == true
 
     Cleanup
     nil

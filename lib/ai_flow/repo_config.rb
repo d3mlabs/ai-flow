@@ -66,19 +66,9 @@ module AiFlow
       learn["on_build"] != false
     end
 
-    # Whether a submitted review with no ai-flow command auto-runs the bare
-    # /learn sweep. Off by default: noise and per-review cost are real, so
-    # auto-learn is opt-in until the command form's signal-to-noise proves
-    # out (plans#13).
-    #
-    # @return [Boolean]
-    def learn_auto?
-      learn["auto"] == true
-    end
-
     private
 
-    # The optional `learn:` section (build-capture + auto-learn switches). A
+    # The optional `learn:` section (the build-capture switch). A
     # non-mapping value (or absence) means all defaults.
     #
     # @return [Hash]

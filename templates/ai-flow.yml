@@ -15,13 +15,9 @@ models:
 # promotion refuses with a pointer here.
 # knowledge_repo: d3mlabs/knowledge
 
-# Learning-capture switches (both optional):
+# Learning capture (optional):
 # - on_build: /build's opportunistic learning capture — the build pass may
 #   split learning files into a separate draft PR. Default on; set false
 #   for quiet repos.
-# - auto: run the bare /learn sweep on every submitted review. Default off;
-#   also requires `auto_learn: true` on the caller workflow (the workflow
-#   engine can't read this file, so the event forwarding is its own switch).
 # learn:
 #   on_build: true
-#   auto: false

@@ -351,15 +351,15 @@ own learning branch as a **separate draft PR**. The result panel gets one
 🧠 line per outcome. Cross-repo builds (org-wide plans) skip capture. A
 failed capture warns in the panel but never fails the code build.
 
-### Auto-learn on reviews (opt-in, off by default)
+### Reviews: /build vs /learn (no auto-learn)
 
-A submitted review with **no command at all** can run the bare sweep
-automatically. Two switches, both required: `auto_learn: true` on the
-caller workflow (the workflow engine can't read repo files, so event
-forwarding is its own input) and `learn: { auto: true }` in
-`.github/ai-flow.yml` (the dispatcher's authoritative re-check). The
-draft-PR gate makes it safe; noise and per-review agent cost are why it
-ships off.
+There is deliberately no command-less trigger — every dispatch is a human
+command, and the two commands split a review's outcomes cleanly: **/build
+means "change this PR's code"** (its build-time capture absorbs whatever
+learnings the feedback carried, in the same pass, for free), and **/learn
+means "codify the lesson — don't touch this PR"** (general feedback worth
+keeping that needs no code change). Both share the surface's learning
+branch, so either order refines the same draft.
 
 ### Draft tracking (the linked-update rule)
 

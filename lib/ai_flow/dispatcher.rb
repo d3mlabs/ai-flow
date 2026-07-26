@@ -30,7 +30,6 @@ module AiFlow
       end
 
       segments = CommentParser.new(prefix: @prefix).parse(@context.comment_body)
-      segments = auto_learn_segments if segments.empty?
       return if segments.empty?
 
       acknowledge
@@ -48,24 +47,6 @@ module AiFlow
     end
 
     private
-
-    # Auto-learn (opt-in, plans#13): a submitted review with no command runs
-    # the bare /learn sweep when the repo enabled it (learn.auto in
-    # .github/ai-flow.yml, default off). The caller workflow forwards
-    # command-less review events only when its auto_learn input is set; this
-    # config read is the authoritative re-check, same posture as the
-    # permission gate.
-    #
-    # @return [Array<CommentParser::Segment>]
-    def auto_learn_segments
-      return [] unless @context.review_summary?
-      return [] unless RepoConfig.load(@workdir).learn_auto?
-
-      # The synthesized segment anchors on the review's last line so the
-      # panel renders its result right under the quoted review text.
-      last_line = [@context.comment_body.gsub("\r\n", "\n").split("\n", -1).size - 1, 0].max
-      [CommentParser::Segment.new(command: "learn", flags: [], quote: nil, instruction: "", end_line: last_line)]
-    end
 
     # The payload's author_association is the cheap first gate, but
     # review-comment payloads under-report it (an org MEMBER can arrive as
