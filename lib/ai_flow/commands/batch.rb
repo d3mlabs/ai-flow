@@ -274,12 +274,15 @@ module AiFlow
 
       # Standalone /ask gets a reply (a question-and-answer is a legitimate
       # two-comment conversation); everything else — including /ask inside a
-      # batch — lands interleaved in the command comment itself.
+      # batch — lands interleaved in the command comment itself. On the
+      # review-summary surface the review panel already is the bot's reply
+      # comment, so /ask delivers through it like everything else (a
+      # separate reply would orphan the panel's ⏳ line).
       #
       # @param appendix [String, nil] batch-level block (the plan diff)
       # @return [Boolean] whether every segment result is a success
       def deliver(segments, results, appendix: nil)
-        if segments.size == 1 && segments.first.command == "ask" && appendix.nil?
+        if !@context.review_summary? && segments.size == 1 && segments.first.command == "ask" && appendix.nil?
           reply(with_footer(results.first.last))
           # The reply doesn't rewrite the command comment, so the dispatcher's
           # ⏳ status line (only added inside Actions, where run_url is set)

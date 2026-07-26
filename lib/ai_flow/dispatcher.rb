@@ -62,8 +62,12 @@ module AiFlow
       false
     end
 
-    # 👀 while running — acknowledgement is a reaction, never a status comment.
+    # 👀 while running — acknowledgement is a reaction, never a status
+    # comment. Review summaries have no reactions API at all, so their
+    # acknowledgment is the review panel's ⏳ comment (announce_running).
     def acknowledge
+      return if @context.review_summary?
+
       @github.react_to_comment(
         @context.owner_repo, @context.comment_id, "eyes",
         review_comment: @context.review_comment?,
@@ -79,7 +83,8 @@ module AiFlow
     # payload body, so this line vanishes when the results land (the run
     # link persists as the ResultWriter footer); the standalone-/ask reply
     # path reverts it explicitly. Placed after the exact parse, so prose
-    # mentions never get it.
+    # mentions never get it. Where the line lands (in-place edit vs the
+    # review panel) is the writer's concern.
     #
     # @param segments [Array<CommentParser::Segment>]
     def announce_running(segments)
@@ -87,10 +92,7 @@ module AiFlow
       return unless url
 
       status = ["⏳ ai-flow is running — [follow the run](#{url})", ResultWriter.models_note(predicted_models(segments))]
-      @result_writer.write_raw(
-        @context,
-        "#{@context.comment_body.rstrip}\n\n> #{status.compact.join(" · ")}",
-      )
+      @result_writer.announce(@context, status.compact.join(" · "))
     rescue GitHub::Error
       # A failed status line must not block the command.
     end

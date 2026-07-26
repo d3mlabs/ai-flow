@@ -208,6 +208,29 @@ class AiFlow::DispatcherTest < Minitest::Test
     nil
   end
 
+  test "a review summary dispatches with no reaction — the review panel is the ack" do
+    Given "an /ask in a submitted review's summary text, inside Actions"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 3, title: "Carve system", body: "# Carve system\n")
+    context = ContextBuilder.review_summary(body: "/ask why LOD0 only?", env: ACTIONS_ENV)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause carving happens at runtime."])
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context).run
+
+    Then "no reaction; the ⏳ panel is posted once, then edited into the answer"
+    !github.calls.map(&:first).include?(:react_to_comment)
+    github.comments.size == 1
+    github.comments.first.include?("In reply to jpduchesne's [review]")
+    github.comments.first.include?("> /ask why LOD0 only?")
+    github.comments.first.include?("⏳ ai-flow is running — [follow the run](#{RUN_URL})")
+    github.comment_edits.fetch(1).include?("Because carving happens at runtime.")
+    !github.comment_edits.fetch(1).include?("⏳")
+
+    Cleanup
+    nil
+  end
+
   test "the run appends the agent's knowledge-applied list to the step summary" do
     Given "an authorized /ask and an agent that consulted two learnings"
     github = FakeGitHub.new

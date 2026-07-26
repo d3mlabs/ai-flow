@@ -20,13 +20,20 @@ anchor — the remote cmd+L.
 
 ## Surfaces at a glance
 
-| | Issue | PR conversation | PR review thread |
-|---|---|---|---|
-| `/ask` | ✅ answers on the plan | ✅ answers on the description | ✅ answers threaded, line anchor as scope |
-| `/edit` | ✅ edits the plan body | ✅ edits the description | ✅ edits the description, anchor as focus |
-| `/split` | ✅ dry / apply / bare | — | — |
-| `/build` | ✅ plan → PR (state-aware) | ✅ iterates the head branch | ℹ️ refused, sweep picks the thread up |
-| `/build --split` | ✅ orchestrates sub-issues | ℹ️ refused | ℹ️ refused |
+| | Issue | PR conversation | PR review thread | PR review summary |
+|---|---|---|---|---|
+| `/ask` | ✅ answers on the plan | ✅ answers on the description | ✅ answers threaded, line anchor as scope | ✅ answers on the review panel |
+| `/edit` | ✅ edits the plan body | ✅ edits the description | ✅ edits the description, anchor as focus | ✅ edits the description |
+| `/split` | ✅ dry / apply / bare | — | — | — |
+| `/build` | ✅ plan → PR (state-aware) | ✅ iterates the head branch | ℹ️ refused, sweep picks the thread up | ✅ iterates the head branch |
+| `/build --split` | ✅ orchestrates sub-issues | ℹ️ refused | ℹ️ refused | ℹ️ refused |
+
+A **review summary** is the top-level text of a submitted review
+(`pull_request_review`), as opposed to its line-anchored threads. It behaves
+as a PR-conversation surface with one delivery difference: reviews accept
+neither reactions nor in-place edits, so there is no 👀 ack and the ⏳
+status + results land in one bot-owned **review panel** comment quoting the
+review, posted when the run starts and edited in place thereafter.
 
 ## /ask
 
