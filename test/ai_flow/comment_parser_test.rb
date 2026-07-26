@@ -132,6 +132,38 @@ class AiFlow::CommentParserTest < Minitest::Test
     nil
   end
 
+  test "/learn is a lifecycle command — it cannot share a comment with another" do
+    Given "a batch mixing /ask with /learn"
+    body = <<~COMMENT
+      /ask why?
+
+      /learn prefer factories over class methods
+    COMMENT
+
+    When "parsing"
+    parse(body)
+
+    Then
+    raises AiFlow::CommentParser::ParseError
+
+    Cleanup
+    nil
+  end
+
+  test "/learn --scan extracts only the flag, leaving the rest as instruction context" do
+    Given "a scan with targets and steering as free text"
+    segments = parse("/learn --scan the backend and its clients, focus on error handling")
+
+    Expect "one segment carrying the flag; targets/steering stay verbatim in the instruction"
+    segments.size == 1
+    segments.first.command == "learn"
+    segments.first.flags == ["--scan"]
+    segments.first.instruction == "the backend and its clients, focus on error handling"
+
+    Cleanup
+    nil
+  end
+
   test "multi-line quotes are captured whole" do
     Given "a quote block spanning lines"
     body = <<~COMMENT

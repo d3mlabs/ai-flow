@@ -195,12 +195,34 @@ module AiFlow
       )
     end
 
+    # @param draft [Boolean] open as a draft (learning PRs are drafts — the
+    #   human merge is the curation gate, never an auto-merge)
     # @return [Hash] the created PR (with "html_url", "number")
-    def create_pull_request(owner_repo, title:, body:, head:, base:)
+    def create_pull_request(owner_repo, title:, body:, head:, base:, draft: false)
       api(
         "repos/#{owner_repo}/pulls",
-        method: "POST", payload: { title: title, body: body, head: head, base: base },
+        method: "POST", payload: { title: title, body: body, head: head, base: base, draft: draft },
       )
+    end
+
+    # The open PR whose head is this branch, or nil — how /learn finds a
+    # source surface's existing draft to refine instead of duplicating (the
+    # branch convention ai/learn-<source> is the discovery key). The head
+    # filter is `owner:branch`; owner is the repo's owner.
+    #
+    # @return [Hash, nil] the PR (with "number", "html_url"), nil when none
+    def open_pull_request_for_head(owner_repo, branch)
+      owner = owner_repo.split("/", 2).first
+      list = api("repos/#{owner_repo}/pulls?state=open&head=#{owner}:#{branch}") || []
+      list.first
+    end
+
+    # Close a PR without merging — how a later pass retires a dissolved
+    # draft learning PR.
+    #
+    # @return [void]
+    def close_pull_request(owner_repo, number)
+      api("repos/#{owner_repo}/pulls/#{number}", method: "PATCH", payload: { state: "closed" })
     end
 
     # Assign users to an issue or PR (PRs share the issues namespace).

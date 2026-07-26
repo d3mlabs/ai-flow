@@ -9,10 +9,29 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::DispatcherTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
-  def build_dispatcher(github:, agent:, context:, workdir: Dir.pwd)
+  def build_dispatcher(github:, agent:, context:, workdir: Dir.pwd, executor: AiFlow::Executor.new)
     AiFlow::Dispatcher.new(
-      context: context, workdir: workdir, github: github, agent: agent,
+      context: context, workdir: workdir, github: github, agent: agent, executor: executor,
     )
+  end
+
+  # A git executor that records command lines and reports one staged
+  # learning file, so a routed /learn reaches its draft-PR write phase
+  # without touching a real repo.
+  class LearnExecutor
+    attr_reader :command_lines
+
+    def initialize
+      @command_lines = []
+    end
+
+    def refresh_auth!; end
+
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      @command_lines << argv.join(" ")
+      out = argv.take(4) == %w[git diff --cached --name-only] ? ".cursor/skills/learnings/x/SKILL.md\n" : ""
+      [out, "", true]
+    end
   end
 
   test "an unauthorized commenter is ignored entirely" do
@@ -226,6 +245,44 @@ class AiFlow::DispatcherTest < Minitest::Test
     github.comments.first.include?("⏳ ai-flow is running — [follow the run](#{RUN_URL})")
     github.comment_edits.fetch(1).include?("Because carving happens at runtime.")
     !github.comment_edits.fetch(1).include?("⏳")
+
+    Cleanup
+    nil
+  end
+
+  test "/learn routes to the learn command and opens a draft learning PR" do
+    Given "a dictated /learn on an issue, inside an Actions run"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    context = ContextBuilder.issue_comment(number: 7, body: "/learn prefer factories over class methods",
+      env: ACTIONS_ENV)
+    agent = FakeAgent.new(["drafted design/factory"])
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context, executor: LearnExecutor.new).run
+
+    Then "the status line predicted the lifecycle command's own model; the pass ran; a draft PR was created"
+    github.comment_edit_history.first.include?("⏳ ai-flow is running")
+    agent.launches.first[:command] == "learn"
+    github.calls.map(&:first).include?(:create_pull_request)
+    github.pull_request_drafts.first == true
+
+    Cleanup
+    nil
+  end
+
+  test "a command-less review submission is a no-op — reviews only dispatch on explicit commands" do
+    Given "a plain review with no command"
+    github = FakeGitHub.new
+    context = ContextBuilder.review_summary(body: "LGTM — one pattern here keeps recurring.")
+    agent = FakeAgent.new([])
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context).run
+
+    Then "no agent pass and nothing written"
+    agent.launches.empty?
+    github.comments.empty?
 
     Cleanup
     nil

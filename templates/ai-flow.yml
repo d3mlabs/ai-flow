@@ -10,3 +10,14 @@ models:
   default: claude-fable-5-high
   # Per-command overrides, e.g. a heavier model for the code-writing pass:
   # build: claude-fable-5-thinking-high
+
+# The org knowledge repo /learn --promote moves learnings into. Unset means
+# promotion refuses with a pointer here.
+# knowledge_repo: d3mlabs/knowledge
+
+# Learning capture (optional):
+# - on_build: /build's opportunistic learning capture — the build pass may
+#   split learning files into a separate draft PR. Default on; set false
+#   for quiet repos.
+# learn:
+#   on_build: true

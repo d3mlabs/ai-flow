@@ -23,6 +23,7 @@ module AiFlow
       "edit" => nil,
       "split" => nil,
       "build" => nil,
+      "learn" => nil,
     }.freeze
 
     # What each command actually ran on, keyed by command so a batch that

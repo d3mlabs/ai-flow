@@ -5,15 +5,18 @@ module AiFlow
   #
   # Grammar (see the ai-flow plan, Component 4):
   # - Commands are recognized only at the start of a line: /ask, /edit, /split,
-  #   /build (optionally with a configured prefix, e.g. "ai-" → /ai-ask), so
-  #   prose like "the /build passes" never matches mid-line.
+  #   /build, /learn (optionally with a configured prefix, e.g. "ai-" →
+  #   /ai-ask), so prose like "the /build passes" never matches mid-line.
   # - A comment may batch several quote+command pairs (the review work unit):
   #   each command binds to the quote block immediately above it and owns the
   #   free text after it, up to the next quote block or command.
-  # - Batches are limited to /ask and /edit; /split and /build are lifecycle
-  #   operations that must be a comment's only command.
+  # - Batches are limited to /ask and /edit; /split, /build, and /learn are
+  #   lifecycle operations that must be a comment's only command.
+  # - Flags select machine-actionable mode only (the system-wide grammar,
+  #   plans#13): everything after them — the rest of the line, following
+  #   lines, and the quote block above — is verbatim context for the agent.
   class CommentParser
-    COMMANDS = %w[ask edit split build].freeze
+    COMMANDS = %w[ask edit split build learn].freeze
     BATCHABLE_COMMANDS = %w[ask edit].freeze
 
     class ParseError < StandardError; end

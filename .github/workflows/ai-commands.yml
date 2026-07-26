@@ -79,7 +79,8 @@ jobs:
       (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
-       contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)))
+       contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) ||
+       contains(github.event.comment.body, format('/{0}learn', inputs.command_prefix)))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -128,18 +129,22 @@ jobs:
       (contains(github.event.comment.body || github.event.review.body, format('/{0}ask', inputs.command_prefix)) ||
        contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) ||
-       contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)))
+       contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) ||
+       contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)))
     # per_actor_runners routes to the commenter's own box; otherwise each
     # command routes to its own fixed label, ai-<command> — convention over
     # configuration (deployment decides the topology: one box can carry all
-    # four labels, or a beefy box takes ai-build alone). A batch comment can
+    # five labels, or a beefy box takes ai-build alone). A batch comment can
     # mix commands but the job runs on one box, so route by the heaviest
-    # command present. Coarse contains() (a prose mention of /build in an
-    # /edit comment routes heavy), which errs on the safe side: a heavier
-    # pool can run anything lighter.
+    # command present, precedence build > learn > split > edit > ask (a
+    # /learn --scan can be multi-repo heavy, so it routes above /split).
+    # Coarse contains() (a prose mention of /build in an /edit comment routes
+    # heavy), which errs on the safe side: a heavier pool can run anything
+    # lighter.
     runs-on: >-
       ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login || github.event.review.user.login))
           || contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-build"]')
+          || contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-learn"]')
           || contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-split"]')
           || contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-edit"]')
           || fromJSON('["self-hosted", "ai-ask"]') }}

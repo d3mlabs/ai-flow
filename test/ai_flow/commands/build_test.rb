@@ -17,9 +17,18 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   class RecordingExecutor
     attr_reader :command_lines, :refreshes
 
-    def initialize(dirty: true, workflows_patch: "")
+    # `capture_patch` seeds a staged diff under the learning paths (build-time
+    # capture); `capture_staged` is what the landing worktree stages after
+    # `git apply` — the fake flips on the apply call, since the landing
+    # worktree's diff must report learning files while the build worktree's
+    # reports code. `fail_on` substrings make matching command lines fail,
+    # for the capture failure paths.
+    def initialize(dirty: true, workflows_patch: "", capture_patch: "", capture_staged: [], fail_on: [])
       @dirty = dirty
       @workflows_patch = workflows_patch
+      @capture_patch = capture_patch
+      @capture_staged = capture_staged
+      @fail_on = fail_on
       @command_lines = []
       @refreshes = 0
     end
@@ -30,11 +39,16 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
+      return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
+
+      @applied = true if argv.take(2) == %w[git apply]
       out =
         if argv.join(" ").start_with?("git diff --cached -- .github/workflows")
           @workflows_patch
-        elsif argv.take(4) == %w[git diff --cached --name-only] && @dirty
-          "lib/thing.rb\n"
+        elsif argv.join(" ").start_with?("git diff --cached --binary -- .cursor/")
+          @capture_patch
+        elsif argv.take(4) == %w[git diff --cached --name-only]
+          @applied ? "#{@capture_staged.join("\n")}\n" : (@dirty ? "lib/thing.rb\n" : "")
         elsif argv.take(2) == %w[git rev-parse]
           "abc1234def5678\n"
         else
@@ -45,7 +59,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   end
 
   def run_build(github:, executor:, body: "/build", context: nil, agent: FakeAgent.new(["done"]),
-    org_invariants: empty_org_invariants)
+    org_invariants: empty_org_invariants, workdir: Dir.pwd)
     context ||= ContextBuilder.issue_comment(number: 7, body: body)
     segment = AiFlow::CommentParser.new.parse(body).first
     AiFlow::Commands::Build.new(
@@ -54,7 +68,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       agent: agent,
       result_writer: AiFlow::ResultWriter.new(github: github),
       executor: executor,
-      workdir: Dir.pwd,
+      workdir: workdir,
       org_invariants: org_invariants,
     ).run(segment)
   end
@@ -471,5 +485,177 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  # ---- Build-time learning capture ----
+
+  LEARNING_PATCH = <<~PATCH
+    diff --git a/.cursor/rules/learnings-index.mdc b/.cursor/rules/learnings-index.mdc
+    new file mode 100644
+    --- /dev/null
+    +++ b/.cursor/rules/learnings-index.mdc
+    @@ -0,0 +1 @@
+    +- [design/one-seam] One seam to the CLI. → .cursor/skills/learnings/one-seam/
+  PATCH
+
+  test "an issue /build carries the capture rubric and lands extracted learnings as a separate draft PR" do
+    Given "an issue build whose pass staged both code and learning files"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(
+      capture_patch: LEARNING_PATCH,
+      capture_staged: [".cursor/rules/learnings-index.mdc", ".cursor/skills/learnings/one-seam/SKILL.md"],
+    )
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent)
+
+    Then "the prompt carried the rubric; the learning diff left the code commit and landed on ai/learn-issue-7"
+    agent.prompts.first.include?("LEARNING CAPTURE")
+    executor.command_lines.any? { |line| line.start_with?("git reset -q HEAD -- .cursor/") }
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+    github.calls.include?([:create_pull_request, REPO, "ai/learn-issue-7", "main"])
+    github.pull_request_bodies.fetch(1).include?("learned-from: #{REPO}#7 (build-sweep)")
+    github.comment_edits.fetch(55).include?("🧠 drafted 1 learning in a draft learning PR")
+    github.comment_edits.fetch(55).include?("`one-seam`")
+
+    Cleanup
+    nil
+  end
+
+  test "a PR iteration's capture refines the surface's open learning draft (linked update)" do
+    Given "a PR iteration with an open ai/learn-pr-7 draft and a pass that re-staged learning files"
+    github = FakeGitHub.new
+    github.seed_open_pull_request_for_head("ai/learn-pr-7",
+      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
+    executor = RecordingExecutor.new(
+      capture_patch: LEARNING_PATCH,
+      capture_staged: [".cursor/rules/learnings-index.mdc", ".cursor/skills/learnings/one-seam/SKILL.md"],
+    )
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build fix the walk", context: context, agent: agent)
+
+    Then "the draft's files were seeded into the checkout, and the landing refined the draft (no second PR)"
+    executor.command_lines.any? { |line| line.start_with?("git checkout origin/ai/learn-pr-7 -- .cursor/") }
+    github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
+    executor.command_lines.any? { |line| line.include?("push -u origin ai/learn-pr-7") }
+    github.comment_edits.fetch(55).include?("🧠 refined 1 learning in a draft learning PR")
+
+    Cleanup
+    nil
+  end
+
+  test "a pass that deletes the seeded draft files closes the dissolved draft" do
+    Given "an open learning draft whose generalization this pass dissolved (no learning diff left)"
+    github = FakeGitHub.new
+    github.seed_open_pull_request_for_head("ai/learn-pr-7",
+      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+    context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
+    executor = RecordingExecutor.new(capture_patch: "")
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build simplify", context: context, agent: agent)
+
+    Then "the draft is closed and the panel says why"
+    github.calls.include?([:close_pull_request, REPO, 500])
+    github.comment_edits.fetch(55).include?("🧠 closed the draft learning PR")
+    github.comment_edits.fetch(55).include?("dissolved its generalization")
+
+    Cleanup
+    nil
+  end
+
+  test "a failed draft-branch fetch forgets the draft so an empty capture stays a no-op" do
+    Given "an open learning draft whose branch can't be fetched into the worktree"
+    github = FakeGitHub.new
+    github.seed_open_pull_request_for_head("ai/learn-pr-7",
+      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+    context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
+    executor = RecordingExecutor.new(capture_patch: "", fail_on: ["fetch origin ai/learn-pr-7"])
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build simplify", context: context, agent: agent)
+
+    Then "the agent never saw the draft's files, so the empty capture must not close the draft"
+    executor.command_lines.none? { |line| line.start_with?("git checkout origin/ai/learn-pr-7") }
+    github.calls.map(&:first).none? { |kind| kind == :close_pull_request }
+
+    Cleanup
+    nil
+  end
+
+  test "a capture landing failure degrades to a panel warning, never failing the code build" do
+    Given "a pass that captured a learning but whose learning-branch push fails"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(
+      capture_patch: LEARNING_PATCH,
+      capture_staged: [".cursor/rules/learnings-index.mdc", ".cursor/skills/learnings/one-seam/SKILL.md"],
+      fail_on: ["push -u origin ai/learn-issue-7"],
+    )
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent)
+
+    Then "the code PR still opened; the panel carries the capture warning instead of a learning PR"
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+    github.calls.none? { |call| call == [:create_pull_request, REPO, "ai/learn-issue-7", "main"] }
+    github.comment_edits.fetch(55).include?("⚠️ learning capture failed (the code change itself is unaffected)")
+
+    Cleanup
+    nil
+  end
+
+  test "a failed close of a dissolved draft degrades to a warning note" do
+    Given "a dissolved draft whose close call errors"
+    github = Class.new(FakeGitHub) do
+      def close_pull_request(_owner_repo, _number)
+        raise AiFlow::GitHub::Error, "boom"
+      end
+    end.new
+    github.seed_open_pull_request_for_head("ai/learn-pr-7",
+      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+    context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
+    executor = RecordingExecutor.new(capture_patch: "")
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build simplify", context: context, agent: agent)
+
+    Then "the build still delivers; the panel notes the failed close"
+    github.comment_edits.fetch(55).include?("⚠️ closing the dissolved learning draft failed: boom")
+
+    Cleanup
+    nil
+  end
+
+  test "learn.on_build: false switches build-time capture off" do
+    Given "a workdir whose ai-flow.yml opts out of build capture"
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "learn:\n  on_build: false\n")
+    github = FakeGitHub.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build fix the walk", context: context,
+      agent: agent, workdir: dir)
+
+    Then "no rubric in the prompt, no learning-draft lookup, no learning PR"
+    !agent.prompts.first.include?("LEARNING CAPTURE")
+    github.calls.map(&:first).none? { |kind| kind == :open_pull_request_for_head }
+    github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 end

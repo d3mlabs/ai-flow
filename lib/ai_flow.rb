@@ -18,6 +18,7 @@ require "ai_flow/commands/batch"
 require "ai_flow/commands/split"
 require "ai_flow/commands/build"
 require "ai_flow/commands/build_split"
+require "ai_flow/commands/learn"
 require "ai_flow/dispatcher"
 
 # ai-flow: GitHub-side slash commands (/ask, /edit, /split, /build) that run

@@ -39,8 +39,10 @@ module AiFlow
       # @param org_invariants [AiFlow::OrgInvariants] the always-on org rules
       #   injected into both prompts — /build checkouts are fresh, so the
       #   dev-rendered org-invariants.mdc is never present (see plans#13)
+      # @param learn [AiFlow::Commands::Learn] owns build-time learning
+      #   capture (the rubric section, the seed/extract/land mechanics)
       def initialize(context:, github:, agent:, result_writer:, executor:, workdir:, prefix: "",
-        org_invariants: OrgInvariants.new)
+        org_invariants: OrgInvariants.new, learn: nil)
         @context = context
         @github = github
         @agent = agent
@@ -49,6 +51,10 @@ module AiFlow
         @workdir = workdir
         @prefix = prefix
         @org_invariants = org_invariants
+        @learn = learn || Learn.new(
+          context: context, github: github, agent: agent, result_writer: result_writer,
+          executor: executor, workdir: workdir, prefix: prefix, org_invariants: org_invariants,
+        )
       end
 
       # @param segment [CommentParser::Segment]
@@ -69,7 +75,8 @@ module AiFlow
           end
         @result_writer.write(
           @context,
-          [[segment, [result, workflows_note(pr&.fetch("html_url")), open_sub_issues_note].compact.join("\n\n")]],
+          [[segment,
+            [result, @capture_note, workflows_note(pr&.fetch("html_url")), open_sub_issues_note].compact.join("\n\n")]],
         )
       end
 
@@ -82,19 +89,31 @@ module AiFlow
         issue_repo = issue.repo || @context.owner_repo
         code_repo = target_repo_for(issue, issue_repo)
         branch = branch_name(issue)
+        @capture_note = nil
 
         in_worktree(code_repo) do |worktree|
           create_branch(worktree, branch)
+          capture = capture_learnings?(code_repo, worktree)
+          @learn.seed_capture(worktree, issue_capture_source(issue, issue_repo)) if capture
           @agent.launch(
-            prompt: build_prompt(issue, extra_instruction), workdir: worktree, command: "build", force: true,
+            prompt: build_prompt(issue, extra_instruction, capture: capture),
+            workdir: worktree, command: "build", force: true,
           )
           # The agent may have run for close to the token's lifetime; the
           # write phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
-          next nil unless commit_all(worktree, issue)
+          committed = commit_all(worktree, issue, capture: capture)
+          unless committed
+            # A pass may yield learnings without code changes — land them
+            # even though no code PR opens.
+            @capture_note = @learn.land_capture if capture
+            next nil
+          end
 
           push_branch(worktree, branch)
-          open_pull_request(code_repo, issue_repo, issue, branch)
+          pr = open_pull_request(code_repo, issue_repo, issue, branch)
+          @capture_note = @learn.land_capture if capture
+          pr
         end
       end
 
@@ -155,17 +174,20 @@ module AiFlow
           return
         end
 
+        capture = RepoConfig.load(@workdir).learn_on_build?
+        @learn.seed_capture(@workdir, pr_capture_source) if capture
         output = @agent.launch(
-          prompt: iteration_prompt(segment, branch, threads, comments),
+          prompt: iteration_prompt(segment, branch, threads, comments, capture: capture),
           workdir: @workdir, command: "build", force: true,
         )
         parsed = AgentOutput.parse(output)
         # The agent may have run for close to the token's lifetime; the
         # write phase (push + replies + panel) starts on a fresh mint.
         @executor.refresh_auth!
-        sha = commit_and_push(segment)
+        sha = commit_and_push(segment, capture: capture)
+        capture_note = capture ? @learn.land_capture : nil
         reply_to_threads(threads, parsed, sha)
-        @result_writer.write(@context, [[segment, iteration_result(parsed, threads, sha)]])
+        @result_writer.write(@context, [[segment, iteration_result(parsed, threads, sha, capture_note)]])
       end
 
       # @return [String] the PR head branch, checked out in the job checkout
@@ -226,7 +248,7 @@ module AiFlow
         text.gsub(%r{<details>.*?</details>}m, "(collapsed diff omitted)")
       end
 
-      def iteration_prompt(segment, branch, threads, comments)
+      def iteration_prompt(segment, branch, threads, comments, capture: false)
         summary_index = threads.size + 1
         <<~PROMPT
           You are ai-flow, iterating on pull request #{@context.owner_repo}##{@context.number} in this checkout (branch `#{branch}`).
@@ -243,7 +265,7 @@ module AiFlow
           - Run the repository's test suite if one is configured.
           - Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout.
           - In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
-
+          #{capture_section(capture)}
           OUTPUT FORMAT — follow exactly, no other text before or after:
           <<<AI-FLOW:SEGMENT 1>>>
           (one line: what you did about THREAD 1, or why no change was needed)
@@ -251,6 +273,12 @@ module AiFlow
           <<<AI-FLOW:SEGMENT #{summary_index}>>>
           (a short summary of the whole iteration)
         PROMPT
+      end
+
+      # @return [String] the learning-capture rubric block (blank line
+      #   padded), empty when capture is off for this pass
+      def capture_section(capture)
+        capture ? "\n#{@learn.capture_prompt_section}\n" : ""
       end
 
       # @return [String] numbered THREAD blocks, then the fresh conversation
@@ -285,7 +313,7 @@ module AiFlow
       end
 
       # @return [String]
-      def iteration_result(parsed, threads, sha)
+      def iteration_result(parsed, threads, sha, capture_note = nil)
         summary = parsed.segments[threads.size + 1]
         headline =
           if sha
@@ -293,7 +321,7 @@ module AiFlow
           else
             "⚠️ **/build** — the agent made no changes."
           end
-        [headline, summary, workflows_note(pull_request_url)].compact.join("\n\n")
+        [headline, summary, capture_note, workflows_note(pull_request_url)].compact.join("\n\n")
       end
 
       # @return [String] the PR under iteration — this mode only runs on PR
@@ -402,10 +430,11 @@ module AiFlow
 
       # @param segment [CommentParser::Segment]
       # @return [String, nil] the pushed commit sha, nil when nothing changed
-      def commit_and_push(segment)
+      def commit_and_push(segment, capture: false)
         # The job checks the dispatcher out into .ai-flow inside this
         # workspace — a bare `git add -A` would commit it as a gitlink.
         run!("git", "add", "-A", "--", ":(exclude).ai-flow", chdir: @workdir)
+        @learn.extract_capture(@workdir) if capture
         extract_workflows_patch(@workdir)
         status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: @workdir)
         return nil if status.strip.empty?
@@ -469,7 +498,7 @@ module AiFlow
         run!("git", "checkout", "-B", branch, chdir: worktree)
       end
 
-      def build_prompt(issue, extra_instruction)
+      def build_prompt(issue, extra_instruction, capture: false)
         <<~PROMPT
           You are ai-flow, implementing a plan in this repository checkout.
 
@@ -482,7 +511,40 @@ module AiFlow
           #{extra_instruction.empty? ? "" : "Additional instruction: #{extra_instruction}"}
 
           #{org_invariants_section}Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
+          #{capture_section(capture)}
         PROMPT
+      end
+
+      # Build-time learning capture runs for same-repo builds unless the repo
+      # switched it off (learn.on_build in .github/ai-flow.yml, default on).
+      # Cross-repo builds (org-wide plans) skip it: the capture's branches and
+      # panel are keyed to the command's own repo, not the code repo.
+      #
+      # @return [Boolean]
+      def capture_learnings?(code_repo, config_dir)
+        code_repo == @context.owner_repo && RepoConfig.load(config_dir).learn_on_build?
+      end
+
+      # @return [Hash] the built issue as a capture source — keyed on the
+      #   issue (not the comment surface) so --split sub-builds each get
+      #   their own learning draft
+      def issue_capture_source(issue, issue_repo)
+        {
+          branch: "ai/learn-issue-#{issue.number}",
+          ref: "#{issue_repo}##{issue.number}",
+          url: issue.html_url,
+        }
+      end
+
+      # @return [Hash] the iterated PR as a capture source — the same branch
+      #   a bare /learn sweep uses on this PR, so either pass refines the
+      #   other's draft (the linked-update rule)
+      def pr_capture_source
+        {
+          branch: "ai/learn-pr-#{@context.number}",
+          ref: "#{@context.owner_repo}##{@context.number}",
+          url: pull_request_url,
+        }
       end
 
       # Sub-issues are thin tracking shards — the parent plan is the spec.
@@ -511,8 +573,9 @@ module AiFlow
       end
 
       # @return [Boolean] whether there was anything to commit
-      def commit_all(worktree, issue)
+      def commit_all(worktree, issue, capture: false)
         run!("git", "add", "-A", chdir: worktree)
+        @learn.extract_capture(worktree) if capture
         extract_workflows_patch(worktree)
         status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: worktree)
         return false if status.strip.empty?
