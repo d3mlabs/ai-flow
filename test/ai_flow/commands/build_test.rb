@@ -292,13 +292,14 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     run_build(github: github, executor: executor)
     lines = executor.command_lines
 
-    Then "workflows are unstaged before the commit, and the panel carries the patch"
+    Then "workflows are unstaged before the commit, and the panel carries a one-paste apply command"
     lines.include?("git reset -q HEAD -- .github/workflows")
     lines.include?("git checkout -q -- .github/workflows")
     lines.include?("git clean -fdq -- .github/workflows")
     lines.index { |line| line.include?("reset -q HEAD") } < lines.index { |line| line.include?(" commit -m ") }
     github.calls.map(&:first).include?(:create_pull_request)
     github.comment_edits.fetch(55).include?("no `workflows` permission")
+    github.comment_edits.fetch(55).include?("gh pr checkout https://github.com/#{REPO}/pull/900 && git apply --index <<'PATCH'")
     github.comment_edits.fetch(55).include?("extra: step")
 
     Cleanup
@@ -315,11 +316,12 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     When "building"
     run_build(github: github, executor: executor)
 
-    Then "no commit, no PR — but the human still gets the patch to apply"
+    Then "no commit, no PR — the human gets the bare diff (no branch to apply a command onto)"
     executor.command_lines.none? { |line| line.include?(" commit -m ") }
     github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
     github.comment_edits.fetch(55).include?("⚠️ **/build** — the agent made no changes, so no PR was opened.")
     github.comment_edits.fetch(55).include?("extra: step")
+    !github.comment_edits.fetch(55).include?("gh pr checkout")
 
     Cleanup
     nil
@@ -336,11 +338,12 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     When "iterating"
     run_build(github: github, executor: executor, body: "/build tweak CI", context: context, agent: agent)
 
-    Then "the commit excludes workflows and the panel carries the patch"
+    Then "the commit excludes workflows and the panel's apply command targets the PR under iteration"
     executor.command_lines.include?("git reset -q HEAD -- .github/workflows")
     executor.command_lines.any? { |line| line.include?(" commit -m ") }
     github.comment_edits.fetch(55).include?("✅ **/build** — committed")
     github.comment_edits.fetch(55).include?("no `workflows` permission")
+    github.comment_edits.fetch(55).include?("gh pr checkout https://github.com/#{REPO}/pull/7 && git apply --index <<'PATCH'")
     github.comment_edits.fetch(55).include?("extra: step")
 
     Cleanup
