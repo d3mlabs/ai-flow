@@ -54,18 +54,44 @@ session ends. A skill is in-context learning made durable — externalized
 memory that re-enters the context window on demand. ai-flow closes the loop
 around that memory, a full learning system with the weights never moving:
 
-1. **Experience** — the surfaces commands already run on: reviews, builds,
-   codebase scans.
-2. **Credit assignment** — the distillation rubric every capture pass
-   carries: does this lesson generalize beyond the diff at hand?
-3. **Memory write** — a draft learning PR (an index line plus a detail
-   skill), opened by [`/learn`](docs/commands.md#learn) or split out of a
-   `/build` pass while its context is still hot (build-time capture, on by
-   default; `learn: { on_build: false }` in `.github/ai-flow.yml` opts out).
-4. **Behavior change** — the next session loads the index: fresh `/build`
-   checkouts get the org's always-on invariants injected into the prompt,
-   and every run reports which knowledge it actually read (the `knowledge:`
-   lines in the job log and the step-summary list).
+1. **Experience.** Learning starts with exposure, and exposure is the cheap
+   part — most of what any learner encounters teaches nothing. The loop
+   doesn't manufacture experience; it taps the surfaces where the work
+   already happens: review threads, build passes, codebase scans.
+2. **Credit assignment.** The learning-theory term for the step between
+   experience and memory: given a pile of raw experience and an outcome,
+   decide which part of it deserves the credit — which specific thing
+   caused the result, as opposed to everything that merely happened
+   alongside it. In RL it's "which of my actions earned this reward"; in
+   animal learning, "which of the things I did got me the treat." Every
+   learning system has to solve it, because raw experience is almost
+   entirely noise. Here the raw experience is a whole review thread or
+   build pass — dozens of comments, fixes, renames, decisions — and most of
+   it must *not* become memory: a typo fix or a one-off rename is a
+   consequence of this diff's circumstances, and writing it down would
+   pollute the index. But occasionally a correction reflects a general
+   rule — "raise typed errors, never bare strings" — a lesson that would
+   have prevented the same mistake in any future PR. The distillation
+   rubric every capture pass carries draws exactly that line: does this
+   generalize beyond the diff at hand? Most passes yield nothing, by design.
+3. **Memory write.** Brains don't archive raw experience; they consolidate
+   the distilled trace into durable form while it's fresh. Same here,
+   literally: capture runs while the context is hot — a
+   [`/learn`](docs/commands.md#learn) pass, or `/build`'s build-time capture
+   in the very pass that held the discussion (on by default;
+   `learn: { on_build: false }` in `.github/ai-flow.yml` opts out) — never
+   as a cold re-ingest step. The written form is an index line (one
+   sentence: the retrieval cue) plus a detail skill (the full lesson),
+   landed as a draft PR.
+4. **Behavior change.** A memory only counts if it's retrieved at the
+   moment it applies. The always-on index rides in every session's context
+   as the cue list; a detail skill loads on demand when its cue fires; and
+   fresh `/build` checkouts get the org's invariants injected into the
+   prompt. Retrieval is also observable: every run reports which knowledge
+   it actually read (the `knowledge:` lines in the job log and the
+   step-summary list) — the usage signal auto-retirement will one day feed
+   on, because a memory that is never retrieved is a memory worth
+   forgetting.
 
 The human gate — every learning lands as a *draft* PR, merged by a person —
 is not training wheels; it is the missing half of learning, supplied from
