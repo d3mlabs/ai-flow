@@ -34,6 +34,11 @@ jobs:
     # @main so the workflow YAML tracks the dispatcher code, which is also
     # checked out at main — a tag pin here silently splits the two versions.
     uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main
+    # Optional: auto-learn — run the bare /learn sweep on every submitted
+    # review (no command needed). Requires `learn: auto` in
+    # .github/ai-flow.yml too; this input only lets the events through.
+    # with:
+    #   auto_learn: true
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}

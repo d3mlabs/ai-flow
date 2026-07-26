@@ -217,6 +217,14 @@ module AiFlow
       list.first
     end
 
+    # Close a PR without merging — how a later pass retires a dissolved
+    # draft learning PR.
+    #
+    # @return [void]
+    def close_pull_request(owner_repo, number)
+      api("repos/#{owner_repo}/pulls/#{number}", method: "PATCH", payload: { state: "closed" })
+    end
+
     # Assign users to an issue or PR (PRs share the issues namespace).
     def add_assignees(owner_repo, number, logins)
       api(

@@ -195,6 +195,10 @@ class FakeGitHub
     (@open_prs_by_head || {})[branch]
   end
 
+  def close_pull_request(owner_repo, number)
+    @calls << [:close_pull_request, owner_repo, number]
+  end
+
   def add_assignees(owner_repo, number, logins)
     @calls << [:add_assignees, owner_repo, number, logins]
   end

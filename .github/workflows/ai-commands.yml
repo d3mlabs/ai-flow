@@ -40,6 +40,15 @@ on:
           a silent one.
         type: boolean
         default: false
+      auto_learn:
+        description: >-
+          Dispatch command-less review submissions (pull_request_review) so
+          the bare /learn sweep runs on every review. This input is the
+          coarse filter (the workflow engine can't read repo files); the
+          dispatcher re-checks `learn: auto` in .github/ai-flow.yml — enable
+          both. Off by default: noise and per-review agent cost are real.
+        type: boolean
+        default: false
     secrets:
       CURSOR_API_KEY:
         description: Authenticates the headless Cursor agent CLI on the runner.
@@ -119,7 +128,9 @@ jobs:
   # pull_request_review carries the command under event.review instead of
   # event.comment; the `||` coalescing below reads whichever surface fired
   # (missing properties resolve to null, and contains(null, x) is false).
-  # Plain approvals with an empty body coalesce to no command — no job.
+  # Plain approvals with an empty body coalesce to no command — no job,
+  # unless the caller opted into auto_learn: then every review submission
+  # dispatches and the Ruby side gates on `learn: auto` in .github/ai-flow.yml.
   dispatch:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment' ||
@@ -130,7 +141,8 @@ jobs:
        contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) ||
        contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) ||
-       contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)))
+       contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)) ||
+       (github.event_name == 'pull_request_review' && inputs.auto_learn))
     # per_actor_runners routes to the commenter's own box; otherwise each
     # command routes to its own fixed label, ai-<command> — convention over
     # configuration (deployment decides the topology: one box can carry all
@@ -140,13 +152,15 @@ jobs:
     # /learn --scan can be multi-repo heavy, so it routes above /split).
     # Coarse contains() (a prose mention of /build in an /edit comment routes
     # heavy), which errs on the safe side: a heavier pool can run anything
-    # lighter.
+    # lighter. Auto-learn dispatches (review events with no command in the
+    # body) route to ai-learn — they run the bare /learn sweep.
     runs-on: >-
       ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login || github.event.review.user.login))
           || contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-build"]')
           || contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-learn"]')
           || contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-split"]')
           || contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-edit"]')
+          || (github.event_name == 'pull_request_review' && inputs.auto_learn) && fromJSON('["self-hosted", "ai-learn"]')
           || fromJSON('["self-hosted", "ai-ask"]') }}
     # Serialize runs per issue/PR: batches assume a stable body snapshot.
     concurrency:

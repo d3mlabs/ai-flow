@@ -269,6 +269,46 @@ class AiFlow::DispatcherTest < Minitest::Test
     nil
   end
 
+  test "a command-less review submission auto-learns when learn.auto is on" do
+    Given "a repo opted into auto-learn and a plain review with no command"
+    dir = Dir.mktmpdir("ai-flow-dispatcher-test-")
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "learn:\n  auto: true\n")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 3, title: "Carve system", body: "The description.")
+    context = ContextBuilder.review_summary(body: "LGTM — one pattern here keeps recurring.")
+    agent = FakeAgent.new(["drafted design/one-seam"])
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context, workdir: dir, executor: LearnExecutor.new).run
+
+    Then "the bare sweep ran as /learn on the PR's own learning branch"
+    agent.launches.first[:command] == "learn"
+    agent.prompts.first.include?("SWEEP THIS SURFACE")
+    github.calls.include?([:create_pull_request, REPO, "ai/learn-pr-3", "main"])
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a command-less review submission without the config stays a no-op" do
+    Given "no learn.auto in the workdir's config and a plain review"
+    dir = Dir.mktmpdir("ai-flow-dispatcher-test-")
+    github = FakeGitHub.new
+    context = ContextBuilder.review_summary(body: "LGTM")
+    agent = FakeAgent.new([])
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context, workdir: dir).run
+
+    Then "no agent pass and nothing written"
+    agent.launches.empty?
+    github.comments.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "the run appends the agent's knowledge-applied list to the step summary" do
     Given "an authorized /ask and an agent that consulted two learnings"
     github = FakeGitHub.new

@@ -43,5 +43,48 @@ module AiFlow
       section = @config["models"]
       section.is_a?(Hash) ? section : {}
     end
+
+    # The org knowledge repo ("owner/repo") learnings promote into — where
+    # /learn --promote opens its add PR. ai-flow stays independent of dev's
+    # knowledge_repo config (dev/ai-flow are deliberately separate), so the
+    # adopter declares it here. nil when unset (promotion refuses with a
+    # pointer rather than guessing).
+    #
+    # @return [String, nil]
+    def knowledge_repo
+      value = @config["knowledge_repo"]
+      value.is_a?(String) && !value.strip.empty? ? value.strip : nil
+    end
+
+    # Whether /build runs an opportunistic learning-capture pass after a
+    # successful build (the draft PR + human merge is the gate; the agent
+    # drafts nothing when nothing generalizes). On by default — the loop is
+    # the point — with an explicit off switch for repos that want quiet.
+    #
+    # @return [Boolean]
+    def learn_on_build?
+      learn["on_build"] != false
+    end
+
+    # Whether a submitted review with no ai-flow command auto-runs the bare
+    # /learn sweep. Off by default: noise and per-review cost are real, so
+    # auto-learn is opt-in until the command form's signal-to-noise proves
+    # out (plans#13).
+    #
+    # @return [Boolean]
+    def learn_auto?
+      learn["auto"] == true
+    end
+
+    private
+
+    # The optional `learn:` section (build-capture + auto-learn switches). A
+    # non-mapping value (or absence) means all defaults.
+    #
+    # @return [Hash]
+    def learn
+      section = @config["learn"]
+      section.is_a?(Hash) ? section : {}
+    end
   end
 end

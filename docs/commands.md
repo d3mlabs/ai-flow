@@ -30,6 +30,14 @@ above — is **content the agent judges**: statements, targets, steering. So
 `/learn --scan the backend and its clients, focus on error handling` parses
 one flag (`--scan`) and hands the rest to the agent verbatim.
 
+Two flags `/learn` deliberately does *not* get: no `--dry`/`--apply`,
+because every capture form already **is** two-phase — the draft PR is the
+staged proposal and merge is the apply (`/split` needs explicit phases only
+because its staging medium is the issue body itself). And no
+`--split`/routing flag, because where learnings land (same repo, another
+repo, the org tier) is target scope — rubric-judged content under this same
+principle, not a mode.
+
 ## Surfaces at a glance
 
 | | Issue | PR conversation | PR review thread | PR review summary |
@@ -41,6 +49,8 @@ one flag (`--scan`) and hands the rest to the agent verbatim.
 | `/build --split` | ✅ orchestrates sub-issues | ℹ️ refused | ℹ️ refused | ℹ️ refused |
 | `/learn` | ✅ sweeps body + discussion | ✅ sweeps the PR | ✅ sweeps the PR | ✅ sweeps the PR |
 | `/learn <statement>` | ✅ dictated, any surface | ✅ dictated | ✅ dictated | ✅ dictated |
+| `/learn --scan` | ✅ surveys the repo | ✅ surveys | ✅ surveys | ✅ surveys |
+| `/learn --promote <slug>` | ✅ promotes to the org tier | ✅ promotes | ✅ promotes | ✅ promotes |
 
 A **review summary** is the top-level text of a submitted review
 (`pull_request_review`), as opposed to its line-anchored threads. It behaves
@@ -297,17 +307,80 @@ With nothing that generalizes:
 
 > ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change.
 
-### `/learn --scan` and `/learn --promote <slug>`
+### `/learn --scan [context…]` — survey
 
-Reserved in the grammar; not available yet (a follow-up in
-d3mlabs/ai-flow#15). Until then they answer, verbatim:
+The input is the codebase and its docs instead of review threads: the pass
+seeds and refreshes the **architecture section** (digest skills under
+`.cursor/skills/architecture/<topic>/`) and distills recurring coding and
+process practices already visible in code. Everything after the flag is
+steering the agent judges — focus areas, exclusions, repos to read for
+context (`/learn --scan focus on error handling, ignore the legacy
+adapters`). The pass writes into the current repo only; when the steering
+names other repositories, the agent reads them via `gh` for context and
+dedup and notes in its summary which deserve their own scan (run `--scan`
+there, or survey a checked-out constellation from the IDE via the
+capture-learning skill). One repo-scoped branch (`ai/learn-scan`), so
+repeated scans refine the open draft — dedup makes unchanged areas draft
+nothing.
 
-> ℹ️ **/learn --scan** — not available yet; codebase surveys (`/learn --scan`) are a follow-up in d3mlabs/ai-flow#15. For now, `/learn <statement>` captures a dictated lesson and bare `/learn` sweeps this surface.
+### `/learn --promote <slug>` — org-tier promotion
 
-Every draft learning PR carries a `learned-from: <repo>#<n> (dictated|learn-sweep)`
-marker naming its source and form, and is itself an ordinary ai-flow surface
-— `/build` iterates the wording, review threads sweep it, `/ask` challenges a
-generalization.
+Curation, not capture: moves an existing learning to the org knowledge repo
+(`knowledge_repo:` in `.github/ai-flow.yml`; without it the command refuses
+with a pointer). `<slug>` is the learning's name — its skill folder; a
+domain prefix (`ruby/typed-errors`) is accepted and dropped. Unknown slugs
+refuse with a near-match listing. Two paired draft PRs:
+
+- **the org draft** (an agent pass in a knowledge-repo clone adapts the
+  learning to org-general wording and dedups against the org corpus), and
+- **the repo-local removal** (deterministic: the skill folder and index
+  line drop), marked to merge only after the org PR lands and the knowledge
+  sync has shipped it machine-wide.
+
+> ✅ **/learn --promote** — `typed-errors` → d3mlabs/knowledge: opened an org draft https://github.com/d3mlabs/knowledge/pull/N
+> 🧹 paired removal draft in owner/repo: https://github.com/owner/repo/pull/M — merge after the org PR lands and the knowledge sync ships it.
+
+### Build-time capture (inside `/build`)
+
+Every `/build` pass also carries the capture rubric (on by default; switch
+off with `learn: { on_build: false }` in `.github/ai-flow.yml`): the build
+agent writes learning files straight into the code worktree while its
+context is hot, and the commit step splits them out of the code commit —
+same mechanics as the workflows exclusion — landing them on the surface's
+own learning branch as a **separate draft PR**. The result panel gets one
+🧠 line per outcome. Cross-repo builds (org-wide plans) skip capture. A
+failed capture warns in the panel but never fails the code build.
+
+### Auto-learn on reviews (opt-in, off by default)
+
+A submitted review with **no command at all** can run the bare sweep
+automatically. Two switches, both required: `auto_learn: true` on the
+caller workflow (the workflow engine can't read repo files, so event
+forwarding is its own input) and `learn: { auto: true }` in
+`.github/ai-flow.yml` (the dispatcher's authoritative re-check). The
+draft-PR gate makes it safe; noise and per-review agent cost are why it
+ships off.
+
+### Draft tracking (the linked-update rule)
+
+Every draft learning PR carries a `learned-from: <repo>#<n>
+(build-sweep|learn-sweep|scan|dictated|promote)` marker naming its source
+and form, plus the branch convention `ai/learn-<source>`. Capture-form
+commands re-running on the same source surface **refine that surface's open
+drafts** (a refining push, or closing a dissolved draft) instead of opening
+duplicates:
+
+| Re-run | Effect on open drafts |
+|---|---|
+| `/build` on a PR with a `learned-from: <this PR>` draft | its sweep refines it — or closes it when the pass dissolved the generalization |
+| `/learn` (bare) re-run on a PR or issue | refines that surface's draft (`ai/learn-pr-<n>` / `ai/learn-issue-<n>`) |
+| `/learn --scan` repeated on the same repo | refines the open scan draft (`ai/learn-scan`) |
+| `/learn <statement>` | new draft each time — its source is the single comment |
+
+Non-capture commands never touch learning drafts. Once the source surface
+goes quiet, the draft PR is itself an ordinary ai-flow surface — `/build`
+iterates the wording, review threads sweep it, `/ask` challenges a
+generalization — so nothing is orphaned.
 
 ## Cross-cutting behavior
 
