@@ -2,10 +2,10 @@
 [![codecov](https://codecov.io/gh/d3mlabs/ai-flow/branch/main/graph/badge.svg)](https://codecov.io/gh/d3mlabs/ai-flow)
 
 GitHub-side slash commands that run the headless Cursor agent on self-hosted
-runners. Comment `/ask`, `/edit`, `/split`, or `/build` on an issue or PR and
-a GitHub Actions job picks it up, runs the agent on our own hardware (normal
-agent billing, fine model control, warm build environments), and lands the
-result back on the comment thread with minimal noise.
+runners. Comment `/ask`, `/edit`, `/split`, `/build`, or `/learn` on an issue
+or PR and a GitHub Actions job picks it up, runs the agent on our own hardware
+(normal agent billing, fine model control, warm build environments), and lands
+the result back on the comment thread with minimal noise.
 
 The local half lives in [d3mlabs/dev](https://github.com/d3mlabs/dev) as
 `dev plan` — Cursor plans sync with GitHub issues (the issue is the canonical
@@ -18,7 +18,8 @@ Commands are recognized only at the start of a comment line. Quote-reply
 (select rendered text, press `r`) is the section anchor — the remote cmd+L.
 The consistency rule: `/ask` and `/edit` always operate on the document (the
 issue body or the PR description); `/build` always operates on code (open a
-PR from an issue, iterate on the branch from a PR).
+PR from an issue, iterate on the branch from a PR); `/learn` always operates
+on memory (draft learning PRs), never the surface's code.
 
 | Command | One line |
 |---|---|
@@ -28,6 +29,9 @@ PR from an issue, iterate on the branch from a PR).
 | `/build` (issue) | Builds the plan into a PR on branch `ai/<n>-<slug>` — state-aware: refuses on a staged split spec, notes open sub-issues. |
 | `/build [instruction]` (PR) | Iterates on the head branch, sweeping unresolved threads + fresh comments; replies per thread with disposition + commit link. |
 | `/build --split` (issue) | Orchestrates `/build` across sub-issues in dependency waves with a live checklist; skips undrivable nodes with warnings. |
+| `/learn [statement]` | Captures durable learnings into a draft PR — dictated, or a bare sweep of the surface's threads; never touches the surface's code. |
+| `/learn --scan [context…]` | Surveys the codebase + docs instead of a discussion: seeds/refreshes architecture digests and distills visible practices. |
+| `/learn --promote <slug>` | Promotes a repo-local learning to the org knowledge repo — paired drafts: the org addition plus the repo-local removal. |
 
 The normative reference — every command per surface, flags, decision
 tables, and each refusal message verbatim — is
@@ -42,6 +46,48 @@ running); the one exception is a standalone `/ask`, which gets a reply.
 While a command runs, the linked Actions run page streams the agent's
 activity live — one line per assistant message and tool call.
 
+## The learning loop
+
+LLM weights are frozen pattern-matching: at inference time, in-context
+learning is the only learning channel left, and it evaporates when the
+session ends. A skill is in-context learning made durable — externalized
+memory that re-enters the context window on demand. ai-flow closes the loop
+around that memory, a full learning system with the weights never moving:
+
+1. **Experience** — the surfaces commands already run on: reviews, builds,
+   codebase scans.
+2. **Credit assignment** — the distillation rubric every capture pass
+   carries: does this lesson generalize beyond the diff at hand?
+3. **Memory write** — a draft learning PR (an index line plus a detail
+   skill), opened by [`/learn`](docs/commands.md#learn) or split out of a
+   `/build` pass while its context is still hot (build-time capture, on by
+   default; `learn: { on_build: false }` in `.github/ai-flow.yml` opts out).
+4. **Behavior change** — the next session loads the index: fresh `/build`
+   checkouts get the org's always-on invariants injected into the prompt,
+   and every run reports which knowledge it actually read (the `knowledge:`
+   lines in the job log and the step-summary list).
+
+The human gate — every learning lands as a *draft* PR, merged by a person —
+is not training wheels; it substitutes for the ground-truth reward signal
+the system lacks. A human's mimicry self-corrects against reality; this
+system's only reality checks are CI and review. The autonomy trajectory is
+therefore not "remove the gate" but *move it along a risk gradient as real
+signals come online*: telemetry-driven auto-retirement first (deleting an
+unused memory is self-correcting; adding a wrong one is not), tier-scoped
+auto-merge for low-blast-radius detail skills behind CI later, convergent
+evolution — the same lesson captured independently in two repos — as a
+self-generated confidence signal. The always-on index and the org-invariants
+tier stay human-merged indefinitely, because taste ("this is how *we* want
+software built") is the one input the loop cannot synthesize. The gate
+doesn't disappear; it concentrates where taste lives. (v1 ships only the
+full gate; the trajectory is this paragraph, not code.)
+
+Learnings graduate: `/learn --promote <slug>` lifts a repo-local learning to
+the org tier — `knowledge_repo:` in `.github/ai-flow.yml` names the org's
+knowledge repo — as paired drafts, the org addition and the repo-local
+removal that merges after it. The forms, branch conventions, and the
+draft-tracking rules live in [docs/commands.md](docs/commands.md#learn).
+
 ## Layout
 
 Architecture (system diagram, job lifecycle, module map, command flows):
@@ -51,7 +97,7 @@ see [docs/architecture.md](docs/architecture.md).
 - `bin/dispatch.rb` — job entry point; parses the event, gates, routes.
 - `lib/ai_flow/` — comment parsing, anchor resolution, the `Agent#launch`
   seam (the one place that invokes the `agent` CLI — swap the backend here),
-  GitHub API access via `gh`, and the four command implementations.
+  GitHub API access via `gh`, and the five command implementations.
 - `templates/caller-workflow.yml` — the ~10-line workflow each repo copies.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
   repos using `dev plan`.
@@ -117,11 +163,11 @@ requesting human, whose accountability lives on the PR (`Requested by
    entirely — a public caller's job fails at the "Require the ai-flow App"
    step until the secret is shared with it.
 3. Register self-hosted runners with the per-command labels the workflow
-   routes on: `ai-ask`, `ai-edit`, `ai-split`, `ai-build`. The topology is a
-   deployment choice — one box can carry all four labels, or a beefy box
-   takes `ai-build` alone (/build runs the full agent loop including tests,
-   so it needs a real dev machine, not a bare runner) while a light box
-   takes the rest. One registered runner instance = one concurrent job;
+   routes on: `ai-ask`, `ai-edit`, `ai-split`, `ai-build`, `ai-learn`. The
+   topology is a deployment choice — one box can carry all five labels, or a
+   beefy box takes `ai-build` alone (/build runs the full agent loop
+   including tests, so it needs a real dev machine, not a bare runner) while
+   a light box takes the rest. One registered runner instance = one concurrent job;
    register N instances for N parallel jobs. Repos using `dev` can run
    `dev runner-setup`.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
@@ -135,6 +181,9 @@ requesting human, whose accountability lives on the PR (`Requested by
    [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));
    valid names come from `agent --list-models`, which every run also prints
    in its job log. Without the file, the agent CLI's account default applies.
+   The same file carries the learning-loop keys: `knowledge_repo:` (the org
+   knowledge repo `--promote` targets) and `learn: { on_build: false }` (opt
+   out of `/build`'s capture pass).
 6. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
    auto-push via `dev plan`.
 
