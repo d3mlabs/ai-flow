@@ -3,3 +3,6 @@ tmp/
 .cursor/plans/
 # dev-generated per-machine environment (absolute paths); .ruby-version stays committed
 .shadowenv.d/
+
+# dev-generated org invariants render (dev knowledge sync owns this file)
+.cursor/rules/org-invariants.mdc
