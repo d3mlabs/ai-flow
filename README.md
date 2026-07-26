@@ -49,9 +49,9 @@ activity live — one line per assistant message and tool call.
 ## The learning loop
 
 LLM weights are frozen pattern-matching: at inference time, in-context
-learning is the only learning channel left, and it evaporates when the
-session ends. A skill is in-context learning made durable — externalized
-memory that re-enters the context window on demand. ai-flow closes the loop
+learning is the only learning channel left,[^brown2020] and it evaporates
+when the session ends. A skill is in-context learning made durable —
+externalized memory that re-enters the context window on demand. ai-flow closes the loop
 around that memory, a full learning system with the weights never moving:
 
 1. **Experience.** Learning starts with exposure, and exposure is the cheap
@@ -62,10 +62,10 @@ around that memory, a full learning system with the weights never moving:
    experience and memory: given a pile of raw experience and an outcome,
    decide which part of it deserves the credit — which specific thing
    caused the result, as opposed to everything that merely happened
-   alongside it. In RL it's "which of my actions earned this reward"; in
-   animal learning, "which of the things I did got me the treat." Every
-   learning system has to solve it, because raw experience is almost
-   entirely noise. Here the raw experience is a whole review thread or
+   alongside it.[^minsky1961] In RL it's "which of my actions earned this
+   reward"; in animal learning, "which of the things I did got me the
+   treat."[^thorndike1911] Every learning system has to solve it, because
+   raw experience is almost entirely noise. Here the raw experience is a whole review thread or
    build pass — dozens of comments, fixes, renames, decisions — and most of
    it must *not* become memory: a typo fix or a one-off rename is a
    consequence of this diff's circumstances, and writing it down would
@@ -75,7 +75,8 @@ around that memory, a full learning system with the weights never moving:
    rubric every capture pass carries draws exactly that line: does this
    generalize beyond the diff at hand? Most passes yield nothing, by design.
 3. **Memory write.** Brains don't archive raw experience; they consolidate
-   the distilled trace into durable form while it's fresh. Same here,
+   the distilled trace into durable form while it's fresh.[^mcgaugh2000]
+   Same here,
    literally: capture runs while the context is hot — a
    [`/learn`](docs/commands.md#learn) pass, or `/build`'s build-time capture
    in the very pass that held the discussion (on by default;
@@ -84,31 +85,33 @@ around that memory, a full learning system with the weights never moving:
    sentence: the retrieval cue) plus a detail skill (the full lesson),
    landed as a draft PR.
 4. **Behavior change.** A memory only counts if it's retrieved at the
-   moment it applies. The always-on index rides in every session's context
+   moment it applies.[^tulving1973] The always-on index rides in every
+   session's context
    as the cue list; a detail skill loads on demand when its cue fires; and
    fresh `/build` checkouts get the org's invariants injected into the
    prompt. Retrieval is also observable: every run reports which knowledge
    it actually read (the `knowledge:` lines in the job log and the
    step-summary list) — the usage signal auto-retirement will one day feed
    on, because a memory that is never retrieved is a memory worth
-   forgetting.
+   forgetting.[^bjork1992]
 
 The human gate — every learning lands as a *draft* PR, merged by a person —
 is not training wheels; it is the missing half of learning, supplied from
 outside. Humans learn the way the model was trained: by mimicry. An infant
-imitates speech and gesture long before understanding either, and
-pre-training is the same move at scale — imitation of human work, frozen
+imitates speech and gesture long before understanding either,[^meltzoff1977]
+and pre-training is the same move at scale — imitation of human work, frozen
 into the weights. But human mimicry never runs open-loop. Every imitation
 is scored by a fitness function the learner didn't choose: social cues, a
-caregiver's reaction, dopamine's reward-prediction error, gravity when a
-first step fails — and only imitations that score well get reinforced. The
+caregiver's reaction, dopamine's reward-prediction error,[^schultz1997]
+gravity when a first step fails — and only imitations that score well get
+reinforced. The
 model has the mimicry half and none of the scoring: no dopamine, no social
 echo, no falling over; its only contact with reality here is CI and review.
 The merge gate is that fitness function, abstracted — a person scores each
 drafted learning, and only what passes selection becomes durable memory the
 next session loads. And because the weights never move, the reinforcement
 is selection over external memories rather than synaptic change: closer to
-how a culture accumulates knowledge than to how a brain does.
+how a culture accumulates knowledge than to how a brain does.[^tomasello1999]
 
 The autonomy trajectory is therefore not "remove the gate" but *replace its
 verdicts with cheaper fitness signals as they come online*:
@@ -271,3 +274,46 @@ The runtime dependency surface is deliberately thin: `sorbet-runtime` (the
 sigs and sealed hierarchies check at runtime too) plus shell-outs to `gh`,
 `git`, and `agent`; everything else is development- or test-only. Tests fake
 exactly those subprocess boundaries and exercise everything else for real.
+
+[^brown2020]: Tom B. Brown et al., "Language Models are Few-Shot Learners,"
+    *Advances in Neural Information Processing Systems 33* (2020) — the
+    demonstration that a frozen-weights model learns tasks from examples in
+    its context window, and only for as long as they stay there.
+[^minsky1961]: Marvin Minsky, "Steps Toward Artificial Intelligence,"
+    *Proceedings of the IRE* 49:1 (1961), which names the credit-assignment
+    problem; its temporal form is a central thread of Richard S. Sutton and
+    Andrew G. Barto, *Reinforcement Learning: An Introduction*, 2nd ed.
+    (MIT Press, 2018).
+[^thorndike1911]: Edward L. Thorndike, *Animal Intelligence: Experimental
+    Studies* (Macmillan, 1911) — the law of effect: responses followed by
+    satisfaction are strengthened, which presupposes knowing *which*
+    response to strengthen.
+[^mcgaugh2000]: James L. McGaugh, "Memory — a Century of Consolidation,"
+    *Science* 287:5451 (2000): new memories are labile and consolidate over
+    time. On why the durable store is written *from* the fresh trace rather
+    than by re-ingesting raw experience, see James L. McClelland, Bruce L.
+    McNaughton, and Randall C. O'Reilly, "Why There Are Complementary
+    Learning Systems in the Hippocampus and Neocortex," *Psychological
+    Review* 102:3 (1995).
+[^tulving1973]: Endel Tulving and Donald M. Thomson, "Encoding Specificity
+    and Retrieval Processes in Episodic Memory," *Psychological Review*
+    80:5 (1973) — what a memory does for you depends on the retrieval cues
+    available when you need it.
+[^bjork1992]: Robert A. Bjork and Elizabeth L. Bjork, "A New Theory of
+    Disuse and an Old Theory of Stimulus Fluctuation," in *From Learning
+    Processes to Cognitive Processes: Essays in Honor of William K. Estes*,
+    vol. 2 (Erlbaum, 1992) — retrieval strength decays with disuse, and
+    that decay is adaptive, not a defect.
+[^meltzoff1977]: Andrew N. Meltzoff and M. Keith Moore, "Imitation of
+    Facial and Manual Gestures by Human Neonates," *Science* 198:4312
+    (1977); the broader observational-learning framework is Albert Bandura,
+    *Social Learning Theory* (Prentice Hall, 1977).
+[^schultz1997]: Wolfram Schultz, Peter Dayan, and P. Read Montague, "A
+    Neural Substrate of Prediction and Reward," *Science* 275:5306 (1997) —
+    midbrain dopamine neurons encode reward-prediction error, the same
+    quantity temporal-difference learning formalizes.
+[^tomasello1999]: Michael Tomasello, *The Cultural Origins of Human
+    Cognition* (Harvard University Press, 1999) — cumulative culture (the
+    "ratchet effect"): knowledge accumulates through transmission and
+    selection across individuals, without any individual brain rewiring to
+    hold it all.
