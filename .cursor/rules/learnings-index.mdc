@@ -1,0 +1,49 @@
+---
+description: Always-on index of this repo's learnings — lessons distilled from reviews, builds, and scans. Read the pointed skill before working in an entry's territory.
+alwaysApply: true
+---
+
+# Learnings index
+
+One line per learning: `[domain/slug]`, the trigger sentence, the skill
+pointer. The line buys awareness; the pointed skill carries the rule, a
+wrong/right pair, and the origin — read it before working in that entry's
+territory. Detail skills live in `.cursor/skills/learnings/<slug>/`
+(architecture digests in `.cursor/skills/architecture/<topic>/`); gem and
+org skills are pointed at wherever their channel installs them.
+
+Capture and curation go through the capture-learning skill (IDE sessions)
+or ai-flow's `/learn` (GitHub comments) — both land as draft PRs; human
+merge is the gate. Soft cap ~50 entries: at the cap, an addition must
+propose a retirement, a consolidation, or a glob-scoped sub-index split.
+
+## testing
+
+- [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
+  bare `Then`/`Expect` statements are assertions; outside a transformed
+  class they silently assert nothing.
+  → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
+  `dev up` / `dev install-deps`)
+
+## architecture
+
+- [architecture/three-zones] GitHub is canonical state plus event plumbing
+  (Actions is the dispatcher infrastructure), self-hosted runners are the
+  execution layer, the App is identity only — no hosted service anywhere.
+  → .cursor/skills/architecture/three-zones/
+- [architecture/dispatch-seams] Dispatcher routes parsed segments to
+  command objects; Agent is the one seam to the headless CLI; Executor is
+  the one subprocess boundary (auth injected per spawn).
+  → .cursor/skills/architecture/dispatch-seams/
+- [architecture/workflows-wall] The App deliberately lacks the `workflows`
+  permission: agent-proposed workflow diffs never commit — they surface as
+  suggested patches, and workflow/caller changes are human-pushed.
+  → .cursor/skills/architecture/workflows-wall/
+
+## org tier
+
+Org-wide invariants and knowledge live in the configured org knowledge
+repo (`knowledge_repo:`), not here: dev renders the always-on slice into
+the generated `.cursor/rules/org-invariants.mdc` and links the on-demand
+corpus into `~/.cursor/skills/`. A lesson about how we build software —
+not about this repo — belongs there.
