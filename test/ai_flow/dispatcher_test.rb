@@ -207,4 +207,53 @@ class AiFlow::DispatcherTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "the run appends the agent's knowledge-applied list to the step summary" do
+    Given "an authorized /ask and an agent that consulted two learnings"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    dir = Dir.mktmpdir("ai-flow-dispatch-")
+    summary = File.join(dir, "summary.md")
+    previous = ENV["GITHUB_STEP_SUMMARY"]
+    ENV["GITHUB_STEP_SUMMARY"] = summary
+    agent = FakeAgent.new(
+      ["<<<AI-FLOW:SEGMENT 1>>>\nBecause."],
+      knowledge_applied: ["typed-errors", "learnings-index"],
+    )
+    context = ContextBuilder.issue_comment(body: "/ask why?")
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context).run
+
+    Then "the summary carries the deduped list under its heading"
+    File.read(summary).include?("### Knowledge applied")
+    File.read(summary).include?("- typed-errors")
+    File.read(summary).include?("- learnings-index")
+
+    Cleanup
+    previous ? ENV["GITHUB_STEP_SUMMARY"] = previous : ENV.delete("GITHUB_STEP_SUMMARY")
+    FileUtils.rm_rf(dir)
+  end
+
+  test "no step summary section when the agent consulted nothing" do
+    Given "an authorized /ask and an agent with no knowledge reads"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    dir = Dir.mktmpdir("ai-flow-dispatch-")
+    summary = File.join(dir, "summary.md")
+    previous = ENV["GITHUB_STEP_SUMMARY"]
+    ENV["GITHUB_STEP_SUMMARY"] = summary
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause."])
+    context = ContextBuilder.issue_comment(body: "/ask why?")
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: agent, context: context).run
+
+    Then "nothing was written"
+    !File.exist?(summary)
+
+    Cleanup
+    previous ? ENV["GITHUB_STEP_SUMMARY"] = previous : ENV.delete("GITHUB_STEP_SUMMARY")
+    FileUtils.rm_rf(dir)
+  end
 end

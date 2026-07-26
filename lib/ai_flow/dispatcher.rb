@@ -34,7 +34,9 @@ module AiFlow
 
       acknowledge
       announce_running(segments)
-      return if route(segments)
+      succeeded = route(segments)
+      append_knowledge_summary
+      return if succeeded
 
       # Soft failure: the per-segment ⚠️ is already on the comment; the run
       # itself must still go red so a failed command is visible from Actions.
@@ -165,6 +167,25 @@ module AiFlow
       Commands::BuildSplit.new(
         context: @context, github: @github, build: build, result_writer: @result_writer,
       )
+    end
+
+    # The deduped "knowledge applied" list, appended to the run page's step
+    # summary (GITHUB_STEP_SUMMARY renders at the top of the run page). The
+    # loop's own telemetry: seeing whether a learning actually gets consulted
+    # feeds later retire decisions. Run-page only — deliberately kept off the
+    # ⚙️ result footer to avoid cluttering the comment panel.
+    def append_knowledge_summary
+      path = ENV["GITHUB_STEP_SUMMARY"].to_s
+      return if path.empty?
+
+      names = @agent.knowledge_applied
+      return if names.empty?
+
+      File.open(path, "a") do |file|
+        file.puts("### Knowledge applied")
+        file.puts
+        names.each { |name| file.puts("- #{name}") }
+      end
     end
 
     # Failures land on the command comment too (in place when we know the

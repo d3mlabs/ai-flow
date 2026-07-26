@@ -4,6 +4,7 @@ require "test_helper"
 require "tmpdir"
 require "fileutils"
 require "json"
+require "stringio"
 
 # Captures every stream() argv so tests assert on the exact agent CLI
 # invocation; replays a canned NDJSON stream (default: one terminal result
@@ -279,6 +280,65 @@ class AiFlow::AgentTest < Minitest::Test
 
     Then
     answer == "ok"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # Swap $stdout for a StringIO around the launch — the progress lines are
+  # the observable behavior here, and the agent writes them directly.
+  def capture_agent_stdout
+    original = $stdout
+    $stdout = StringIO.new
+    yield
+    $stdout.string
+  ensure
+    $stdout = original
+  end
+
+  test "skill and rule reads render as knowledge lines and accumulate deduped" do
+    Given "a stream reading a skill twice, a rules file, and a plain file"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    skill_read = %({"type":"tool_call","subtype":"started","tool_call":) +
+      %({"readToolCall":{"args":{"path":"/Users/ci/.cursor/skills/typed-errors/SKILL.md"}}}})
+    executor = RecordingExecutor.new(lines: [
+      skill_read,
+      skill_read,
+      %({"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":".cursor/rules/learnings-index.mdc"}}}}),
+      %({"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"lib/thing.rb"}}}}),
+      %({"type":"result","subtype":"success","is_error":false,"result":"ok"}),
+    ])
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching and capturing the progress lines"
+    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: "build") }
+
+    Then "knowledge reads get their own line, plain reads stay generic, and the accumulator dedupes"
+    output.include?("[/build] knowledge: typed-errors")
+    output.include?("[/build] knowledge: learnings-index")
+    output.include?("[/build] → read: lib/thing.rb")
+    !output.include?("→ read: /Users/ci/.cursor/skills")
+    agent.knowledge_applied == ["typed-errors", "learnings-index"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "non-read tool calls under knowledge-looking args stay generic" do
+    Given "a shell command that merely mentions a skill path"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new(lines: [
+      %({"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"ls ~/.cursor/skills/typed-errors/"}}}}),
+      %({"type":"result","subtype":"success","is_error":false,"result":"ok"}),
+    ])
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: "build") }
+
+    Then "no knowledge line, nothing accumulated"
+    output.include?("[/build] → shell: ls ~/.cursor/skills/typed-errors/")
+    agent.knowledge_applied.empty?
 
     Cleanup
     FileUtils.rm_rf(dir)

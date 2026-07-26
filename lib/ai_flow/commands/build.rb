@@ -36,7 +36,11 @@ module AiFlow
       # @param workdir [String] the job's repo checkout
       # @param prefix [String] configured command prefix (to recognize old
       #   command comments during the feedback sweep)
-      def initialize(context:, github:, agent:, result_writer:, executor:, workdir:, prefix: "")
+      # @param org_invariants [AiFlow::OrgInvariants] the always-on org rules
+      #   injected into both prompts — /build checkouts are fresh, so the
+      #   dev-rendered org-invariants.mdc is never present (see plans#13)
+      def initialize(context:, github:, agent:, result_writer:, executor:, workdir:, prefix: "",
+        org_invariants: OrgInvariants.new)
         @context = context
         @github = github
         @agent = agent
@@ -44,6 +48,7 @@ module AiFlow
         @executor = executor
         @workdir = workdir
         @prefix = prefix
+        @org_invariants = org_invariants
       end
 
       # @param segment [CommentParser::Segment]
@@ -231,7 +236,7 @@ module AiFlow
           OUTSTANDING FEEDBACK:
           #{feedback_descriptions(threads, comments)}
 
-          Rules:
+          #{org_invariants_section}Rules:
           - The instruction, when present, is the priority; the feedback items are scope and context.
           - Address each review thread on its merits — a thread may need a code change, or just an explanation of why none is needed.
           - `gh` is available: inspect failing checks with `gh pr checks #{@context.number}` and `gh run view` when CI is part of the feedback.
@@ -343,6 +348,13 @@ module AiFlow
         "[`#{sha[0, 7]}`](https://github.com/#{@context.owner_repo}/commit/#{sha})"
       end
 
+      # @return [String] the invariants block ready to splice into a prompt
+      #   (trailing blank line included), empty on unconfigured machines
+      def org_invariants_section
+        block = @org_invariants.prompt_block
+        block ? "#{block}\n\n" : ""
+      end
+
       # @param segment [CommentParser::Segment]
       # @return [String, nil] the pushed commit sha, nil when nothing changed
       def commit_and_push(segment)
@@ -424,7 +436,7 @@ module AiFlow
           #{parent_context(issue)}
           #{extra_instruction.empty? ? "" : "Additional instruction: #{extra_instruction}"}
 
-          Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
+          #{org_invariants_section}Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
         PROMPT
       end
 

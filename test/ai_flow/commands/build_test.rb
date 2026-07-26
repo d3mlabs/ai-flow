@@ -2,6 +2,8 @@
 
 require "test_helper"
 require "support/fakes"
+require "fileutils"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BuildTest < Minitest::Test
@@ -42,7 +44,8 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     end
   end
 
-  def run_build(github:, executor:, body: "/build", context: nil, agent: FakeAgent.new(["done"]))
+  def run_build(github:, executor:, body: "/build", context: nil, agent: FakeAgent.new(["done"]),
+    org_invariants: empty_org_invariants)
     context ||= ContextBuilder.issue_comment(number: 7, body: body)
     segment = AiFlow::CommentParser.new.parse(body).first
     AiFlow::Commands::Build.new(
@@ -52,7 +55,14 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       result_writer: AiFlow::ResultWriter.new(github: github),
       executor: executor,
       workdir: Dir.pwd,
+      org_invariants: org_invariants,
     ).run(segment)
+  end
+
+  # A cache dir that doesn't exist: no invariants injected. Tests must never
+  # pick up the developer machine's real knowledge cache.
+  def empty_org_invariants
+    AiFlow::OrgInvariants.new(cache_dir: File.join(Dir.tmpdir, "ai-flow-no-cache-#{object_id}"))
   end
 
   test "/build prunes worktrees, commits as the bot with the requester co-authored, and opens an attributed PR" do
@@ -371,6 +381,68 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
     github.calls.map(&:first).none? { |kind| kind == :add_assignees }
     github.comment_edits.fetch(55).include?("⚠️ **/build**")
+
+    Cleanup
+    nil
+  end
+
+  def synced_org_invariants(cache)
+    File.write(
+      File.join(cache, "index.md"),
+      "## Invariants (always-on)\n\n- [design/srp] One reason to change per unit.\n",
+    )
+    AiFlow::OrgInvariants.new(cache_dir: cache)
+  end
+
+  test "issue builds inject the org invariants when the machine cache is synced" do
+    Given "an issue and a synced knowledge cache"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    cache = Dir.mktmpdir("ai-flow-knowledge-")
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    run_build(github: github, executor: RecordingExecutor.new, agent: agent,
+      org_invariants: synced_org_invariants(cache))
+
+    Then "the prompt carries the invariants"
+    agent.prompts.first.include?("ORG INVARIANTS")
+    agent.prompts.first.include?("[design/srp]")
+
+    Cleanup
+    FileUtils.rm_rf(cache)
+  end
+
+  test "PR iterations inject the org invariants too (the job checkout is fresh)" do
+    Given "a PR iteration with an instruction and a synced knowledge cache"
+    github = FakeGitHub.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix the docs", pull_request: true)
+    cache = Dir.mktmpdir("ai-flow-knowledge-")
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed."])
+
+    When "iterating"
+    run_build(github: github, executor: RecordingExecutor.new, body: "/build fix the docs",
+      context: context, agent: agent, org_invariants: synced_org_invariants(cache))
+
+    Then "the iteration prompt carries the invariants"
+    agent.prompts.first.include?("ORG INVARIANTS")
+    agent.prompts.first.include?("[design/srp]")
+
+    Cleanup
+    FileUtils.rm_rf(cache)
+  end
+
+  test "an unconfigured runner (no knowledge cache) injects nothing" do
+    Given "an issue and no cache on the machine"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    run_build(github: github, executor: RecordingExecutor.new, agent: agent)
+
+    Then "the prompt has no invariants block"
+    !agent.prompts.first.include?("ORG INVARIANTS")
 
     Cleanup
     nil
