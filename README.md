@@ -68,19 +68,31 @@ around that memory, a full learning system with the weights never moving:
    lines in the job log and the step-summary list).
 
 The human gate — every learning lands as a *draft* PR, merged by a person —
-is not training wheels; it substitutes for the ground-truth reward signal
-the system lacks. That frozen pattern-matching is mimicry: the model learned
-by imitating human work. When a human learns by imitation, the imitation
-self-corrects against reality; this system's only reality checks are CI and
-review. The autonomy trajectory is
-therefore not "remove the gate" but *move it along a risk gradient as real
-signals come online*: telemetry-driven auto-retirement first (deleting an
-unused memory is self-correcting; adding a wrong one is not), tier-scoped
-auto-merge for low-blast-radius detail skills behind CI later, convergent
-evolution — the same lesson captured independently in two repos — as a
-self-generated confidence signal. The always-on index and the org-invariants
-tier stay human-merged indefinitely, because taste ("this is how *we* want
-software built") is the one input the loop cannot synthesize. The gate
+is not training wheels; it is the missing half of learning, supplied from
+outside. Humans learn the way the model was trained: by mimicry. An infant
+imitates speech and gesture long before understanding either, and
+pre-training is the same move at scale — imitation of human work, frozen
+into the weights. But human mimicry never runs open-loop. Every imitation
+is scored by a fitness function the learner didn't choose: social cues, a
+caregiver's reaction, dopamine's reward-prediction error, gravity when a
+first step fails — and only imitations that score well get reinforced. The
+model has the mimicry half and none of the scoring: no dopamine, no social
+echo, no falling over; its only contact with reality here is CI and review.
+The merge gate is that fitness function, abstracted — a person scores each
+drafted learning, and only what passes selection becomes durable memory the
+next session loads. And because the weights never move, the reinforcement
+is selection over external memories rather than synaptic change: closer to
+how a culture accumulates knowledge than to how a brain does.
+
+The autonomy trajectory is therefore not "remove the gate" but *replace its
+verdicts with cheaper fitness signals as they come online*:
+telemetry-driven auto-retirement first (deleting an unused memory is
+self-correcting; adding a wrong one is not), tier-scoped auto-merge for
+low-blast-radius detail skills behind CI later, convergent evolution — the
+same lesson captured independently in two repos — as a self-generated
+confidence signal. The always-on index and the org-invariants tier stay
+human-merged indefinitely, because taste ("this is how *we* want software
+built") is the one fitness signal the loop cannot synthesize. The gate
 doesn't disappear; it concentrates where taste lives. (v1 ships only the
 full gate; the trajectory is this paragraph, not code.)
 
