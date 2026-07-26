@@ -11,12 +11,15 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
   # Records every git invocation as a joined command line; `staged` is the
   # file list `git diff --cached --name-only` reports — i.e. what the (faked)
-  # agent "wrote" into the learning worktree.
+  # agent "wrote" into the learning worktree. `staged_queue` (when given)
+  # instead consumes one list per diff call, so a multi-phase form like
+  # --promote can stage on the org side and come up empty on the removal side.
   class RecordingExecutor
     attr_reader :command_lines, :refreshes
 
-    def initialize(staged: [])
+    def initialize(staged: [], staged_queue: nil)
       @staged = staged
+      @staged_queue = staged_queue
       @command_lines = []
       @refreshes = 0
     end
@@ -27,8 +30,39 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
-      out = argv.take(4) == %w[git diff --cached --name-only] ? "#{@staged.join("\n")}\n" : ""
+      out = argv.take(4) == %w[git diff --cached --name-only] ? "#{next_staged.join("\n")}\n" : ""
       [out, "", true]
+    end
+
+    private
+
+    def next_staged
+      @staged_queue ? (@staged_queue.shift || []) : @staged
+    end
+  end
+
+  # The removal side of --promote edits the index file checked out in its
+  # worktree; the fake `git worktree add` plants one (a real temp file, per
+  # the no-filesystem-mocks rule) and the fake `git push` snapshots it, since
+  # the worktree is gone once the run returns.
+  class WorktreePlantingExecutor < RecordingExecutor
+    attr_reader :index_after_removal
+
+    INDEX_RELATIVE_PATH = File.join(".cursor", "rules", "learnings-index.mdc")
+    PLANTED_INDEX = "- [ruby/typed-errors] Raising? Use a typed error. → .cursor/skills/learnings/typed-errors/\n" \
+      "- [design/one-seam] Keep me.\n"
+
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      if argv.take(3) == %w[git worktree add]
+        index = File.join(argv[4], INDEX_RELATIVE_PATH)
+        FileUtils.mkdir_p(File.dirname(index))
+        File.write(index, PLANTED_INDEX)
+      end
+      if argv.take(2) == %w[git push]
+        index = File.join(chdir.to_s, INDEX_RELATIVE_PATH)
+        @index_after_removal = File.read(index) if File.exist?(index)
+      end
+      super
     end
   end
 
@@ -291,7 +325,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-learn-test-")
     promotable_workdir(dir)
     github = FakeGitHub.new
-    executor = RecordingExecutor.new(staged: ["index.md", "skills/typed-errors/SKILL.md"])
+    executor = WorktreePlantingExecutor.new(staged: ["index.md", "skills/typed-errors/SKILL.md"])
     agent = FakeAgent.new(["placed under ruby"])
 
     When "promoting (domain prefix accepted and dropped)"
@@ -307,6 +341,50 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github.pull_request_bodies.fetch(1).include?("Merge after that PR lands")
     github.comment_edits.fetch(55).include?("✅ **/learn --promote** — `typed-errors` → d3mlabs/knowledge")
     github.comment_edits.fetch(55).include?("🧹 paired removal draft")
+    # The removal worktree's index (planted by the fake) lost only the
+    # promoted slug's line.
+    executor.index_after_removal == "- [design/one-seam] Keep me.\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "--promote an unknown slug in a repo with no learnings says so" do
+    Given "a configured workdir with no learnings directory at all"
+    dir = Dir.mktmpdir("ai-flow-learn-test-")
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "knowledge_repo: d3mlabs/knowledge\n")
+    github = FakeGitHub.new
+    agent = FakeAgent.new([])
+
+    When "promoting"
+    run_learn(github: github, executor: RecordingExecutor.new, body: "/learn --promote typed-errors",
+      agent: agent, workdir: dir)
+
+    Then "no agent pass; the panel says the repo has nothing to promote"
+    agent.prompts.empty?
+    github.comment_edits.fetch(55).include?("this repo has no learnings under `.cursor/skills/learnings/`")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "--promote reports a failed repo-local removal without losing the org draft" do
+    Given "an org side that stages its files while the removal side stages nothing"
+    dir = Dir.mktmpdir("ai-flow-learn-test-")
+    promotable_workdir(dir)
+    github = FakeGitHub.new
+    executor = RecordingExecutor.new(staged_queue: [["index.md", "skills/typed-errors/SKILL.md"], []])
+    agent = FakeAgent.new(["placed under ruby"])
+
+    When "promoting"
+    run_learn(github: github, executor: executor, body: "/learn --promote typed-errors",
+      agent: agent, workdir: dir)
+
+    Then "the org draft opened; the panel carries the removal failure instead of a removal link"
+    github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-typed-errors", "main"])
+    github.calls.none? { |call| call == [:create_pull_request, REPO, "ai/learn-promote-typed-errors", "main"] }
+    github.comment_edits.fetch(55).include?("⚠️ the paired repo-local removal failed: nothing to remove for `typed-errors`")
 
     Cleanup
     FileUtils.rm_rf(dir)

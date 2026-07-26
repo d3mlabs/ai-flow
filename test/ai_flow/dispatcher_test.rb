@@ -251,16 +251,18 @@ class AiFlow::DispatcherTest < Minitest::Test
   end
 
   test "/learn routes to the learn command and opens a draft learning PR" do
-    Given "a dictated /learn on an issue"
+    Given "a dictated /learn on an issue, inside an Actions run"
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
-    context = ContextBuilder.issue_comment(number: 7, body: "/learn prefer factories over class methods")
+    context = ContextBuilder.issue_comment(number: 7, body: "/learn prefer factories over class methods",
+      env: ACTIONS_ENV)
     agent = FakeAgent.new(["drafted design/factory"])
 
     When "dispatching"
     build_dispatcher(github: github, agent: agent, context: context, executor: LearnExecutor.new).run
 
-    Then "the learn pass ran and a draft PR was created"
+    Then "the status line predicted the lifecycle command's own model; the pass ran; a draft PR was created"
+    github.comment_edit_history.first.include?("⏳ ai-flow is running")
     agent.launches.first[:command] == "learn"
     github.calls.map(&:first).include?(:create_pull_request)
     github.pull_request_drafts.first == true
