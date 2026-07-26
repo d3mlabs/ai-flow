@@ -69,7 +69,7 @@ module AiFlow
           end
         @result_writer.write(
           @context,
-          [[segment, [result, workflows_note, open_sub_issues_note].compact.join("\n\n")]],
+          [[segment, [result, workflows_note(pr&.fetch("html_url")), open_sub_issues_note].compact.join("\n\n")]],
         )
       end
 
@@ -293,7 +293,13 @@ module AiFlow
           else
             "⚠️ **/build** — the agent made no changes."
           end
-        [headline, summary, workflows_note].compact.join("\n\n")
+        [headline, summary, workflows_note(pull_request_url)].compact.join("\n\n")
+      end
+
+      # @return [String] the PR under iteration — this mode only runs on PR
+      #   comments, so the context number is the PR number
+      def pull_request_url
+        "https://github.com/#{@context.owner_repo}/pull/#{@context.number}"
       end
 
       # ---- Workflow-file exclusion (both modes) ----
@@ -325,13 +331,46 @@ module AiFlow
         @executor.capture("git", "clean", "-fdq", "--", WORKFLOWS_DIR, chdir: dir)
       end
 
+      # @param pr_url [String, nil] the PR the patch applies onto; nil when
+      #   no PR exists (the agent changed nothing outside workflow files)
       # @return [String, nil] the suggested-patch panel block, nil when the
       #   agent never touched workflow files
-      def workflows_note
+      def workflows_note(pr_url)
         return nil unless @workflows_patch
 
+        pr_url ? workflows_apply_note(pr_url) : workflows_diff_note
+      end
+
+      # A copy-paste command that lands the patch on the PR branch under the
+      # human's own credentials — the workflows restriction is on who pushes,
+      # not whose PR it is. The heredoc delimiter can't collide with the diff
+      # body: every unified-diff line carries a prefix character, so a bare
+      # PATCH line never occurs. --index stages new files too, which
+      # `commit -a` would miss.
+      #
+      # @return [String]
+      def workflows_apply_note(pr_url)
         <<~NOTE.strip
-          ⚠️ The agent proposed changes under `#{WORKFLOWS_DIR}/` — the ai-flow App has no `workflows` permission (by design; see d3mlabs/ai-flow docs/attribution.md), so they were left out of the commit. Apply them yourself if wanted:
+          #{workflows_intro} Paste this in your clone to apply them onto the PR under your own credentials:
+
+          <details><summary>apply the workflow patch (one paste)</summary>
+
+          ```bash
+          gh pr checkout #{pr_url} && git apply --index <<'PATCH' && git commit -m "Apply ai-flow's proposed workflow changes" && git push
+          #{@workflows_patch.strip}
+          PATCH
+          ```
+
+          </details>
+        NOTE
+      end
+
+      # No PR to apply onto — the bare diff is all there is to offer.
+      #
+      # @return [String]
+      def workflows_diff_note
+        <<~NOTE.strip
+          #{workflows_intro} Apply them yourself if wanted:
 
           <details><summary>suggested workflow patch</summary>
 
@@ -341,6 +380,12 @@ module AiFlow
 
           </details>
         NOTE
+      end
+
+      # @return [String]
+      def workflows_intro
+        "⚠️ The agent proposed changes under `#{WORKFLOWS_DIR}/` — the ai-flow App has no `workflows` " \
+          "permission (by design; see d3mlabs/ai-flow docs/attribution.md), so they were left out of the commit."
       end
 
       # @return [String]
