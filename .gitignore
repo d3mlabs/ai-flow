@@ -6,3 +6,6 @@ tmp/
 
 # dev-generated org invariants render (dev knowledge sync owns this file)
 .cursor/rules/org-invariants.mdc
+
+# SimpleCov output
+/coverage/
