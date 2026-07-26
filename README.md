@@ -69,8 +69,10 @@ around that memory, a full learning system with the weights never moving:
 
 The human gate — every learning lands as a *draft* PR, merged by a person —
 is not training wheels; it substitutes for the ground-truth reward signal
-the system lacks. A human's mimicry self-corrects against reality; this
-system's only reality checks are CI and review. The autonomy trajectory is
+the system lacks. That frozen pattern-matching is mimicry: the model learned
+by imitating human work. When a human learns by imitation, the imitation
+self-corrects against reality; this system's only reality checks are CI and
+review. The autonomy trajectory is
 therefore not "remove the gate" but *move it along a risk gradient as real
 signals come online*: telemetry-driven auto-retirement first (deleting an
 unused memory is self-correcting; adding a wrong one is not), tier-scoped
