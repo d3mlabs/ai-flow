@@ -33,10 +33,26 @@ module AiFlow
     #   when no policy resolved and the CLI's account default applied)
     attr_reader :models_used
 
+    # Skill and rule reads observed in the event stream — the loop's own
+    # telemetry (whether a learning actually gets consulted feeds later
+    # retire decisions). Feeds the dispatcher's GITHUB_STEP_SUMMARY list.
+    #
+    # @return [Array<String>] deduped names, in first-read order
+    attr_reader :knowledge_applied
+
+    # A read under one of these paths is knowledge consumption, not generic
+    # file reading: on-demand skills (installed user-globally by dev) and a
+    # project's Cursor rules (learnings-index.mdc, committed conventions).
+    KNOWLEDGE_PATH_PATTERNS = [
+      %r{\.cursor/skills/([^/]+)/},
+      %r{\.cursor/rules/([^/]+)\.mdc\z},
+    ].freeze
+
     # @param executor [AiFlow::Executor]
     def initialize(executor: Executor.new)
       @executor = executor
       @models_used = {}
+      @knowledge_applied = []
     end
 
     # Run the headless agent to completion and return its final answer text.
@@ -146,8 +162,33 @@ module AiFlow
         assistant_texts << text
         $stdout.puts "[/#{command}] assistant: #{truncate(text.lines.first.to_s.strip)}"
       when "tool_call"
-        $stdout.puts "[/#{command}] → #{tool_summary(event)}" if event["subtype"] == "started"
+        return unless event["subtype"] == "started"
+
+        knowledge = knowledge_name(event)
+        if knowledge
+          @knowledge_applied << knowledge unless @knowledge_applied.include?(knowledge)
+          $stdout.puts "[/#{command}] knowledge: #{knowledge}"
+        else
+          $stdout.puts "[/#{command}] → #{tool_summary(event)}"
+        end
       end
+    end
+
+    # The knowledge name when the event is a file read under a skill or rule
+    # path: the skill's slug (its directory) or the rule's basename.
+    #
+    # @param event [Hash] a tool_call event
+    # @return [String, nil] nil for every other tool call
+    def knowledge_name(event)
+      kind, payload = (event["tool_call"] || {}).find { |key, _value| key.end_with?("ToolCall") }
+      return nil unless kind == "readToolCall"
+
+      path = payload.is_a?(Hash) ? (payload["args"] || {})["path"].to_s : ""
+      KNOWLEDGE_PATH_PATTERNS.each do |pattern|
+        match = pattern.match(path)
+        return match[1] if match
+      end
+      nil
     end
 
     # "shell: bundle exec rake test", "read: lib/thing.rb", or the bare tool

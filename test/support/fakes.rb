@@ -218,12 +218,14 @@ end unless defined?(FakeGitHub)
 # on each launch (receiving the prompt) — file-based tests use it to edit the
 # plan file exactly like the real agent would.
 class FakeAgent
-  attr_reader :prompts, :launches, :models_used
+  attr_reader :prompts, :launches, :models_used, :knowledge_applied
 
   # @param models_by_command [Hash{String => String}, nil] per-command
   #   models, for tests exercising which policy a pass launches under;
   #   `model` is the flat answer otherwise
-  def initialize(outputs, model: "fake-model", models_by_command: nil, &on_launch)
+  # @param knowledge_applied [Array<String>] canned skill/rule reads, for
+  #   tests exercising the dispatcher's step-summary telemetry
+  def initialize(outputs, model: "fake-model", models_by_command: nil, knowledge_applied: [], &on_launch)
     @outputs = outputs
     @model = model
     @models_by_command = models_by_command
@@ -231,6 +233,7 @@ class FakeAgent
     @prompts = []
     @launches = []
     @models_used = {}
+    @knowledge_applied = knowledge_applied
   end
 
   def launch(prompt:, workdir:, command:, force: false)
