@@ -1,0 +1,11 @@
+# Codecov status checks (https://docs.codecov.com/docs/commit-status).
+# patch: every line added or changed by a PR must be covered (codecov/patch check).
+# project: overall coverage is reported but never blocks — only new code gates CI.
+coverage:
+  status:
+    patch:
+      default:
+        target: 100%
+    project:
+      default:
+        informational: true

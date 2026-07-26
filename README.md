@@ -1,4 +1,5 @@
 # ai-flow
+[![codecov](https://codecov.io/gh/d3mlabs/ai-flow/branch/main/graph/badge.svg)](https://codecov.io/gh/d3mlabs/ai-flow)
 
 GitHub-side slash commands that run the headless Cursor agent on self-hosted
 runners. Comment `/ask`, `/edit`, `/split`, or `/build` on an issue or PR and
