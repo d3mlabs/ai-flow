@@ -162,15 +162,37 @@ class FakeGitHub
     @calls << [:add_sub_issue, owner_repo, parent_number, sub_issue_id]
   end
 
-  def create_pull_request(owner_repo, title:, body:, head:, base:)
+  def create_pull_request(owner_repo, title:, body:, head:, base:, draft: false)
     @calls << [:create_pull_request, owner_repo, head, base]
     @pull_request_bodies ||= []
     @pull_request_bodies << body
-    { "html_url" => "https://github.com/#{owner_repo}/pull/900", "number" => 900, "body" => body }
+    @pull_request_titles ||= []
+    @pull_request_titles << title
+    @pull_request_drafts ||= []
+    @pull_request_drafts << draft
+    { "html_url" => "https://github.com/#{owner_repo}/pull/900", "number" => 900, "body" => body, "draft" => draft }
   end
 
   def pull_request_bodies
     @pull_request_bodies || []
+  end
+
+  def pull_request_titles
+    @pull_request_titles || []
+  end
+
+  def pull_request_drafts
+    @pull_request_drafts || []
+  end
+
+  def seed_open_pull_request_for_head(branch, pr)
+    @open_prs_by_head ||= {}
+    @open_prs_by_head[branch] = pr
+  end
+
+  def open_pull_request_for_head(owner_repo, branch)
+    @calls << [:open_pull_request_for_head, owner_repo, branch]
+    (@open_prs_by_head || {})[branch]
   end
 
   def add_assignees(owner_repo, number, logins)

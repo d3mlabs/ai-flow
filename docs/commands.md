@@ -1,6 +1,6 @@
 # Command reference
 
-The normative reference for ai-flow's four commands: each one per surface,
+The normative reference for ai-flow's five commands: each one per surface,
 with flags, the state-dependent decision tables, and every refusal message
 verbatim (refusals are UX — if you got one, you should be able to find it
 here by searching). The end-to-end story of a plan — authoring, splitting,
@@ -12,11 +12,23 @@ internals live in [architecture.md](architecture.md).
 `/ask` and `/edit` always operate on the **document** — the issue body or
 the PR description. `/build` always operates on **code** — open a PR from
 an issue, iterate on the head branch from a PR. `/split` operates on the
-plan's **decomposition** — its native sub-issues.
+plan's **decomposition** — its native sub-issues. `/learn` operates on the
+repo's **learnings** — the always-on index and its detail skills.
 
 Commands are recognized only at the start of a comment line (prose mentions
 never fire). Quote-reply (select rendered text, press `r`) is the section
 anchor — the remote cmd+L.
+
+## Flag grammar
+
+Flags select **machine-actionable mode only** — the tokens the dispatcher
+acts on before launching the agent (which evidence to assemble, which run
+cost to expect): `/split --dry`/`--apply` pick a phase, `/build --split`
+picks a shape, `/learn --scan`/`--promote` pick an input mode. Everything
+after the flags — the rest of the line, following lines, the quoted block
+above — is **content the agent judges**: statements, targets, steering. So
+`/learn --scan the backend and its clients, focus on error handling` parses
+one flag (`--scan`) and hands the rest to the agent verbatim.
 
 ## Surfaces at a glance
 
@@ -27,6 +39,8 @@ anchor — the remote cmd+L.
 | `/split` | ✅ dry / apply / bare | — | — | — |
 | `/build` | ✅ plan → PR (state-aware) | ✅ iterates the head branch | ℹ️ refused, sweep picks the thread up | ✅ iterates the head branch |
 | `/build --split` | ✅ orchestrates sub-issues | ℹ️ refused | ℹ️ refused | ℹ️ refused |
+| `/learn` | ✅ sweeps body + discussion | ✅ sweeps the PR | ✅ sweeps the PR | ✅ sweeps the PR |
+| `/learn <statement>` | ✅ dictated, any surface | ✅ dictated | ✅ dictated | ✅ dictated |
 
 A **review summary** is the top-level text of a submitted review
 (`pull_request_review`), as opposed to its line-anchored threads. It behaves
@@ -240,6 +254,60 @@ Refusals, verbatim:
 > no open sub-issues — run /split first
 
 > dependency cycle among sub-issues: …
+
+## /learn
+
+Captures a **learning** — a lesson distilled from feedback, stored as an
+index line in `.cursor/rules/learnings-index.mdc` (always-on awareness) plus
+a detail skill under `.cursor/skills/learnings/<slug>/` (loaded on demand).
+Learnings always land as a **draft PR** the human merges — the curation gate
+that keeps the always-on tier trustworthy. `/learn` is the GitHub-comment
+twin of dev's `capture-learning` skill: same distillation rubric, same
+output shape, one pipeline behind both.
+
+What qualifies (the rubric the agent applies): only lessons that generalize
+beyond the immediate diff or discussion — coding practices that will recur,
+architecture constraints, process rules. Diff-local fixes (typos, renames,
+one-off bugs) are not learnings. Before writing, the agent dedups against
+the existing index and the org tier and revises rather than duplicating; if
+nothing generalizes it drafts nothing and says so (a common, valid outcome).
+
+### `/learn <statement>` — dictated
+
+You already distilled the lesson; the agent only formats it into the
+two-tier shape, dedups, and applies the scope rubric. Works from any
+surface. Its source is the single comment, so each dictation opens its own
+draft PR (branch `ai/learn-c<comment-id>`):
+
+> ✅ **/learn** — drafted 1 learning in a draft PR: https://github.com/owner/repo/pull/N
+> - `design/factory-over-class-methods`
+
+### `/learn` — bare sweep
+
+Distills the surface's feedback: on a PR, its description, unresolved review
+threads, and conversation (the diff is in the checkout, so the agent reads
+what the feedback is *about*); on an issue, the body and comment discussion.
+Re-running on the same surface **refines that surface's open draft** (branch
+`ai/learn-pr-<n>` / `ai/learn-issue-<n>`) instead of duplicating — the push
+updates the existing draft PR:
+
+> ✅ **/learn** — refined 2 learnings in a draft PR: https://github.com/owner/repo/pull/N
+
+With nothing that generalizes:
+
+> ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change.
+
+### `/learn --scan` and `/learn --promote <slug>`
+
+Reserved in the grammar; not available yet (a follow-up in
+d3mlabs/ai-flow#15). Until then they answer, verbatim:
+
+> ℹ️ **/learn --scan** — not available yet; codebase surveys (`/learn --scan`) are a follow-up in d3mlabs/ai-flow#15. For now, `/learn <statement>` captures a dictated lesson and bare `/learn` sweeps this surface.
+
+Every draft learning PR carries a `learned-from: <repo>#<n> (dictated|learn-sweep)`
+marker naming its source and form, and is itself an ordinary ai-flow surface
+— `/build` iterates the wording, review threads sweep it, `/ask` challenges a
+generalization.
 
 ## Cross-cutting behavior
 

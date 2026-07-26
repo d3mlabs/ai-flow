@@ -108,17 +108,16 @@ module AiFlow
 
     # The command the job will actually launch under, mirroring #route: a
     # batch is one agent pass, run under the /edit policy when any edit is
-    # present; /build --split drives /build passes.
+    # present; every lifecycle command (/split, /build, /learn) is a
+    # comment's only command and launches under its own policy.
     #
     # @param segments [Array<CommentParser::Segment>]
     # @return [String]
     def effective_command(segments)
       if segments.all? { |segment| CommentParser::BATCHABLE_COMMANDS.include?(segment.command) }
         segments.any? { |segment| segment.command == "edit" } ? "edit" : "ask"
-      elsif segments.first.command == "split"
-        "split"
       else
-        "build"
+        segments.first.command
       end
     end
 
@@ -129,6 +128,9 @@ module AiFlow
         batch.run(segments)
       elsif segments.first.command == "split"
         split.run(segments.first)
+        true
+      elsif segments.first.command == "learn"
+        learn.run(segments.first)
         true
       elsif segments.first.flags.include?("--split")
         if @context.pull_request?
@@ -168,6 +170,13 @@ module AiFlow
     def build_split
       Commands::BuildSplit.new(
         context: @context, github: @github, build: build, result_writer: @result_writer,
+      )
+    end
+
+    def learn
+      Commands::Learn.new(
+        context: @context, github: @github, agent: @agent, executor: @executor,
+        result_writer: @result_writer, workdir: @workdir, prefix: @prefix,
       )
     end
 
