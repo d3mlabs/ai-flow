@@ -166,4 +166,60 @@ class AiFlow::ResultWriterTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "review summaries deliver through one bot-owned panel comment, posted then edited" do
+    Given "a review-summary context inside Actions and a writer that announced first"
+    github = FakeGitHub.new
+    context = ContextBuilder.review_summary(
+      body: "Looks close.\n\n/build address my review",
+      env: {
+        "GITHUB_SERVER_URL" => "https://github.com",
+        "GITHUB_REPOSITORY" => "d3mlabs/demo",
+        "GITHUB_RUN_ID" => "42",
+      },
+    )
+    segments = AiFlow::CommentParser.new.parse(context.comment_body)
+    writer = AiFlow::ResultWriter.new(github: github)
+
+    When "announcing, then writing the results"
+    writer.announce(context, "⏳ ai-flow is running")
+    writer.write(context, [[segments.first, "✅ **/build** — committed."]])
+
+    Then "one posted panel (attribution + quoted review + status), then an edit of that same comment"
+    github.comments.size == 1
+    github.comments.first.start_with?("In reply to jpduchesne's [review](https://github.com/d3mlabs/demo/pull/3#pullrequestreview-77):")
+    github.comments.first.include?("> Looks close.")
+    github.comments.first.include?("> /build address my review")
+    github.comments.first.include?("⏳ ai-flow is running")
+    github.calls.last.first == :update_issue_comment
+    final = github.comment_edits.fetch(1)
+    final.include?("> /build address my review")
+    final.include?("✅ **/build** — committed.")
+    !final.include?("> ✅")
+    final.include?("⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/42)")
+    !final.include?("⏳")
+
+    Cleanup
+    nil
+  end
+
+  test "the panel's result lands under its segment, plain against the quoted review" do
+    Given "a two-segment review summary"
+    github = FakeGitHub.new
+    context = ContextBuilder.review_summary(body: "/ask why?\n\n/edit tighten it")
+    segments = AiFlow::CommentParser.new.parse(context.comment_body)
+    writer = AiFlow::ResultWriter.new(github: github)
+
+    When "writing both results"
+    writer.write(context, [[segments[0], "Because."], [segments[1], "✅ Tightened."]])
+
+    Then "each answer sits directly under its own quoted command"
+    panel = github.comments.first
+    lines = panel.split("\n")
+    lines.index("Because.") == lines.index("> /ask why?") + 2
+    lines.index("✅ Tightened.") == lines.index("> /edit tighten it") + 2
+
+    Cleanup
+    nil
+  end
 end

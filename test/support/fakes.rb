@@ -275,6 +275,22 @@ module ContextBuilder
     )
   end
 
+  def review_summary(owner_repo: "d3mlabs/demo", number: 3, review_id: 77, body:, association: "OWNER", env: {})
+    AiFlow::Context.new(
+      event_name: "pull_request_review",
+      payload: {
+        "repository" => { "full_name" => owner_repo },
+        "pull_request" => { "number" => number, "head" => { "ref" => "feature-branch" } },
+        "review" => {
+          "id" => review_id, "body" => body, "author_association" => association,
+          "html_url" => "https://github.com/#{owner_repo}/pull/#{number}#pullrequestreview-#{review_id}",
+          "user" => { "login" => "jpduchesne", "id" => 111 },
+        },
+      },
+      env: env,
+    )
+  end
+
   def review_comment(owner_repo: "d3mlabs/demo", number: 3, comment_id: 9, body:, association: "OWNER", env: {})
     AiFlow::Context.new(
       event_name: "pull_request_review_comment",

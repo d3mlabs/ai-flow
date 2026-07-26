@@ -327,6 +327,28 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "/build in a review summary sweeps the PR like a conversation /build, panel-delivered" do
+    Given "a /build inside a submitted review's summary text"
+    github = FakeGitHub.new
+    context = ContextBuilder.review_summary(number: 3, body: "/build address my review")
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nAddressed."])
+
+    When "building"
+    run_build(github: github, executor: executor, body: "/build address my review", context: context, agent: agent)
+
+    Then "the head branch is checked out from the payload ref and the result lands as the review panel"
+    executor.command_lines.include?("git fetch origin feature-branch")
+    executor.command_lines.include?("git checkout feature-branch")
+    github.calls.map(&:first).include?(:post_issue_comment)
+    github.comments.first.include?("In reply to jpduchesne's [review]")
+    github.comments.first.include?("> /build address my review")
+    github.comments.first.include?("✅ **/build** — committed")
+
+    Cleanup
+    nil
+  end
+
   test "PR iteration excludes workflow files the same way" do
     Given "a PR iteration whose agent touched a workflow file"
     github = FakeGitHub.new

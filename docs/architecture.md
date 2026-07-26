@@ -38,7 +38,7 @@ flowchart LR
     planFile <--> devPlan
     hook --> devPlan
     devPlan <-->|"guarded body sync (gh api)"| issue
-    comments -->|"issue_comment /<br/>pull_request_review_comment"| actions
+    comments -->|"issue_comment /<br/>pull_request_review_comment /<br/>pull_request_review"| actions
     actions -->|"routes by per-command labels<br/>(ai-ask / ai-edit / ai-split / ai-build)"| dispatcher
     app -->|"1h installation token"| actions
     dispatcher --> agentCli

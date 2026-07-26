@@ -68,6 +68,10 @@ jobs:
   # payloads under-report membership (an org MEMBER can arrive as
   # CONTRIBUTOR); the dispatcher re-checks authorization against the
   # collaborator-permission API and fails closed.
+  #
+  # Review summaries (pull_request_review) are deliberately absent here:
+  # reviews have no reactions API, so their acknowledgment is the
+  # dispatcher's own ⏳ review-panel comment instead of a fast 👀.
   ack:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
@@ -110,14 +114,21 @@ jobs:
   # cleanly on a mid-line prose mention. CONTRIBUTOR is allowed through for
   # the same reason as in the ack job: review-comment payloads under-report
   # membership, and the dispatcher's API-backed gate is the real one.
+  #
+  # pull_request_review carries the command under event.review instead of
+  # event.comment; the `||` coalescing below reads whichever surface fired
+  # (missing properties resolve to null, and contains(null, x) is false).
+  # Plain approvals with an empty body coalesce to no command — no job.
   dispatch:
     if: >-
-      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
-      (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
-       contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
-       contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
-       contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)))
+      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment' ||
+       github.event_name == 'pull_request_review') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'),
+               github.event.comment.author_association || github.event.review.author_association) &&
+      (contains(github.event.comment.body || github.event.review.body, format('/{0}ask', inputs.command_prefix)) ||
+       contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) ||
+       contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) ||
+       contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)))
     # per_actor_runners routes to the commenter's own box; otherwise each
     # command routes to its own fixed label, ai-<command> — convention over
     # configuration (deployment decides the topology: one box can carry all
@@ -127,10 +138,10 @@ jobs:
     # /edit comment routes heavy), which errs on the safe side: a heavier
     # pool can run anything lighter.
     runs-on: >-
-      ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login))
-          || contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-build"]')
-          || contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-split"]')
-          || contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-edit"]')
+      ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login || github.event.review.user.login))
+          || contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-build"]')
+          || contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-split"]')
+          || contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-edit"]')
           || fromJSON('["self-hosted", "ai-ask"]') }}
     # Serialize runs per issue/PR: batches assume a stable body snapshot.
     concurrency:
