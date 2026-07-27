@@ -233,6 +233,8 @@ That prescription *is* the re-entrant ladder: on a model swap, diff classes slid
 
 In one line: the field already concluded that silent model updates require deployer-side compatibility gates; ai-flow's memory arrives with those gates built in, because they are the same gates everything else flows through.
 
+An operational corollary: **run every command on the same model.** Per-command model overrides exist as a cost knob, but each additional model multiplies the transition surface. Capture phrases index cues implicitly for the model that will read them, so a capture model different from the build model institutionalizes a writer/reader mismatch; and a deployment running k models turns "model transition" from one auditable event with one probe-suite run into a matrix of partial transitions. The recommendation: one model per deployment, upgraded deliberately, with the re-entrancy protocol run once per upgrade.
+
 ```mermaid
 stateDiagram-v2
     direction LR
@@ -392,10 +394,13 @@ Comparison axes follow the lifecycle survey's stage vocabulary [5]:
 | System                        | Experience source                   | Capture trigger            | Artifact form           | Admission                     | Storage & provenance                  | Maintenance                              |
 | ----------------------------- | ----------------------------------- | -------------------------- | ----------------------- | ----------------------------- | ------------------------------------- | ---------------------------------------- |
 | **ai-flow**                   | Human review threads + build passes | Slash command + build-time | `SKILL.md` + index line | Org merge gate on draft PRs   | Git repo (diff, provenance, rollback) | Usage telemetry feeding human retirement |
+| Tacit (Annakov)               | PR threads, CI failures, configs    | Webhook ingestion + scan   | Generated rules files (`CLAUDE.md`, `.claude/rules/`) | None (per-rule confidence scores) | Database; rules exported to files | Continuous incremental re-extraction |
 | Hermes Agent / "skillmaxxing" | Agent session transcripts           | Post-session hooks         | `SKILL.md`              | Staging dir + human promotion | Filesystem                            | Manual                                   |
 | Anthropic "reflect" pattern   | Agent session transcripts           | Post-session reflection    | `SKILL.md`              | Human review (recommended)    | Filesystem                            | Manual                                   |
 | team-memory-mcp               | Agent sessions (team mode)          | Ingestion                  | Database rows           | None (Bayesian confidence)    | SQLite/PostgreSQL                     | Temporal decay                           |
 | Lore                          | Git history / ADRs                  | Ingestion                  | Decision graph          | None                          | Database                              | Re-ingestion                             |
+
+One row deserves comment. Tacit (a February 2026 project) independently converged on the same capture surface: it mines PR review threads and CI failures for team knowledge and generates rules files from them. We read this as independent confirmation of Claim 1's data-source observation — the review conversation is where org knowledge lives — and as the sharpest available illustration of the differentiation, because it holds the surface constant and varies only the governance: the same corpus, consumed without a gate. Extraction runs continuously, rules carry model-assigned confidence scores in a database, and generation and admission are fused — precisely the coupling ASSAY argues must be separated [23].
 
 
 
