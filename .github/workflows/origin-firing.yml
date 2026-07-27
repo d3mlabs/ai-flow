@@ -75,4 +75,8 @@ jobs:
           AI_FLOW_APP_PRIVATE_KEY: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           AI_FLOW_WORKDIR: ${{ github.workspace }}
+          # App names are globally unique, so an adopter's App may not be
+          # named ai-flow — derive the bot login from the actual slug, or the
+          # origin-evidence bot filter misses this deployment's own panels.
+          AI_FLOW_BOT_LOGIN: ${{ format('{0}[bot]', steps.app-token.outputs.app-slug || 'ai-flow') }}
         run: ruby .ai-flow/bin/origin_firing_check.rb

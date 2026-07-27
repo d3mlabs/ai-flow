@@ -99,6 +99,27 @@ class AiFlow::DraftChecksTest < Minitest::Test
     FileUtils.remove_entry(dir)
   end
 
+  test "the bot filter follows AI_FLOW_BOT_LOGIN when the adopter's App slug differs" do
+    Given "a deployment whose bot login is not the default, and its panels on the origin thread"
+    previous = ENV["AI_FLOW_BOT_LOGIN"]
+    ENV["AI_FLOW_BOT_LOGIN"] = "acme-flow[bot]"
+    dir = seeded_repo(Dir.mktmpdir("origin-firing-"), index_path: ORG_INDEX)
+    add_draft_learning(dir, index_path: ORG_INDEX, skill_path: ORG_SKILL)
+    github = origin_github(comments: [["jpduchesne", "always raise typed errors"], ["acme-flow[bot]", "✅ panel noise"]])
+    agent = FakeAgent.new(["FIRED: typed-errors"])
+
+    When "checking"
+    run_check(workdir: dir, github: github, agent: agent)
+
+    Then "the replayed evidence keeps the human comment and drops the deployment's own panels"
+    agent.prompts.first.include?("always raise typed errors")
+    !agent.prompts.first.include?("panel noise")
+
+    Cleanup
+    previous ? ENV["AI_FLOW_BOT_LOGIN"] = previous : ENV.delete("AI_FLOW_BOT_LOGIN")
+    FileUtils.remove_entry(dir)
+  end
+
   test "a cue that does not fire on the origin fails and names the learning" do
     Given "a draft whose retrieval pass loads nothing"
     dir = seeded_repo(Dir.mktmpdir("origin-firing-"), index_path: ORG_INDEX)
