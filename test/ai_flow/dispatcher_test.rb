@@ -250,7 +250,7 @@ class AiFlow::DispatcherTest < Minitest::Test
     nil
   end
 
-  test "/learn routes to the learn command and opens a draft learning PR" do
+  test "/learn routes to the learn command and opens a learning proposal PR" do
     Given "a dictated /learn on an issue, inside an Actions run"
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
@@ -261,11 +261,11 @@ class AiFlow::DispatcherTest < Minitest::Test
     When "dispatching"
     build_dispatcher(github: github, agent: agent, context: context, executor: LearnExecutor.new).run
 
-    Then "the status line predicted the lifecycle command's own model; the pass ran; a draft PR was created"
+    Then "the status line predicted the lifecycle command's own model; the pass ran; an ordinary (non-GitHub-draft) proposal PR was created"
     github.comment_edit_history.first.include?("⏳ ai-flow is running")
     agent.launches.first[:command] == "learn"
     github.calls.map(&:first).include?(:create_pull_request)
-    github.pull_request_drafts.first == true
+    github.pull_request_drafts.first == false
 
     Cleanup
     nil
