@@ -5,7 +5,7 @@
 # .github/workflows/origin-firing.yml on a learning repo's pull requests.
 # Reads the PR payload from GITHUB_EVENT_PATH, re-runs retrieval against the
 # draft's origin context, and fails the job when a changed learning's cue
-# does not fire. See lib/ai_flow/origin_firing_check.rb.
+# does not fire. See lib/ai_flow/draft_checks.rb.
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
@@ -23,14 +23,15 @@ pull_request = event.fetch("pull_request")
 token_provider = AiFlow::TokenProvider.from_env
 executor = AiFlow::Executor.new(token_provider: token_provider)
 
-result = AiFlow::OriginFiringCheck.new(
+result = AiFlow::DraftChecks.new(
   github: AiFlow::GitHub.new(executor: executor),
   agent: AiFlow::Agent.new(executor: executor),
   executor: executor,
+).origin_firing(
   workdir: ENV.fetch("AI_FLOW_WORKDIR", Dir.pwd),
   pr_body: pull_request["body"].to_s,
   base_ref: pull_request.fetch("base").fetch("ref"),
-).run
+)
 
 icon = { pass: "✅", fail: "❌", skip: "ℹ️" }.fetch(result.status)
 lines = ["#{icon} origin-firing (#{result.status}): #{result.detail}"]

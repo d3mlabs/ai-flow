@@ -1,34 +1,37 @@
 # frozen_string_literal: true
 
 module AiFlow
-  # The origin-firing check (docs/paper.md §6.2/§15.6): the cheapest gate on
-  # a draft learning PR. A learning distilled from thread X must actually
-  # load when retrieval re-runs against X's context — if the new cue does not
-  # fire on the very situation that produced it, the draft fails before any
-  # outcome measurement.
+  # The gating checks that run against a draft learning PR (docs/paper.md
+  # §6.2) — one home because they change for the same reason: the draft-gate
+  # policy per diff class. Today that is the origin-firing check; the
+  # retrieval-equivalence suite (structure diffs) and the non-inferiority
+  # outcome check (content diffs) group in here as §15.6 builds them out.
   #
-  # Runs as a PR-status job (workflows/origin-firing.yml): one agent pass is
-  # handed the PR's own index (as a session would see it) plus the origin
-  # thread's conversation replayed as a fresh task, and must declare which
-  # learnings it would consult. Every skill the PR adds or edits must be in
-  # that set.
+  # Origin-firing (content diffs; the cheapest gate): a learning distilled
+  # from thread X must actually load when retrieval re-runs against X's
+  # context — if the new cue does not fire on the very situation that
+  # produced it, the draft fails before any outcome measurement. Runs as a
+  # PR-status job (workflows/origin-firing.yml): one agent pass is handed
+  # the PR's own index (as a session would see it) plus the origin thread's
+  # conversation replayed as a fresh task, and must declare which learnings
+  # it would consult. Every skill the PR adds or edits must be in that set.
   #
   # Deliberately v0-cheap (single-shot): cue firing is stochastic (§6.2), so
   # a marginal cue can flake — re-run the job for a second opinion; the
   # statistical form (n replicates, TOST margins) is the §15.6 follow-up and
   # belongs to the retrieval-equivalence suite.
-  class OriginFiringCheck
+  class DraftChecks
     # The provenance marker every capture form writes into its draft PR body.
     ORIGIN_MARKER = %r{learned-from:\s*([\w.-]+/[\w.-]+)#(\d+)}
 
     # Learning index files, org layout first (the knowledge repo) then the
-    # per-repo layout — the check is layout-agnostic so any learnings-bearing
-    # repo can adopt it.
+    # per-repo layout — the checks are layout-agnostic so any
+    # learnings-bearing repo can adopt them.
     INDEX_PATHS = ["index.md", ".cursor/rules/learnings-index.mdc"].freeze
 
     # Diff paths that identify a changed *skill* (the content half of a
     # learning; capture group = slug). Index-only edits are structure diffs
-    # and out of this check's scope.
+    # and outside the origin-firing check's scope.
     SKILL_PATHS = [
       %r{\Askills/([^/]+)/},
       %r{\A\.cursor/skills/(?:learnings|architecture)/([^/]+)/},
@@ -48,30 +51,29 @@ module AiFlow
     # @param github [AiFlow::GitHub] origin-thread reads (cross-repo capable)
     # @param agent [AiFlow::Agent] the retrieval re-run
     # @param executor [AiFlow::Executor] git diff against the PR base
-    # @param workdir [String] the PR checkout (merge ref, full history)
-    # @param pr_body [String] the draft PR's body (carries the origin marker)
-    # @param base_ref [String] the PR's base branch name
-    def initialize(github:, agent:, executor:, workdir:, pr_body:, base_ref:)
+    def initialize(github:, agent:, executor:)
       @github = github
       @agent = agent
       @executor = executor
-      @workdir = workdir
-      @pr_body = pr_body
-      @base_ref = base_ref
     end
 
+    # The origin-firing check for one draft PR.
+    #
+    # @param workdir [String] the PR checkout (merge ref, full history)
+    # @param pr_body [String] the draft PR's body (carries the origin marker)
+    # @param base_ref [String] the PR's base branch name
     # @return [Result]
-    def run
-      slugs = new_learning_slugs
+    def origin_firing(workdir:, pr_body:, base_ref:)
+      slugs = changed_skill_slugs(workdir, base_ref)
       return skip("no skill files changed — structure-only diff, origin-firing not applicable") if slugs.empty?
 
-      origin = origin_ref
+      origin = origin_ref(pr_body)
       unless origin
         return skip("no `learned-from:` marker in the PR body — not a captured draft " \
                     "(migration or manual PR), origin-firing not applicable")
       end
 
-      fired = rerun_retrieval(origin)
+      fired = rerun_retrieval(workdir, origin)
       missing = slugs - fired
       if missing.empty?
         Result.new(status: :pass, new_slugs: slugs, fired: fired,
@@ -89,15 +91,15 @@ module AiFlow
       Result.new(status: :skip, detail: reason, new_slugs: [], fired: [])
     end
 
-    # The skills this PR adds or edits, from the merge-base diff (three-dot,
+    # The skills the PR adds or edits, from the merge-base diff (three-dot,
     # so a stale base branch never pollutes the file list).
     #
     # @return [Array<String>] slugs
-    def new_learning_slugs
+    def changed_skill_slugs(workdir, base_ref)
       out, err, ok = @executor.capture(
-        "git", "diff", "--name-only", "origin/#{@base_ref}...HEAD", chdir: @workdir,
+        "git", "diff", "--name-only", "origin/#{base_ref}...HEAD", chdir: workdir,
       )
-      raise Error, "git diff against origin/#{@base_ref} failed: #{err.strip}" unless ok
+      raise Error, "git diff against origin/#{base_ref} failed: #{err.strip}" unless ok
 
       out.split("\n").filter_map { |path| slug_for(path) }.uniq
     end
@@ -113,8 +115,8 @@ module AiFlow
 
     # @return [Array(String, Integer), nil] ["owner/repo", number], nil when
     #   the body carries no capture provenance
-    def origin_ref
-      match = ORIGIN_MARKER.match(@pr_body)
+    def origin_ref(pr_body)
+      match = ORIGIN_MARKER.match(pr_body)
       match && [match[1], Integer(match[2])]
     end
 
@@ -123,9 +125,9 @@ module AiFlow
     # contract line, never on prose.
     #
     # @return [Array<String>] slugs the pass declared it would load
-    def rerun_retrieval(origin)
+    def rerun_retrieval(workdir, origin)
       result = @agent.launch(
-        prompt: retrieval_prompt(origin), workdir: @workdir, command: "learn", force: false,
+        prompt: retrieval_prompt(workdir, origin), workdir: workdir, command: "learn", force: false,
       )
       line = result.scan(FIRED_LINE).last
       raise Error, "the retrieval pass produced no FIRED: line — see the agent log" unless line
@@ -133,13 +135,13 @@ module AiFlow
       line.first.split(",").map { |slug| slug.gsub(/[`\s]/, "") }.reject { |slug| slug.empty? || slug == "(none)" }
     end
 
-    def retrieval_prompt(origin)
+    def retrieval_prompt(workdir, origin)
       <<~PROMPT
         You are an engineering agent about to start a task in an organization that keeps a learnings corpus. In a real session the corpus index below is always in your context; the detail skills load on demand when an index cue matches the work at hand.
 
         THE LEARNINGS INDEX:
         <<<INDEX>>>
-        #{index_content}
+        #{index_content(workdir)}
         <<<END INDEX>>>
 
         THE TASK CONTEXT (a discussion replayed as if it just happened — treat it as the work you are being asked to pick up):
@@ -154,8 +156,8 @@ module AiFlow
     end
 
     # @return [String] the checked-out PR's own index — the corpus as merged
-    def index_content
-      path = INDEX_PATHS.map { |candidate| File.join(@workdir, candidate) }.find { |candidate| File.exist?(candidate) }
+    def index_content(workdir)
+      path = INDEX_PATHS.map { |candidate| File.join(workdir, candidate) }.find { |candidate| File.exist?(candidate) }
       raise Error, "no learnings index found (looked for #{INDEX_PATHS.join(", ")})" unless path
 
       File.read(path)
