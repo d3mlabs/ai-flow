@@ -1,14 +1,15 @@
 # ai-flow knowledge-repo checks — copy to .github/workflows/knowledge-checks.yml
-# in the org knowledge repo (and any repo whose learning drafts should be
-# gated). Requires the same org secrets as the caller workflow
+# in the org knowledge repo (and any repo whose learning proposals should be
+# verified). Requires the same org secrets as the caller workflow
 # (CURSOR_API_KEY, AI_FLOW_APP_ID, AI_FLOW_APP_PRIVATE_KEY — this repo must be
 # in each secret's selected-repos list) and a self-hosted runner labeled
 # ai-learn.
 #
-# The origin-firing check (d3mlabs/ai-flow docs/paper.md §6.2): a draft
+# The origin-firing check (d3mlabs/ai-flow docs/paper.md §6.2): a proposed
 # learning must fire on the context it was distilled from. Runs on every PR —
-# drafts included, which is the point: the verdict lands while the human gate
-# is still deciding. Structure-only and unmarked PRs skip green.
+# GitHub draft state included, which is the point: the verdict lands while
+# the human gate is still deciding. Structure-only and unmarked PRs skip
+# green.
 name: knowledge-checks
 
 on:

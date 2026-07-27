@@ -1,6 +1,6 @@
 # ai-flow: the origin-firing check as a reusable PR-status workflow
 # (docs/paper.md §6.2/§15.6). On a learning repo's pull requests, one agent
-# pass replays the draft's origin thread against the PR's own index and the
+# pass replays the proposal's origin thread against the PR's own index and the
 # job fails when a changed learning's cue does not fire on the very context
 # that produced it. Structure-only diffs and PRs without a `learned-from:`
 # marker (migrations, manual edits) skip green.
@@ -38,7 +38,7 @@ jobs:
     env:
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
     steps:
-      # Cross-repo origin reads (a knowledge-repo draft's origin lives in a
+      # Cross-repo origin reads (a knowledge-repo proposal's origin lives in a
       # code repo) need the App's org-wide reach; absent the App, github.token
       # still covers same-repo origins.
       - name: Mint the ai-flow App token

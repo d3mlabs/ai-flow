@@ -1,16 +1,20 @@
 # frozen_string_literal: true
 
 module AiFlow
-  # The gating checks that run against a draft learning PR (docs/paper.md
-  # §6.2) — one home because they change for the same reason: the draft-gate
-  # policy per diff class. Today that is the origin-firing check; the
-  # retrieval-equivalence suite (structure diffs) and the non-inferiority
-  # outcome check (content diffs) group in here as §15.6 builds them out.
+  # Automated verification of corpus proposals (docs/paper.md §6.2): the
+  # checks that run against a proposal PR before the human gate adjudicates
+  # admission. Verification informs admission and never performs it — a
+  # failed check is a failed PR status, and the proposal stays open for
+  # rewording. One home because the checks change for the same reason: the
+  # verification policy per diff class. Today that is the origin-firing
+  # check; the retrieval-equivalence suite (structure proposals) and the
+  # non-inferiority outcome check (content proposals) group in here as
+  # §15.6 builds them out.
   #
-  # Origin-firing (content diffs; the cheapest gate): a learning distilled
+  # Origin-firing (content proposals; the cheapest check): a learning distilled
   # from thread X must actually load when retrieval re-runs against X's
   # context — if the new cue does not fire on the very situation that
-  # produced it, the draft fails before any outcome measurement. Runs as a
+  # produced it, the proposal fails before any outcome measurement. Runs as a
   # PR-status job (workflows/origin-firing.yml): one agent pass is handed
   # the PR's own index (as a session would see it) plus the origin thread's
   # conversation replayed as a fresh task, and must declare which learnings
@@ -20,8 +24,8 @@ module AiFlow
   # a marginal cue can flake — re-run the job for a second opinion; the
   # statistical form (n replicates, TOST margins) is the §15.6 follow-up and
   # belongs to the retrieval-equivalence suite.
-  class DraftChecks
-    # The provenance marker every capture form writes into its draft PR body.
+  class ProposalChecks
+    # The provenance marker every capture form writes into its proposal PR body.
     ORIGIN_MARKER = %r{learned-from:\s*([\w.-]+/[\w.-]+)#(\d+)}
 
     # Learning index files, org layout first (the knowledge repo) then the
@@ -30,8 +34,8 @@ module AiFlow
     INDEX_PATHS = ["index.md", ".cursor/rules/learnings-index.mdc"].freeze
 
     # Diff paths that identify a changed *skill* (the content half of a
-    # learning; capture group = slug). Index-only edits are structure diffs
-    # and outside the origin-firing check's scope.
+    # learning; capture group = slug). Index-only edits are structure
+    # proposals and outside the origin-firing check's scope.
     SKILL_PATHS = [
       %r{\Askills/([^/]+)/},
       %r{\A\.cursor/skills/(?:learnings|architecture)/([^/]+)/},
@@ -57,10 +61,10 @@ module AiFlow
       @executor = executor
     end
 
-    # The origin-firing check for one draft PR.
+    # The origin-firing check for one proposal PR.
     #
     # @param workdir [String] the PR checkout (merge ref, full history)
-    # @param pr_body [String] the draft PR's body (carries the origin marker)
+    # @param pr_body [String] the proposal PR's body (carries the origin marker)
     # @param base_ref [String] the PR's base branch name
     # @return [Result]
     def origin_firing(workdir:, pr_body:, base_ref:)
@@ -69,7 +73,7 @@ module AiFlow
 
       origin = origin_ref(pr_body)
       unless origin
-        return skip("no `learned-from:` marker in the PR body — not a captured draft " \
+        return skip("no `learned-from:` marker in the PR body — not a captured proposal " \
                     "(migration or manual PR), origin-firing not applicable")
       end
 
