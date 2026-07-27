@@ -73,7 +73,17 @@ The agent-systems literature describes a parallel evolution: agents are "built l
 
 ### 2.3 Cognitive-science vocabulary
 
-We deliberately retain the cognitive-science framing alongside the machine-learning one — the ACL survey itself notes the field "oscillates between operating-system engineering and cognitive science" [13]. Credit assignment [14], consolidation [15], encoding specificity [16], adaptive forgetting [17], observational learning [18], reward-prediction error [19], and cumulative culture [20] each name a stage of the loop; the mapping is summarized in Appendix A so the paper is self-contained.
+We deliberately retain the cognitive-science framing alongside the machine-learning one — the ACL survey itself notes the field "oscillates between operating-system engineering and cognitive science" [13]. Each stage of the loop has a named precedent in learning theory:
+
+| Loop stage | Cognitive concept | Anchor |
+|---|---|---|
+| Experience (review threads, build passes) | Exposure precedes learning; most experience teaches nothing | [14] |
+| Credit assignment (the capture rubric) | Which fragment of experience deserves the credit — Minsky's problem, Thorndike's law of effect | [14] |
+| Memory write (capture while context is hot) | Consolidation: durable memory is written from the fresh trace, not re-ingested raw experience | [15] |
+| Behavior change (index cue fires, skill loads) | Encoding specificity: a memory counts only if retrieved when it applies | [16] |
+| Retirement (telemetry-fed) | Adaptive forgetting: retrieval strength decays with disuse, and the decay is a feature | [17] |
+| The gate (human merge on draft PRs) | Mimicry needs a fitness function: imitation is scored by signals the learner did not choose; the gate is that scoring, abstracted | [18, 19] |
+| The corpus (org tier, cross-repo promotion) | Cumulative culture: knowledge accumulates by transmission and selection across individuals, no single brain rewires to hold it | [20] |
 
 ---
 
@@ -480,11 +490,13 @@ Our position, in one sentence: the era of experience, entered signal by signal �
 
 ## 15. Measurement Agenda and Future Work
 
+A note on what this section is, in publication terms. This is a working paper in the systems/position genre: its contributions stand without the experiments below — the preference-learning mapping (gated preference distillation), the graduated re-entrant governance model, the retrieval trade study and tree model, the threat model, and this agenda itself as a designed artifact. The empirical claims (hot-versus-cold capture, per-learning causal contribution, equivalence-check validity) are stated preregistration-style — instruments and pass criteria defined before results exist — and are the subject of a planned follow-up paper reporting what the instruments find. The cut line for freezing *this* paper: all references verified against their sources, the deployment statistics reproducible by script (done — Section 12), and the cheapest instrument below implemented and reported, so the agenda ships with its first instrument live rather than entirely on paper.
+
 The claims above are falsifiable, and the instruments are enumerable. Marked **adopt** (external method exists), **build** (novel to this design), or **done-v0** (first cut exists):
 
 1. **History mining** (done-v0): `bin/knowledge_stats.rb` regenerates Section 12's corpus and PR-lifecycle statistics; extension to per-learning telemetry joins is pending the aggregation below.
 2. **Telemetry aggregation, quality proxies, and the dashboard** (build): per-run knowledge reads aggregated into per-learning read rates, index-section hit rates, read-without-effect rate; *late-read rate* — reads issued after the first edit rather than at session start, the under-selection signal (a descent that loaded too little and paid for it mid-task in tokens, latency, and context pollution); draft edit-distance before merge (authoring quality; a declining trend is ambiguous between better drafts and reviewer rubber-stamping, disambiguated by pairing it with masking-harness usefulness); post-merge correction recurrence — including *recurrence despite an existing learning*, the recall-miss detector of Section 7.3a. Delivery in two forms matching the canonical/derived split: a periodic generated report committed to the knowledge repo (versioned snapshots — even the observability artifact has an audit trail) and a live per-deployment dashboard as a derived, disposable view.
-3. **Masking harness and the probe-suite corpus** (adopt ASSAY's method and released code [23]; build the suite): randomized per-learning masking over a development set of real organizational tasks, yielding per-learning causal attribution and our own degradation numbers. Suite construction has two sources: *guideline-derived tasks* (problem statements where a specific learning should fire, with a bad/good pair — the agent must land on the right side) and *exemplar promotion* (reference-quality PRs from the org's history, reconstructed as tasks: the pre-state is the prompt, the org-approved outcome is ground truth). Suite quality is itself measured — coverage (every index section has probes), discrimination (masking identifies which tasks actually change outcome under corpus presence; non-discriminating tasks are dead weight), and contamination hygiene (a task the learning was distilled from is labeled *regression*, never *generalization* — it checks that the learning fixes its origin, like a reproducing test in test-driven bugfixing, while held-out tasks measure transfer). The suite lives in git and passes the gate: the evaluation set is governed content too.
+3. **Masking harness and the probe-suite corpus** (adopt ASSAY's method and released code [23]; build the suite): randomized per-learning masking over a development set of real organizational tasks, yielding per-learning causal attribution and our own degradation numbers. Suite construction has two sources: *guideline-derived tasks* (problem statements where a specific learning should fire, with a bad/good pair — the agent must land on the right side) and *exemplar promotion* (reference-quality PRs from the org's history, reconstructed as tasks: the pre-state is the prompt, the org-approved outcome is ground truth). Exemplar probes run in two modes because they measure different things: *pinned* — the pre-state tagged at its commit SHA, freezing the task so the corpus is the only variable, which is what regression and equivalence checks require — and *head* — the same probe against the evolving codebase, measuring continued relevance. The head mode doubles as a bidirectional staleness detector: a probe that stops discriminating at head indicts either the learning (retirement signal) or the probe itself (suite-maintenance signal). Suite quality is itself measured — coverage (every index section has probes), discrimination (masking identifies which tasks actually change outcome under corpus presence; non-discriminating tasks are dead weight), and contamination hygiene (a task the learning was distilled from is labeled *regression*, never *generalization* — it checks that the learning fixes its origin, like a reproducing test in test-driven bugfixing, while held-out tasks measure transfer). The suite lives in git and passes the gate: the evaluation set is governed content too.
 4. **Base-model redundancy probe, retirement, and the attic** (build): for each learning, measure whether the model already complies *without* the memory loaded. Tests the "absent from the weights" assumption per-learning (Section 11), supplies a retirement signal (a learning the base model now subsumes is dead weight), and cuts both ways on model transitions — a new model may subsume learnings the old one needed, and may *lack* behavior an old learning enforced, so un-retirement is first-class. Design: retirement moves a learning to an attic (tombstoned with a *reason* — `retired-unused` versus `retired-wrong`), never deletes; on a model transition the redundancy probe re-runs over the attic and failures become revival candidates, proposed as ordinary draft PRs. Capture passes consult the attic before authoring: a draft matching a `retired-unused` entry becomes a revival proposal instead of a duplicate, and a draft matching a `retired-wrong` entry must address the recorded reason — the attic doubles as negative knowledge.
 5. **Paired hot-versus-cold capture** (build): same PR, embedded capture pass versus post-hoc transcript pass; compare draft quality, acceptance, and yield. Grounds or kills Section 8's "strictly more signal" claim.
 6. **The gating checks of Section 6.2 as PR statuses** (build): the origin-firing check first (cheapest — a content draft must fire on its origin context); the retrieval-equivalence suite for structure diffs (n replicates, TOST margins, flakiness policy) as the structure-gate graduation mechanism and the model-transition regression suite; the non-inferiority outcome check for content diffs, small per-PR and full nightly.
@@ -545,19 +557,3 @@ The convergent lesson of the 2023–2026 skill-library literature is that the li
 [37] Li et al., "Automating Code Review Activities by Large-Scale Pre-Training" (CodeReviewer), ESEC/FSE 2022, arXiv:2203.09095.
 [38] Liu et al., "Lost in the Middle: How Language Models Use Long Contexts," TACL 2024, arXiv:2307.03172.
 [39] Karpukhin et al., "Dense Passage Retrieval for Open-Domain Question Answering," EMNLP 2020, arXiv:2004.04906.
-
----
-
-## Appendix A: The loop's cognitive-science mapping
-
-The mapping the README elaborates, condensed for self-containment:
-
-| Loop stage | Cognitive concept | Anchor |
-|---|---|---|
-| Experience (review threads, build passes) | Exposure precedes learning; most experience teaches nothing | [14] |
-| Credit assignment (the capture rubric) | Which fragment of experience deserves the credit — Minsky's problem, Thorndike's law of effect | [14] |
-| Memory write (capture while context is hot) | Consolidation: durable memory is written from the fresh trace, not re-ingested raw experience | [15] |
-| Behavior change (index cue fires, skill loads) | Encoding specificity: a memory counts only if retrieved when it applies | [16] |
-| Retirement (telemetry-fed) | Adaptive forgetting: retrieval strength decays with disuse, and the decay is a feature | [17] |
-| The gate (human merge on draft PRs) | Mimicry needs a fitness function: imitation is scored by signals the learner did not choose; the gate is that scoring, abstracted | [18, 19] |
-| The corpus (org tier, cross-repo promotion) | Cumulative culture: knowledge accumulates by transmission and selection across individuals, no single brain rewires to hold it | [20] |
