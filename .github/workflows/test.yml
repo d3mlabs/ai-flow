@@ -14,6 +14,10 @@ jobs:
         with:
           ruby-version: "3.3"
           bundler-cache: true
+      - name: Verify gem RBIs are current
+        run: bundle exec tapioca gem --verify
+      - name: Typecheck
+        run: bundle exec srb tc
       - run: bundle exec rake test
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

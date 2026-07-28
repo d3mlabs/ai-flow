@@ -1,4 +1,10 @@
+# typed: true
 # frozen_string_literal: true
+
+# The one place the type system's runtime enters: everything under lib/
+# assumes T/sig exist because this file loaded first. Runners get the gem
+# via `dev install-deps` like every other locked dependency.
+require "sorbet-runtime"
 
 require "ai_flow/token_provider"
 require "ai_flow/executor"

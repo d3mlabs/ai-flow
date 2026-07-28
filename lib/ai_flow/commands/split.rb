@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "json"
@@ -307,11 +308,13 @@ module AiFlow
           return ref.merge("disposition" => "kept")
         end
 
-        rest_id = @github.api("repos/#{repo}/issues/#{number}").fetch("id")
-        @github.add_sub_issue(@context.owner_repo, @context.number, rest_id)
-        ref.merge("disposition" => "adopted")
-      rescue GitHub::Error
-        ref.merge("disposition" => "referenced")
+        begin
+          rest_id = @github.api("repos/#{repo}/issues/#{number}").fetch("id")
+          @github.add_sub_issue(@context.owner_repo, @context.number, rest_id)
+          ref.merge("disposition" => "adopted")
+        rescue GitHub::Error
+          ref.merge("disposition" => "referenced")
+        end
       end
 
       # Reality enforcement, never judgment: a repo without the App cannot

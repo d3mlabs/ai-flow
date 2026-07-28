@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 module AiFlow
@@ -42,7 +43,7 @@ module AiFlow
     def parse(body)
       segments = []
       pending_quote = []
-      current_segment = nil
+      current_segment = T.let(nil, T.nilable(Segment))
 
       body.to_s.gsub("\r\n", "\n").split("\n", -1).each_with_index do |line, index|
         if (match = @command_pattern.match(line.rstrip))

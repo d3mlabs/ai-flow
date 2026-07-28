@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 module AiFlow
@@ -8,6 +9,10 @@ module AiFlow
   #   <<<AI-FLOW:SEGMENT 1>>>
   #   (segment 1's answer / edit summary)
   module AgentOutput
+    # Sorbet models bare modules without Object's ancestry, so Kernel methods
+    # (lambda, Integer) need the explicit include (srb.help/7003).
+    include Kernel
+
     SEGMENT_DELIMITER = /<<<AI-FLOW:SEGMENT (\d+)>>>/
 
     Parsed = Struct.new(:segments, keyword_init: true)
@@ -18,7 +23,7 @@ module AiFlow
     # @return [Parsed] segment-index → text map
     def parse(output)
       segments = {}
-      current = nil
+      current = T.let(nil, T.nilable(Integer))
       buffer = []
 
       flush = lambda do

@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "erb"
@@ -63,8 +64,8 @@ module AiFlow
     def ins_del_prose(before, after)
       word_diff = git_diff(before, after, ["--word-diff=plain"])
       kept = []
-      in_fence = false
-      in_first_hunk = true
+      in_fence = T.let(false, T::Boolean)
+      in_first_hunk = T.let(true, T::Boolean)
       word_diff.split("\n").drop_while { |line| !line.start_with?("@@") }.each do |line|
         if line.start_with?("@@")
           kept << "" << "⋯" << "" unless in_first_hunk

@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "json"
@@ -12,6 +13,10 @@ module AiFlow
   # yaml spec fails loudly on malformed hand-edits — the desired failure mode
   # for an executable artifact.
   module SubtasksSection
+    # Sorbet models bare modules without Object's ancestry, so Kernel methods
+    # (raise) need the explicit include (srb.help/7003).
+    include Kernel
+
     # Raised on a malformed spec (bad yaml, wrong shape). The dispatcher
     # reports it on the command comment like any other command failure.
     class Error < StandardError; end

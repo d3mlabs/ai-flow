@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "fileutils"
@@ -154,7 +155,7 @@ module AiFlow
         return if patch.strip.empty?
 
         @capture_patch = patch
-        run!("git", "reset", "-q", "HEAD", "--", *CAPTURE_PATHSPECS, chdir: dir)
+        run!(["git", "reset", "-q", "HEAD", "--", *CAPTURE_PATHSPECS], chdir: dir)
         # Working-tree restore is hygiene and best-effort: checkout errors
         # when the agent only *added* learning files, which clean covers.
         @executor.capture("git", "checkout", "-q", "--", *CAPTURE_PATHSPECS, chdir: dir)
@@ -582,7 +583,7 @@ module AiFlow
       # @return [Array<String>] changed learning slugs (skill folders +
       #   "index" for the index edit), empty when nothing was written
       def commit_learnings(dir, message: "ai-flow /learn: capture learnings")
-        run!("git", "add", "-A", "--", ":(exclude).ai-flow", chdir: dir)
+        run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: dir)
         staged, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: dir)
         slugs = learning_slugs(staged)
         # Key the "did we capture" decision on learning files, not any staged
@@ -591,7 +592,7 @@ module AiFlow
         return [] if slugs.empty?
 
         full_message = CommitIdentity.message_with_requester(message, @context)
-        run!("git", *CommitIdentity.git_flags(@github), "commit", "-m", full_message, chdir: dir)
+        run!(["git", *CommitIdentity.git_flags(@github), "commit", "-m", full_message], chdir: dir)
         slugs
       end
 
@@ -740,10 +741,10 @@ module AiFlow
         base_ref = refine ? branch : default
         Dir.mktmpdir("ai-flow-learn-") do |dir|
           worktree = File.join(dir, "worktree")
-          run!("git", "fetch", "origin", base_ref, chdir: @workdir)
-          run!("git", "worktree", "prune", chdir: @workdir)
-          run!("git", "worktree", "add", "--detach", worktree, "origin/#{base_ref}", chdir: @workdir)
-          run!("git", "checkout", "-B", branch, chdir: worktree)
+          run!(["git", "fetch", "origin", base_ref], chdir: @workdir)
+          run!(["git", "worktree", "prune"], chdir: @workdir)
+          run!(["git", "worktree", "add", "--detach", worktree, "origin/#{base_ref}"], chdir: @workdir)
+          run!(["git", "checkout", "-B", branch], chdir: worktree)
           begin
             yield worktree
           ensure
@@ -758,9 +759,9 @@ module AiFlow
       def in_clone(repo, branch, refine:)
         Dir.mktmpdir("ai-flow-learn-") do |dir|
           clone = File.join(dir, "clone")
-          run!("gh", "repo", "clone", repo, clone, chdir: dir)
+          run!(["gh", "repo", "clone", repo, clone], chdir: dir)
           base = refine ? ["origin/#{branch}"] : []
-          run!("git", "checkout", "-B", branch, *base, chdir: clone)
+          run!(["git", "checkout", "-B", branch, *base], chdir: clone)
           yield clone
         end
       end
@@ -780,7 +781,10 @@ module AiFlow
         @result_writer.write(@context, [[segment, message]])
       end
 
-      def run!(*argv, chdir:)
+      # @param argv [Array<String>] command and arguments
+      # @param chdir [String] working directory
+      # @raise [GitHub::Error] when the command fails
+      def run!(argv, chdir:)
         _out, err, ok = @executor.capture(*argv, chdir: chdir)
         raise GitHub::Error, "#{argv.take(2).join(" ")} failed: #{err.strip}" unless ok
       end

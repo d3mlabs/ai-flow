@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "fileutils"
@@ -194,8 +195,8 @@ module AiFlow
       def checkout_head_branch
         branch = @context.pr_head_ref ||
                  @github.api("repos/#{@context.owner_repo}/pulls/#{@context.number}").fetch("head").fetch("ref")
-        run!("git", "fetch", "origin", branch, chdir: @workdir)
-        run!("git", "checkout", branch, chdir: @workdir)
+        run!(["git", "fetch", "origin", branch], chdir: @workdir)
+        run!(["git", "checkout", branch], chdir: @workdir)
         branch
       end
 
@@ -351,7 +352,7 @@ module AiFlow
         $stdout.puts "::group::ai-flow: excluded workflow changes (App has no workflows permission)"
         $stdout.puts patch
         $stdout.puts "::endgroup::"
-        run!("git", "reset", "-q", "HEAD", "--", WORKFLOWS_DIR, chdir: dir)
+        run!(["git", "reset", "-q", "HEAD", "--", WORKFLOWS_DIR], chdir: dir)
         # Working-tree restore is hygiene (the commit reads the index only)
         # and best-effort: checkout errors when the agent only *added*
         # workflow files (no tracked paths match), which clean covers.
@@ -433,7 +434,7 @@ module AiFlow
       def commit_and_push(segment, capture: false)
         # The job checks the dispatcher out into .ai-flow inside this
         # workspace — a bare `git add -A` would commit it as a gitlink.
-        run!("git", "add", "-A", "--", ":(exclude).ai-flow", chdir: @workdir)
+        run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: @workdir)
         @learn.extract_capture(@workdir) if capture
         extract_workflows_patch(@workdir)
         status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: @workdir)
@@ -442,8 +443,8 @@ module AiFlow
         headline = segment.instruction.lines.first.to_s.strip[0, 60]
         headline = "iterate on PR feedback" if headline.empty?
         message = CommitIdentity.message_with_requester("ai-flow /build: #{headline}", @context)
-        run!("git", *CommitIdentity.git_flags(@github), "commit", "-m", message, chdir: @workdir)
-        run!("git", "push", chdir: @workdir)
+        run!(["git", *CommitIdentity.git_flags(@github), "commit", "-m", message], chdir: @workdir)
+        run!(["git", "push"], chdir: @workdir)
         sha, = @executor.capture("git", "rev-parse", "HEAD", chdir: @workdir)
         sha.strip
       end
@@ -476,26 +477,26 @@ module AiFlow
           worktree = File.join(dir, "worktree")
           if code_repo == @context.owner_repo
             default = @github.default_branch(code_repo)
-            run!("git", "fetch", "origin", default, chdir: @workdir)
+            run!(["git", "fetch", "origin", default], chdir: @workdir)
             # Long-lived runner checkouts accumulate stale worktree metadata
             # (crashed jobs, tmpdirs GC'd from under git); prune or the add
             # eventually fails.
-            run!("git", "worktree", "prune", chdir: @workdir)
-            run!("git", "worktree", "add", "--detach", worktree, "origin/#{default}", chdir: @workdir)
+            run!(["git", "worktree", "prune"], chdir: @workdir)
+            run!(["git", "worktree", "add", "--detach", worktree, "origin/#{default}"], chdir: @workdir)
             begin
               yield worktree
             ensure
               @executor.capture("git", "worktree", "remove", "--force", worktree, chdir: @workdir)
             end
           else
-            run!("gh", "repo", "clone", code_repo, worktree, chdir: dir)
+            run!(["gh", "repo", "clone", code_repo, worktree], chdir: dir)
             yield worktree
           end
         end
       end
 
       def create_branch(worktree, branch)
-        run!("git", "checkout", "-B", branch, chdir: worktree)
+        run!(["git", "checkout", "-B", branch], chdir: worktree)
       end
 
       def build_prompt(issue, extra_instruction, capture: false)
@@ -574,14 +575,14 @@ module AiFlow
 
       # @return [Boolean] whether there was anything to commit
       def commit_all(worktree, issue, capture: false)
-        run!("git", "add", "-A", chdir: worktree)
+        run!(["git", "add", "-A"], chdir: worktree)
         @learn.extract_capture(worktree) if capture
         extract_workflows_patch(worktree)
         status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: worktree)
         return false if status.strip.empty?
 
         message = CommitIdentity.message_with_requester("ai-flow /build: #{issue.title}", @context)
-        run!("git", *CommitIdentity.git_flags(@github), "commit", "-m", message, chdir: worktree)
+        run!(["git", *CommitIdentity.git_flags(@github), "commit", "-m", message], chdir: worktree)
         true
       end
 
@@ -627,7 +628,10 @@ module AiFlow
         pr
       end
 
-      def run!(*argv, chdir:)
+      # @param argv [Array<String>] command and arguments
+      # @param chdir [String] working directory
+      # @raise [GitHub::Error] when the command fails
+      def run!(argv, chdir:)
         _out, err, ok = @executor.capture(*argv, chdir: chdir)
         raise GitHub::Error, "#{argv.take(2).join(" ")} failed: #{err.strip}" unless ok
       end

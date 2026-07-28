@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 module AiFlow
@@ -91,7 +92,7 @@ module AiFlow
       # loop, since blockage travels along dependency chains.
       def propagate_blocked(sub_issues, refs, progress)
         loop do
-          changed = false
+          changed = T.let(false, T::Boolean)
           sub_issues.each do |issue|
             ref = ref_of(issue)
             next if progress.key?(ref)

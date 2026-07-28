@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 module AiFlow
@@ -57,7 +58,7 @@ module AiFlow
       return nil unless File.file?(index)
 
       section = []
-      in_section = false
+      in_section = T.let(false, T::Boolean)
       File.read(index).each_line do |line|
         if line.match?(INVARIANTS_HEADING)
           in_section = true

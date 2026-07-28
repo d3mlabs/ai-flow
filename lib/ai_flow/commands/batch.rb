@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 module AiFlow
@@ -89,7 +90,9 @@ module AiFlow
         new_body = nil if new_body == snapshot
         [AgentOutput.parse(output), new_body]
       ensure
-        File.delete(path) if File.exist?(path)
+        # `path` is nilable here in Sorbet's flow model (an ensure can run
+        # before the first assignment), hence the extra guard.
+        File.delete(path) if path && File.exist?(path)
       end
 
       # The batch's single whole-document diff, appended once at the bottom of
@@ -115,7 +118,7 @@ module AiFlow
       # @return [Array<Array(Segment, String | nil, Hash | nil)>]
       #   segment + resolved span + discussion source (see #discussion_source)
       def resolve_anchors(segments, snapshot)
-        comments = nil
+        comments = T.let(nil, T.untyped)
         segments.map do |segment|
           span = segment.quote && PlanBody.locate_quote(snapshot, segment.quote)
           if span || segment.quote.nil?

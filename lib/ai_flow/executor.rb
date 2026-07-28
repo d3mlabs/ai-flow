@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "open3"
@@ -39,7 +40,9 @@ module AiFlow
       opts = {}
       opts[:stdin_data] = stdin if stdin
       opts[:chdir] = chdir if chdir
-      out, err, status = Open3.capture3(auth_env.merge(env), *argv, **opts)
+      # T.unsafe: variadic forwarding (env hash + *argv + **opts) is beyond
+      # what Sorbet can check against Open3's sigs (srb.help/7019).
+      out, err, status = T.unsafe(Open3).capture3(auth_env.merge(env), *argv, **opts)
       [out, err, status.success?]
     rescue Errno::ENOENT => e
       ["", e.message, false]
@@ -59,8 +62,9 @@ module AiFlow
     # @return [Array(String, Boolean)] stderr, success?
     def stream(*argv, stdin: nil, chdir: nil, env: {})
       opts = chdir ? { chdir: chdir } : {}
-      err = ""
-      status = Open3.popen3(auth_env.merge(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
+      err = T.let("", String)
+      # T.unsafe: same variadic forwarding as capture (srb.help/7019).
+      status = T.unsafe(Open3).popen3(auth_env.merge(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
         writer = Thread.new do
           stdin_io.write(stdin) if stdin
           stdin_io.close

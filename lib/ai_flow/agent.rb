@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "json"
@@ -83,7 +84,7 @@ module AiFlow
       argv << "--force" if force
 
       log_group("ai-flow agent prompt (/#{command})", prompt)
-      result = nil
+      result = T.let(nil, T.nilable(String))
       assistant_texts = []
       err, ok = @executor.stream(*argv, stdin: prompt, chdir: workdir) do |line|
         event = parse_event(line)

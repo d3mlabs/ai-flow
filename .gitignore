@@ -9,3 +9,6 @@ tmp/
 
 # SimpleCov output
 /coverage/
+
+# IDE state
+.idea/
