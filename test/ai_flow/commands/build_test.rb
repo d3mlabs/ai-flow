@@ -106,6 +106,25 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "/build on an issue targeting another repo clones it instead of adding a worktree" do
+    Given "an org-wide issue declaring a Target repos: line for a different repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\nTarget repos: d3mlabs/other\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+    command_lines = executor.command_lines
+
+    Then "the target repo is cloned via gh and the PR opens there, not in the issue repo"
+    command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/other") }
+    command_lines.none? { |line| line.include?("worktree add") }
+    github.calls.include?([:create_pull_request, "d3mlabs/other", "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
   test "/build on a PR iterates on the head branch and replies to swept threads" do
     Given "a PR with an unresolved review thread and a /build with an instruction"
     github = FakeGitHub.new
