@@ -14,7 +14,10 @@ module AiFlow
 
     DEFAULT_BOT_LOGIN = "ai-flow[bot]"
 
-    module_function
+    # extend self (not module_function): module_function copies methods onto
+    # the singleton before sorbet-runtime wraps them, silently skipping every
+    # runtime sig validation. extend self keeps one wrapped method in the chain.
+    extend self
 
     # App names are globally unique, so an adopter's App slug may differ from
     # ours; the workflow derives the login from the minted token's app-slug

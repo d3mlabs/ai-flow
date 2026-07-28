@@ -8,7 +8,10 @@ module AiFlow
   module PlanBody
     extend T::Sig
 
-    module_function
+    # extend self (not module_function): module_function copies methods onto
+    # the singleton before sorbet-runtime wraps them, silently skipping every
+    # runtime sig validation. extend self keeps one wrapped method in the chain.
+    extend self
 
     # Issue bodies use CRLF line endings when edited via the GitHub web UI, so
     # normalize to LF — quote anchoring and the PATCH race check both compare

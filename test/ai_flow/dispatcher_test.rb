@@ -211,6 +211,65 @@ class AiFlow::DispatcherTest < Minitest::Test
     nil
   end
 
+  test "/split routes to the split command — a spec-less --apply surfaces its guidance" do
+    Given "a plan with no staged spec"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    context = ContextBuilder.issue_comment(body: "/split --apply")
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+
+    Then "the run fails and the comment carries the guidance"
+    raises SystemExit
+    github.comment_edits.fetch(55).include?("no staged `## Subtasks` spec found")
+
+    Cleanup
+    nil
+  end
+
+  test "/build --split on a plan routes to the orchestrator — no sub-issues surfaces its guidance" do
+    Given "a plan without sub-issues"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    context = ContextBuilder.issue_comment(body: "/build --split")
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+
+    Then "the run fails and the comment names the missing /split"
+    raises SystemExit
+    github.comment_edits.fetch(55).include?("no open sub-issues — run /split first")
+
+    Cleanup
+    nil
+  end
+
+  test "/build routes to the build command — a staged spec refuses before any git runs" do
+    Given "a plan carrying an unapplied /split proposal"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: <<~BODY)
+      # Plan
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::SPEC_MARKER}
+
+      ```yaml
+      - title: "Subtask"
+      ```
+    BODY
+    context = ContextBuilder.issue_comment(body: "/build")
+
+    When "dispatching"
+    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+
+    Then "the panel names the staged proposal and the next command"
+    github.comment_edits.fetch(55).include?("this plan has a staged /split proposal")
+
+    Cleanup
+    nil
+  end
+
   test "a command comment is acknowledged with the eyes reaction and routed" do
     Given "a standalone /ask on a plan issue"
     github = FakeGitHub.new

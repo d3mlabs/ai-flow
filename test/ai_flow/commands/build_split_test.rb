@@ -134,6 +134,38 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     nil
   end
 
+  test "out-of-set dependencies gate on the referenced issue's open state" do
+    Given "one sub-issue gated on an open external issue, another on a closed one"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_issue("d3mlabs/other", 42, title: "Still open", body: "", state: "open")
+    github.seed_issue("d3mlabs/other", 43, title: "Done", body: "", state: "closed")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Gated", "Wait for it.\n\nDepends on: d3mlabs/other#42\n"),
+      sub_issue(2, "Cleared", "Go.\n\nDepends on: d3mlabs/other#43\n"),
+      sub_issue(3, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
+    ])
+    build = RecordingBuild.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+
+    Then "the closed dependency is satisfied; the open one blocks its dependent and the integration"
+    build.built == [2]
+    checklist = github.comment_edits.fetch(55)
+    checklist.include?("[!] #{REPO}#1 Gated — blocked until d3mlabs/other#42 is resolved")
+    checklist.include?("[x] #{REPO}#2 Cleared")
+    checklist.include?("[!] #{REPO}#3 Integration: Parent — blocked until")
+
+    Cleanup
+    nil
+  end
+
   test "a dependency cycle is a hard error" do
     Given "sub-issues depending on each other"
     github = FakeGitHub.new

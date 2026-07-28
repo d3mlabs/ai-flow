@@ -27,7 +27,10 @@ module AiFlow
     APPLIED_MARKER = "<!-- ai-flow:subtasks v1 — applied; a fresh `/split --dry` restages -->"
     ISSUE_REF_PATTERN = %r{[\w.-]+/[\w.-]+#\d+}
 
-    module_function
+    # extend self (not module_function): module_function copies methods onto
+    # the singleton before sorbet-runtime wraps them, silently skipping every
+    # runtime sig validation. extend self keeps one wrapped method in the chain.
+    extend self
 
     # @param body [String] the plan-issue body
     # @return [Boolean] whether an unapplied (fenced-yaml) spec is staged

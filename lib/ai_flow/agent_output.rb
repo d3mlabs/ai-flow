@@ -21,7 +21,10 @@ module AiFlow
       const :segments, T::Hash[Integer, String]
     end
 
-    module_function
+    # extend self (not module_function): module_function copies methods onto
+    # the singleton before sorbet-runtime wraps them, silently skipping every
+    # runtime sig validation. extend self keeps one wrapped method in the chain.
+    extend self
 
     # @param output [String] raw agent output
     # @return [Parsed] segment-index → text map

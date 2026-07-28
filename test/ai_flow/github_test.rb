@@ -67,4 +67,57 @@ class AiFlow::GitHubTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "create_pull_request POSTs the branch pair and returns the created PR" do
+    Given "an API that answers with the created PR"
+    executor = CannedExecutor.new(out: JSON.generate({ "number" => 7, "html_url" => "u" }))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "opening a PR"
+    pr = github.create_pull_request(
+      "d3mlabs/demo", title: "t", body: "b", head: "ai/7-x", base: "main",
+    )
+
+    Then "the payload carried the branch pair and the PR came back"
+    executor.command_lines.first == "gh api -X POST --input - repos/d3mlabs/demo/pulls"
+    executor.stdins.first ==
+      JSON.generate({ title: "t", body: "b", head: "ai/7-x", base: "main", draft: false })
+    pr.fetch("number") == 7
+
+    Cleanup
+    nil
+  end
+
+  test "react_to_comment posts the reaction to the surface's namespace" do
+    Given "a plain issue comment to acknowledge"
+    executor = CannedExecutor.new
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "reacting"
+    github.react_to_comment("d3mlabs/demo", 55, "eyes")
+
+    Then "the reaction went to the issues namespace"
+    executor.command_lines.first == "gh api -X POST --input - repos/d3mlabs/demo/issues/comments/55/reactions"
+    executor.stdins.first == JSON.generate({ content: "eyes" })
+
+    Cleanup
+    nil
+  end
+
+  test "graphql flags string variables -f and non-strings -F, returning data" do
+    Given "an API that answers a mutation"
+    executor = CannedExecutor.new(out: JSON.generate({ "data" => { "ok" => true } }))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "running a query with mixed variable types"
+    data = github.graphql("query($id: Int!, $name: String!) {}", id: 12, name: "x")
+
+    Then "typed flags per variable, and the data object came back"
+    executor.command_lines.first ==
+      "gh api graphql -f query=query($id: Int!, $name: String!) {} -F id=12 -f name=x"
+    data == { "ok" => true }
+
+    Cleanup
+    nil
+  end
 end
