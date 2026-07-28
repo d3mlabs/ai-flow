@@ -386,7 +386,7 @@ generalization — so nothing is orphaned.
 
 Learning repos can verify proposals with the **origin-firing check**
 (`.github/workflows/origin-firing.yml`, reusable — copy
-`templates/knowledge-checks.yml` into the repo): on every PR, a single agent
+`templates/proposal-checks.yml` into the repo): on every PR, a single agent
 pass gets the PR's own learnings index plus the origin thread (recovered from
 the `learned-from:` marker) replayed as a fresh task, and must declare which
 learnings it would consult. The status fails when a changed learning is not

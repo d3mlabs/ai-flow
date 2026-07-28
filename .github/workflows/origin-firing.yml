@@ -6,7 +6,7 @@
 # marker (migrations, manual edits) skip green.
 #
 # Adopting repos (the org knowledge repo first) reference this via a small
-# caller workflow — see templates/knowledge-checks.yml.
+# caller workflow — see templates/proposal-checks.yml.
 name: origin-firing
 
 on:
