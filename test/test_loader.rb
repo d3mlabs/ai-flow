@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 # Entry point when running tests (-r test_loader), mirroring d3mlabs/dev:

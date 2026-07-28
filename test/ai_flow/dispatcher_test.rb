@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -17,8 +18,9 @@ class AiFlow::DispatcherTest < Minitest::Test
 
   # A git executor that records command lines and reports one staged
   # learning file, so a routed /learn reaches its draft-PR write phase
-  # without touching a real repo.
-  class LearnExecutor
+  # without touching a real repo. Subclasses the real class so
+  # sorbet-runtime's sig checks accept it at the injection seam.
+  class LearnExecutor < AiFlow::Executor
     attr_reader :command_lines
 
     def initialize

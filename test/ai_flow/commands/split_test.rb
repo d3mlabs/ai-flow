@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -16,7 +17,7 @@ class AiFlow::Commands::SplitTest < Minitest::Test
 
   def run_split(github:, agent:, comment: "/split")
     context = ContextBuilder.issue_comment(number: 7, body: comment)
-    segment = AiFlow::CommentParser.new.parse(comment).first
+    segment = AiFlow::CommentParser.new.parse(comment).fetch(0)
     AiFlow::Commands::Split.new(
       context: context, github: github, agent: agent,
       result_writer: AiFlow::ResultWriter.new(github: github), workdir: Dir.pwd,

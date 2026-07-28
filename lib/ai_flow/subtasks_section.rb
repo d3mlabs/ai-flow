@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -16,6 +16,7 @@ module AiFlow
     # Sorbet models bare modules without Object's ancestry, so Kernel methods
     # (raise) need the explicit include (srb.help/7003).
     include Kernel
+    extend T::Sig
 
     # Raised on a malformed spec (bad yaml, wrong shape). The dispatcher
     # reports it on the command comment like any other command failure.
@@ -30,6 +31,7 @@ module AiFlow
 
     # @param body [String] the plan-issue body
     # @return [Boolean] whether an unapplied (fenced-yaml) spec is staged
+    sig { params(body: String).returns(T::Boolean) }
     def spec?(body)
       section = section_text(body)
       !section.nil? && section.include?("```yaml")
@@ -39,6 +41,7 @@ module AiFlow
     # @return [Array<Hash>] entries with "title", "repo", "depends_on"
     #   (indices), and optional "existing" ("owner/repo#n")
     # @raise [Error] when the section is missing or hand-edits broke it
+    sig { params(body: String).returns(T::Array[T::Hash[String, T.untyped]]) }
     def parse_spec(body)
       section = section_text(body)
       yaml = section && section[/```yaml\n(.*?)```/m, 1]
@@ -57,6 +60,12 @@ module AiFlow
     #   suggestion lines ('owner/repo#n "title"') for the human to promote
     #   into `existing:` or delete
     # @return [String] the staged spec section
+    sig do
+      params(
+        entries: T::Array[T::Hash[String, T.untyped]],
+        possible_matches: T::Hash[Integer, T::Array[String]],
+      ).returns(String)
+    end
     def render_spec(entries, possible_matches: {})
       yaml_blocks = entries.each_with_index.map do |entry, index|
         render_entry(entry, possible_matches.fetch(index, []))
@@ -67,6 +76,7 @@ module AiFlow
     # @param lines [Array<String>] pre-formatted map lines, e.g.
     #   'd3mlabs/dev#12 — Server API (adopted)'
     # @return [String] the post-apply linked-map section
+    sig { params(lines: T::Array[String]).returns(String) }
     def render_applied(lines)
       "#{HEADER}\n#{APPLIED_MARKER}\n\n#{lines.map { |line| "- #{line}" }.join("\n")}"
     end
@@ -77,6 +87,7 @@ module AiFlow
     # @param body [String]
     # @param section [String] a rendered section (spec or applied map)
     # @return [String] the new body
+    sig { params(body: String, section: String).returns(String) }
     def replace(body, section)
       lines = PlanBody.from_issue_body(body).split("\n", -1)
       start, finish = section_bounds(lines)
@@ -93,27 +104,38 @@ module AiFlow
     #
     # @param body [String] the plan-issue body
     # @return [Hash{String => String}] "owner/repo#n" => "adopted"/"referenced"
+    sig { params(body: String).returns(T::Hash[String, String]) }
     def applied_annotations(body)
       section = section_text(body)
       return {} if section.nil? || section.include?("```yaml")
 
-      section.scan(/^- (#{ISSUE_REF_PATTERN}) — .*\((adopted|referenced)\)\s*$/).to_h
+      # T.cast: a two-group scan always yields string pairs, but the stdlib
+      # RBI types it as a union that to_h can't accept.
+      pairs = T.cast(
+        section.scan(/^- (#{ISSUE_REF_PATTERN}) — .*\((adopted|referenced)\)\s*$/),
+        T::Array[[String, String]],
+      )
+      pairs.to_h
     end
 
     # @return [String, nil] the section's text, header included
+    sig { params(body: String).returns(T.nilable(String)) }
     def section_text(body)
       lines = PlanBody.from_issue_body(body).split("\n", -1)
       start, finish = section_bounds(lines)
-      start && lines[start...finish].join("\n")
+      return nil unless start
+
+      lines[start...finish]&.join("\n")
     end
 
     # @return [Array(Integer, Integer), Array(nil, nil)] the section's line
     #   range: header line to the next H2 (or EOF)
+    sig { params(lines: T::Array[String]).returns([T.nilable(Integer), T.nilable(Integer)]) }
     def section_bounds(lines)
       start = lines.index { |line| line.strip == HEADER }
       return [nil, nil] unless start
 
-      finish = ((start + 1)...lines.size).find { |index| lines[index].start_with?("## ") } || lines.size
+      finish = ((start + 1)...lines.size).find { |index| lines.fetch(index).start_with?("## ") } || lines.size
       [start, finish]
     end
 
@@ -122,6 +144,7 @@ module AiFlow
     # a thin templated body). Unknown keys are ignored.
     #
     # @return [Hash] the entry, shape-checked with defaults filled in
+    sig { params(entry: T.untyped).returns(T::Hash[String, T.untyped]) }
     def validate_entry(entry)
       raise Error, "each subtask must be a yaml mapping, got: #{entry.inspect}" unless entry.is_a?(Hash)
 
@@ -148,6 +171,11 @@ module AiFlow
 
     # Manual yaml emission — Psych can't attach the possible-match comments,
     # and the hand-edited artifact reads better with a stable key order.
+    #
+    # @param entry [Hash] a validated entry
+    # @param match_lines [Array<String>] possible-match suggestion lines
+    # @return [String]
+    sig { params(entry: T::Hash[String, T.untyped], match_lines: T::Array[String]).returns(String) }
     def render_entry(entry, match_lines)
       lines = ["- title: #{entry.fetch("title").to_json}"]
       lines << "  repo: #{entry.fetch("repo")}" unless entry["repo"].to_s.empty?

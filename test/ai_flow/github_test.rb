@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -7,7 +8,8 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::GitHubTest < Minitest::Test
   # Plays back one canned `gh` response; GitHub's real argv construction and
   # JSON parsing run for real (the executor is the class's one seam).
-  class CannedExecutor
+  # Subclasses the real class so sorbet-runtime's sig checks accept it.
+  class CannedExecutor < AiFlow::Executor
     attr_reader :command_lines, :stdins
 
     def initialize(out: "")
@@ -33,7 +35,7 @@ class AiFlow::GitHubTest < Minitest::Test
 
     Then "the query carried the owner-qualified head filter and the PR came back"
     executor.command_lines.first == "gh api repos/d3mlabs/demo/pulls?state=open&head=d3mlabs:ai/learn-pr-7"
-    pr.fetch("number") == 12
+    T.must(pr).fetch("number") == 12
 
     Cleanup
     nil

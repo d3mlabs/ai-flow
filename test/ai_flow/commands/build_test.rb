@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -13,8 +14,9 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   # survive RSpock's block-parameter destructuring where arrays don't);
   # `dirty` controls whether the staged diff reports changes (i.e. whether
   # the agent "wrote" anything), `workflows_patch` seeds a staged diff under
-  # .github/workflows (the exclusion path).
-  class RecordingExecutor
+  # .github/workflows (the exclusion path). Subclasses the real class so
+  # sorbet-runtime's sig checks accept it at the injection seam.
+  class RecordingExecutor < AiFlow::Executor
     attr_reader :command_lines, :refreshes
 
     # `capture_patch` seeds a staged diff under the learning paths (build-time
@@ -61,7 +63,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   def run_build(github:, executor:, body: "/build", context: nil, agent: FakeAgent.new(["done"]),
     org_invariants: empty_org_invariants, workdir: Dir.pwd)
     context ||= ContextBuilder.issue_comment(number: 7, body: body)
-    segment = AiFlow::CommentParser.new.parse(body).first
+    segment = AiFlow::CommentParser.new.parse(body).fetch(0)
     AiFlow::Commands::Build.new(
       context: context,
       github: github,

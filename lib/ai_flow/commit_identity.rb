@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "erb"
@@ -10,6 +10,8 @@ module AiFlow
   # trailer — contribution-graph credit without an authorship claim — and
   # accountability lives at the PR layer (Requested by + assignee + merge).
   module CommitIdentity
+    extend T::Sig
+
     DEFAULT_BOT_LOGIN = "ai-flow[bot]"
 
     module_function
@@ -19,12 +21,14 @@ module AiFlow
     # output and passes it down as AI_FLOW_BOT_LOGIN.
     #
     # @return [String]
+    sig { returns(String) }
     def bot_login
       ENV.fetch("AI_FLOW_BOT_LOGIN", DEFAULT_BOT_LOGIN)
     end
 
     # @param github [AiFlow::GitHub]
     # @return [Array<String>] `git -c` flags setting author and committer
+    sig { params(github: GitHub).returns(T::Array[String]) }
     def git_flags(github)
       ["-c", "user.name=#{bot_login}", "-c", "user.email=#{bot_email(github)}"]
     end
@@ -35,6 +39,7 @@ module AiFlow
     #
     # @param github [AiFlow::GitHub]
     # @return [String]
+    sig { params(github: GitHub).returns(String) }
     def bot_email(github)
       bot_id = github.api("users/#{ERB::Util.url_encode(bot_login)}").fetch("id")
       "#{bot_id}+#{bot_login}@users.noreply.github.com"
@@ -46,6 +51,7 @@ module AiFlow
     # @param context [AiFlow::Context]
     # @return [String] the message with the requesting human's co-author
     #   trailer (unchanged when the payload carried no user)
+    sig { params(message: String, context: Context).returns(String) }
     def message_with_requester(message, context)
       return message unless context.commenter_login
 
@@ -54,6 +60,10 @@ module AiFlow
 
     # The <id>+<login> noreply form links for all accounts (the plain login@
     # form predates 2017 accounts).
+    #
+    # @param context [AiFlow::Context]
+    # @return [String]
+    sig { params(context: Context).returns(String) }
     def requester_email(context)
       return "#{context.commenter_login}@users.noreply.github.com" unless context.commenter_id
 

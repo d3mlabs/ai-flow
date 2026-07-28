@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -14,7 +15,10 @@ class AiFlow::Commands::LearnTest < Minitest::Test
   # agent "wrote" into the learning worktree. `staged_queue` (when given)
   # instead consumes one list per diff call, so a multi-phase form like
   # --promote can stage on the org side and come up empty on the removal side.
-  class RecordingExecutor
+  # Subclasses the real class so sorbet-runtime's sig checks accept it.
+  class RecordingExecutor < AiFlow::Executor
+    extend T::Sig
+
     attr_reader :command_lines, :refreshes
 
     def initialize(staged: [], staged_queue: nil)
@@ -36,6 +40,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     private
 
+    sig { returns(T::Array[String]) }
     def next_staged
       @staged_queue ? (@staged_queue.shift || []) : @staged
     end
@@ -68,7 +73,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
   def run_learn(github:, executor:, body:, context: nil, agent: FakeAgent.new(["done"]), workdir: Dir.pwd)
     context ||= ContextBuilder.issue_comment(number: 7, body: body)
-    segment = AiFlow::CommentParser.new.parse(body).first
+    segment = AiFlow::CommentParser.new.parse(body).fetch(0)
     AiFlow::Commands::Learn.new(
       context: context,
       github: github,

@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "yaml"
@@ -11,6 +11,8 @@ module AiFlow
   # YAML fails loudly so a configuration error surfaces as the usual failure
   # panel instead of silently falling back to defaults.
   class RepoConfig
+    extend T::Sig
+
     class Error < StandardError; end
 
     PATH = ".github/ai-flow.yml"
@@ -18,6 +20,7 @@ module AiFlow
     # @param workdir [String] repo checkout root
     # @return [RepoConfig]
     # @raise [Error] when the file exists but is not a YAML mapping
+    sig { params(workdir: String).returns(RepoConfig) }
     def self.load(workdir)
       path = File.join(workdir, PATH)
       return new({}) unless File.exist?(path)
@@ -31,6 +34,7 @@ module AiFlow
     end
 
     # @param config [Hash]
+    sig { params(config: T::Hash[T.untyped, T.untyped]).void }
     def initialize(config)
       @config = config
     end
@@ -40,6 +44,7 @@ module AiFlow
     # adopter's file (same posture as the /split spec).
     #
     # @return [Hash]
+    sig { returns(T::Hash[T.untyped, T.untyped]) }
     def models
       section = @config["models"]
       section.is_a?(Hash) ? section : {}
@@ -52,6 +57,7 @@ module AiFlow
     # pointer rather than guessing).
     #
     # @return [String, nil]
+    sig { returns(T.nilable(String)) }
     def knowledge_repo
       value = @config["knowledge_repo"]
       value.is_a?(String) && !value.strip.empty? ? value.strip : nil
@@ -63,6 +69,7 @@ module AiFlow
     # the point — with an explicit off switch for repos that want quiet.
     #
     # @return [Boolean]
+    sig { returns(T::Boolean) }
     def learn_on_build?
       learn["on_build"] != false
     end
@@ -73,6 +80,7 @@ module AiFlow
     # non-mapping value (or absence) means all defaults.
     #
     # @return [Hash]
+    sig { returns(T::Hash[T.untyped, T.untyped]) }
     def learn
       section = @config["learn"]
       section.is_a?(Hash) ? section : {}

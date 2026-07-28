@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -14,16 +15,16 @@ class AiFlow::ResultWriterTest < Minitest::Test
     When "rendering results with a batch appendix"
     updated = writer.render(
       body,
-      [[segments[0], "RESULT-1\n\nline two"], [segments[1], "RESULT-2"]],
+      [[segments.fetch(0), "RESULT-1\n\nline two"], [segments.fetch(1), "RESULT-2"]],
       appendix: "THE-DIFF\n\ndiff body",
     )
 
     Then "each result sits under its command; the appendix closes the comment"
-    updated.index("> RESULT-1") > updated.index("/edit tighten")
-    updated.index("> RESULT-1") < updated.index("> Q2")
-    updated.index("> RESULT-2") > updated.index("/ask why?")
+    T.must(updated.index("> RESULT-1")) > T.must(updated.index("/edit tighten"))
+    T.must(updated.index("> RESULT-1")) < T.must(updated.index("> Q2"))
+    T.must(updated.index("> RESULT-2")) > T.must(updated.index("/ask why?"))
     updated.include?("> RESULT-1\n>\n> line two")
-    updated.index("> RESULT-2") < updated.index("\n\n---\n\n> THE-DIFF\n>\n> diff body")
+    T.must(updated.index("> RESULT-2")) < T.must(updated.index("\n\n---\n\n> THE-DIFF\n>\n> diff body"))
     updated.end_with?("> diff body")
 
     Cleanup
@@ -39,7 +40,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
     When "rendering with an appendix and a run url"
     updated = writer.render(
       body,
-      [[segments.first, "RESULT"]],
+      [[segments.fetch(0), "RESULT"]],
       appendix: "THE-DIFF",
       run_url: "https://github.com/d3mlabs/demo/actions/runs/9",
     )
@@ -62,7 +63,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
     When "rendering with a run url only"
     updated = writer.render(
       body,
-      [[segments.first, "RESULT"]],
+      [[segments.fetch(0), "RESULT"]],
       run_url: "https://github.com/d3mlabs/demo/actions/runs/9",
     )
 
@@ -81,7 +82,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
     writer = AiFlow::ResultWriter.new(github: FakeGitHub.new)
 
     When "rendering"
-    updated = writer.render(body, [[segments.first, "RESULT"]])
+    updated = writer.render(body, [[segments.fetch(0), "RESULT"]])
 
     Then
     updated == "/edit tighten\n\n> RESULT"
@@ -158,7 +159,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
     segments = AiFlow::CommentParser.new.parse("/edit fix this")
 
     When "writing results"
-    AiFlow::ResultWriter.new(github: github).write(context, [[segments.first, "DONE"]])
+    AiFlow::ResultWriter.new(github: github).write(context, [[segments.fetch(0), "DONE"]])
 
     Then
     github.calls.map(&:first).include?(:update_review_comment)
@@ -183,7 +184,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
 
     When "announcing, then writing the results"
     writer.announce(context, "⏳ ai-flow is running")
-    writer.write(context, [[segments.first, "✅ **/build** — committed."]])
+    writer.write(context, [[segments.fetch(0), "✅ **/build** — committed."]])
 
     Then "one posted panel (attribution + quoted review + status), then an edit of that same comment"
     github.comments.size == 1
@@ -211,7 +212,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
     writer = AiFlow::ResultWriter.new(github: github)
 
     When "writing both results"
-    writer.write(context, [[segments[0], "Because."], [segments[1], "✅ Tightened."]])
+    writer.write(context, [[segments.fetch(0), "Because."], [segments.fetch(1), "✅ Tightened."]])
 
     Then "each answer sits directly under its own quoted command"
     panel = github.comments.first

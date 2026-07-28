@@ -1,10 +1,13 @@
+# typed: true
 # frozen_string_literal: true
 
 # In-memory stand-ins for the network/process boundaries, so command flows are
 # exercised end to end with real parsing/diffing and only gh/agent faked.
 
 # Records every GitHub call; issues are seeded and mutated in memory.
-class FakeGitHub
+# Subclasses the real class so sorbet-runtime's sig checks accept it at the
+# injection seams; every method the tests reach is overridden here.
+class FakeGitHub < AiFlow::GitHub
   attr_reader :calls, :comments, :comment_edits, :comment_edit_history
 
   def initialize
@@ -15,6 +18,9 @@ class FakeGitHub
     @comment_edits = {}
     @comment_edit_history = []
     @next_number = 100
+    # Declared non-nil in the real class's initializer (never called here),
+    # so the fake owns the same invariant.
+    @owner_repos = {}
   end
 
   def seed_issue(owner_repo, number, title:, body:, state: "open")
@@ -87,13 +93,12 @@ class FakeGitHub
   end
 
   def seed_owner_repos(owner, names)
-    @owner_repos ||= {}
     @owner_repos[owner] = names
   end
 
   def owner_repos(owner)
     @calls << [:owner_repos, owner]
-    (@owner_repos || {})[owner] || []
+    @owner_repos[owner] || []
   end
 
   def seed_app_installed_repos(names)
@@ -242,8 +247,9 @@ end unless defined?(FakeGitHub)
 
 # Replays canned agent outputs and records prompts. The optional block runs
 # on each launch (receiving the prompt) — file-based tests use it to edit the
-# plan file exactly like the real agent would.
-class FakeAgent
+# plan file exactly like the real agent would. Subclasses the real class so
+# sorbet-runtime's sig checks accept it at the injection seams.
+class FakeAgent < AiFlow::Agent
   attr_reader :prompts, :launches, :models_used, :knowledge_applied
 
   # @param models_by_command [Hash{String => String}, nil] per-command

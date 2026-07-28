@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -8,8 +9,9 @@ require "stringio"
 
 # Captures every stream() argv so tests assert on the exact agent CLI
 # invocation; replays a canned NDJSON stream (default: one terminal result
-# event) line by line, like the real CLI in stream-json mode.
-class RecordingExecutor
+# event) line by line, like the real CLI in stream-json mode. Subclasses the
+# real class so sorbet-runtime's sig checks accept it at the injection seam.
+class RecordingExecutor < AiFlow::Executor
   DEFAULT_STREAM = [%({"type":"result","subtype":"success","is_error":false,"result":"ok"})].freeze
 
   attr_reader :captures
@@ -373,7 +375,7 @@ class AiFlow::AgentTest < Minitest::Test
     end
 
     Then
-    error.message.include?("see the streamed agent log above")
+    T.must(error).message.include?("see the streamed agent log above")
 
     Cleanup
     FileUtils.rm_rf(dir)

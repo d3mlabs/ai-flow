@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -17,6 +17,8 @@ module AiFlow
   #   plans#13): everything after them — the rest of the line, following
   #   lines, and the quote block above — is verbatim context for the agent.
   class CommentParser
+    extend T::Sig
+
     COMMANDS = %w[ask edit split build learn].freeze
     BATCHABLE_COMMANDS = %w[ask edit].freeze
 
@@ -24,15 +26,26 @@ module AiFlow
 
     # One quote+command pair. `quote` is the anchor text (de-quoted, nil when
     # unscoped); `instruction` is the command line's remainder plus the free
-    # text it owns; `flags` are leading --options (e.g. /build --split);
-    # `end_line` is the 0-based index of the last line the segment owns —
-    # the insertion point for its interleaved result.
-    Segment = Struct.new(:command, :flags, :quote, :instruction, :end_line, keyword_init: true)
+    # text it owns (a prop: parsing appends owned lines as it walks); `flags`
+    # are leading --options (e.g. /build --split); `end_line` is the 0-based
+    # index of the last line the segment owns — the insertion point for its
+    # interleaved result.
+    class Segment < T::Struct
+      const :command, String
+      const :flags, T::Array[String]
+      const :quote, T.nilable(String)
+      prop :instruction, String
+      prop :end_line, Integer
+    end
 
     # @param prefix [String] optional command prefix for adopters with clashing
     #   bots (we default to none, so commands are /ask etc.)
+    sig { params(prefix: String).void }
     def initialize(prefix: "")
-      @command_pattern = /\A\/#{Regexp.escape(prefix)}(#{COMMANDS.join("|")})(?:\s+(.*))?\z/
+      @command_pattern = T.let(
+        /\A\/#{Regexp.escape(prefix)}(#{COMMANDS.join("|")})(?:\s+(.*))?\z/,
+        Regexp,
+      )
     end
 
     # @param body [String] the comment body
@@ -40,16 +53,17 @@ module AiFlow
     #   command (not an error — most comments are plain conversation)
     # @raise [ParseError] when /split or /build shares a comment with another
     #   command
+    sig { params(body: String).returns(T::Array[Segment]) }
     def parse(body)
-      segments = []
-      pending_quote = []
+      segments = T.let([], T::Array[Segment])
+      pending_quote = T.let([], T::Array[String])
       current_segment = T.let(nil, T.nilable(Segment))
 
       body.to_s.gsub("\r\n", "\n").split("\n", -1).each_with_index do |line, index|
         if (match = @command_pattern.match(line.rstrip))
           flags, instruction = split_flags(match[2].to_s.strip)
           segments << (current_segment = Segment.new(
-            command: match[1],
+            command: T.must(match[1]),
             flags: flags,
             quote: dequote(pending_quote),
             instruction: instruction,
@@ -82,6 +96,7 @@ module AiFlow
 
     # @param rest [String] everything after the command token
     # @return [Array(Array<String>, String)] leading --flags and the instruction
+    sig { params(rest: String).returns([T::Array[String], String]) }
     def split_flags(rest)
       tokens = rest.split(" ")
       flags = tokens.take_while { |token| token.start_with?("--") }
@@ -90,6 +105,7 @@ module AiFlow
 
     # @param lines [Array<String>] raw "> …" lines
     # @return [String, nil] the anchor text without quote markers
+    sig { params(lines: T::Array[String]).returns(T.nilable(String)) }
     def dequote(lines)
       return nil if lines.empty?
 
@@ -97,6 +113,7 @@ module AiFlow
     end
 
     # @raise [ParseError] on invalid batches
+    sig { params(segments: T::Array[Segment]).void }
     def validate!(segments)
       return if segments.size <= 1
 

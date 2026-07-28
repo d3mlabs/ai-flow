@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -12,17 +12,22 @@ module AiFlow
     # Sorbet models bare modules without Object's ancestry, so Kernel methods
     # (lambda, Integer) need the explicit include (srb.help/7003).
     include Kernel
+    extend T::Sig
 
     SEGMENT_DELIMITER = /<<<AI-FLOW:SEGMENT (\d+)>>>/
 
-    Parsed = Struct.new(:segments, keyword_init: true)
+    # Segment-index → text map.
+    class Parsed < T::Struct
+      const :segments, T::Hash[Integer, String]
+    end
 
     module_function
 
     # @param output [String] raw agent output
     # @return [Parsed] segment-index → text map
+    sig { params(output: String).returns(Parsed) }
     def parse(output)
-      segments = {}
+      segments = T.let({}, T::Hash[Integer, String])
       current = T.let(nil, T.nilable(Integer))
       buffer = []
 
@@ -50,6 +55,7 @@ module AiFlow
     #
     # @param output [String]
     # @return [String]
+    sig { params(output: String).returns(String) }
     def normalize_delimiters(output)
       output.to_s.gsub(SEGMENT_DELIMITER) { "\n#{Regexp.last_match(0)}\n" }
     end

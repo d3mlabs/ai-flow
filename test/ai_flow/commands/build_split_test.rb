@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -8,7 +9,8 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
   # A build stand-in recording the order sub-issues were built in.
-  class RecordingBuild
+  # Subclasses the real command so sorbet-runtime's sig checks accept it.
+  class RecordingBuild < AiFlow::Commands::Build
     attr_reader :built
 
     def initialize
@@ -40,7 +42,7 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     ])
     build = RecordingBuild.new
     context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").first
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
     AiFlow::Commands::BuildSplit.new(
@@ -67,7 +69,7 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     ])
     build = RecordingBuild.new
     context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").first
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
     AiFlow::Commands::BuildSplit.new(
@@ -111,7 +113,7 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     ])
     build = RecordingBuild.new
     context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").first
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
     AiFlow::Commands::BuildSplit.new(
@@ -142,7 +144,7 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(3, "Integration: Parent", "Depends on: #1, #2\n"),
     ])
     context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").first
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
     AiFlow::Commands::BuildSplit.new(

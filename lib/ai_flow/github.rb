@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -7,28 +7,51 @@ module AiFlow
   # GitHub API access via the `gh` CLI (authenticated with the workflow's
   # GH_TOKEN). JSON payloads go through `--input -` so bodies never hit argv.
   class GitHub
+    extend T::Sig
+
     class Error < StandardError; end
 
     # `repo` is the "owner/repo" the issue lives in (derived from
     # repository_url) — sub-issues may live in a different repo than their
-    # parent, so it can't be assumed from context.
-    Issue = Struct.new(:number, :title, :body, :updated_at, :html_url, :state, :repo, keyword_init: true)
+    # parent, so it can't be assumed from context. `body` and `state` are
+    # props: the in-memory test fake mutates them on update_issue_body and
+    # close_issue.
+    class Issue < T::Struct
+      const :number, Integer
+      const :title, String
+      prop :body, String
+      const :updated_at, T.nilable(String), default: nil
+      const :html_url, T.nilable(String), default: nil
+      prop :state, T.nilable(String), default: nil
+      const :repo, T.nilable(String), default: nil
+    end
 
     # @param executor [AiFlow::Executor]
+    sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
       @executor = executor
+      # Memoization stores for the routing menus (see owner_repos /
+      # app_installed_repos) — read several times per run.
+      @owner_repos = T.let({}, T::Hash[String, T::Array[String]])
+      @app_installed_repos = T.let(nil, T.nilable(T::Array[String]))
     end
 
     # @param path [String] REST path, e.g. "repos/o/r/issues/1"
     # @param method [String, nil] HTTP method (nil = GET)
     # @param payload [Hash, nil] JSON body
     # @return [Object] parsed JSON response (nil for empty responses)
+    sig do
+      params(path: String, method: T.nilable(String), payload: T.nilable(T::Hash[T.untyped, T.untyped]))
+        .returns(T.untyped)
+    end
     def api(path, method: nil, payload: nil)
       argv = ["gh", "api"]
       argv += ["-X", method] if method
       argv += ["--input", "-"] if payload
       argv << path
-      out, err, ok = @executor.capture(*argv, stdin: payload && JSON.generate(payload))
+      # T.unsafe: splatting a runtime-built argv into capture's rest param
+      # is beyond Sorbet's static splat support (srb.help/7019).
+      out, err, ok = T.unsafe(@executor).capture(*argv, stdin: payload && JSON.generate(payload))
       raise Error, "gh api #{path} failed: #{err.strip}" unless ok
 
       out.empty? ? nil : JSON.parse(out)
@@ -37,6 +60,10 @@ module AiFlow
     # @param query [String] GraphQL query/mutation with $variables
     # @param variables [Hash]
     # @return [Hash] the "data" object
+    sig do
+      params(query: String, variables: T::Hash[Symbol, T.untyped])
+        .returns(T::Hash[String, T.untyped])
+    end
     def graphql(query, variables = {})
       argv = ["gh", "api", "graphql"]
       argv += ["-f", "query=#{query}"]
@@ -44,7 +71,8 @@ module AiFlow
         flag = value.is_a?(String) ? "-f" : "-F"
         argv += [flag, "#{key}=#{value}"]
       end
-      out, err, ok = @executor.capture(*argv)
+      # T.unsafe: same runtime-built argv splat as api (srb.help/7019).
+      out, err, ok = T.unsafe(@executor).capture(*argv)
       raise Error, "gh graphql failed: #{err.strip}" unless ok
 
       JSON.parse(out).fetch("data")
@@ -53,26 +81,35 @@ module AiFlow
     # @param owner_repo [String]
     # @param number [Integer]
     # @return [Issue]
+    sig { params(owner_repo: String, number: Integer).returns(Issue) }
     def issue(owner_repo, number)
       to_issue(api("repos/#{owner_repo}/issues/#{number}"))
     end
 
     # @return [Issue] the created issue
+    sig { params(owner_repo: String, title: String, body: String).returns(Issue) }
     def create_issue(owner_repo, title:, body:)
       to_issue(api("repos/#{owner_repo}/issues", method: "POST", payload: { title: title, body: body }))
     end
 
     # @return [Issue] the updated issue
+    sig { params(owner_repo: String, number: Integer, body: String).returns(Issue) }
     def update_issue_body(owner_repo, number, body:)
       to_issue(api("repos/#{owner_repo}/issues/#{number}", method: "PATCH", payload: { body: body }))
     end
 
+    # @param owner_repo [String]
+    # @param number [Integer]
+    # @param comment [String, nil] posted before closing, when given
+    # @return [void]
+    sig { params(owner_repo: String, number: Integer, comment: T.nilable(String)).void }
     def close_issue(owner_repo, number, comment: nil)
       post_issue_comment(owner_repo, number, comment) if comment
       api("repos/#{owner_repo}/issues/#{number}", method: "PATCH", payload: { state: "closed" })
     end
 
     # @return [Hash] the created comment (with "id", "html_url")
+    sig { params(owner_repo: String, number: Integer, body: String).returns(T::Hash[String, T.untyped]) }
     def post_issue_comment(owner_repo, number, body)
       api("repos/#{owner_repo}/issues/#{number}/comments", method: "POST", payload: { body: body })
     end
@@ -82,22 +119,32 @@ module AiFlow
     # fallback) if a source comment ever falls past the cap.
     #
     # @return [Array<Hash>] comments with "id", "body", "html_url", "user"
+    sig { params(owner_repo: String, number: Integer).returns(T::Array[T::Hash[String, T.untyped]]) }
     def issue_comments(owner_repo, number)
       api("repos/#{owner_repo}/issues/#{number}/comments?per_page=100") || []
     end
 
     # Edit an issue/PR-conversation comment in place (the noise-minimization
     # protocol: results append into the command comment, no reply comments).
+    #
+    # @return [void]
+    sig { params(owner_repo: String, comment_id: Integer, body: String).void }
     def update_issue_comment(owner_repo, comment_id, body:)
       api("repos/#{owner_repo}/issues/comments/#{comment_id}", method: "PATCH", payload: { body: body })
     end
 
     # Same, for line-anchored PR review comments (different REST namespace).
+    #
+    # @return [void]
+    sig { params(owner_repo: String, comment_id: Integer, body: String).void }
     def update_review_comment(owner_repo, comment_id, body:)
       api("repos/#{owner_repo}/pulls/comments/#{comment_id}", method: "PATCH", payload: { body: body })
     end
 
     # Reply in a PR review comment thread.
+    #
+    # @return [void]
+    sig { params(owner_repo: String, pull_number: Integer, comment_id: Integer, body: String).void }
     def reply_to_review_comment(owner_repo, pull_number, comment_id, body)
       api(
         "repos/#{owner_repo}/pulls/#{pull_number}/comments/#{comment_id}/replies",
@@ -130,6 +177,7 @@ module AiFlow
     #
     # @return [Array<Hash>] threads with "path", "diff_hunk",
     #   "first_comment_id", and "comments" ("author"/"body"/"url")
+    sig { params(owner_repo: String, number: Integer).returns(T::Array[T::Hash[String, T.untyped]]) }
     def unresolved_review_threads(owner_repo, number)
       owner, name = owner_repo.split("/", 2)
       data = graphql(UNRESOLVED_THREADS_QUERY, owner: owner, name: name, number: number)
@@ -155,6 +203,7 @@ module AiFlow
     # relationship.
     #
     # @return [Issue, nil] nil when the issue has no parent
+    sig { params(owner_repo: String, number: Integer).returns(T.nilable(Issue)) }
     def parent_issue(owner_repo, number)
       owner, name = owner_repo.split("/", 2)
       data = graphql(PARENT_ISSUE_QUERY, owner: owner, name: name, number: number)
@@ -173,6 +222,11 @@ module AiFlow
 
     # Acknowledge a command with a reaction (👀 while running) — never a
     # status comment.
+    #
+    # @return [void]
+    sig do
+      params(owner_repo: String, comment_id: Integer, reaction: String, review_comment: T::Boolean).void
+    end
     def react_to_comment(owner_repo, comment_id, reaction, review_comment: false)
       namespace = review_comment ? "pulls" : "issues"
       api(
@@ -182,6 +236,7 @@ module AiFlow
     end
 
     # @return [Array<Issue>] the issue's native sub-issues
+    sig { params(owner_repo: String, number: Integer).returns(T::Array[Issue]) }
     def sub_issues(owner_repo, number)
       list = api("repos/#{owner_repo}/issues/#{number}/sub_issues") || []
       list.map { |data| to_issue(data) }
@@ -189,6 +244,9 @@ module AiFlow
 
     # Attach an existing issue as a sub-issue of the parent (native sub-issue
     # API; the sub-issue may live in another repo of the same owner).
+    #
+    # @return [void]
+    sig { params(owner_repo: String, parent_number: Integer, sub_issue_id: Integer).void }
     def add_sub_issue(owner_repo, parent_number, sub_issue_id)
       api(
         "repos/#{owner_repo}/issues/#{parent_number}/sub_issues",
@@ -199,6 +257,10 @@ module AiFlow
     # @param draft [Boolean] open as a draft (learning PRs are drafts — the
     #   human merge is the curation gate, never an auto-merge)
     # @return [Hash] the created PR (with "html_url", "number")
+    sig do
+      params(owner_repo: String, title: String, body: String, head: String, base: String, draft: T::Boolean)
+        .returns(T::Hash[String, T.untyped])
+    end
     def create_pull_request(owner_repo, title:, body:, head:, base:, draft: false)
       api(
         "repos/#{owner_repo}/pulls",
@@ -212,6 +274,7 @@ module AiFlow
     # filter is `owner:branch`; owner is the repo's owner.
     #
     # @return [Hash, nil] the PR (with "number", "html_url"), nil when none
+    sig { params(owner_repo: String, branch: String).returns(T.nilable(T::Hash[String, T.untyped])) }
     def open_pull_request_for_head(owner_repo, branch)
       owner = owner_repo.split("/", 2).first
       list = api("repos/#{owner_repo}/pulls?state=open&head=#{owner}:#{branch}") || []
@@ -222,11 +285,15 @@ module AiFlow
     # draft learning PR.
     #
     # @return [void]
+    sig { params(owner_repo: String, number: Integer).void }
     def close_pull_request(owner_repo, number)
       api("repos/#{owner_repo}/pulls/#{number}", method: "PATCH", payload: { state: "closed" })
     end
 
     # Assign users to an issue or PR (PRs share the issues namespace).
+    #
+    # @return [void]
+    sig { params(owner_repo: String, number: Integer, logins: T::Array[String]).void }
     def add_assignees(owner_repo, number, logins)
       api(
         "repos/#{owner_repo}/issues/#{number}/assignees",
@@ -235,12 +302,14 @@ module AiFlow
     end
 
     # @return [String] the repo's default branch
+    sig { params(owner_repo: String).returns(String) }
     def default_branch(owner_repo)
       api("repos/#{owner_repo}").fetch("default_branch")
     end
 
     # @return [String] the user's effective permission on the repo:
     #   "admin", "write", "read", or "none"
+    sig { params(owner_repo: String, login: String).returns(String) }
     def collaborator_permission(owner_repo, login)
       api("repos/#{owner_repo}/collaborators/#{login}/permission").fetch("permission")
     end
@@ -251,8 +320,8 @@ module AiFlow
     # run.
     #
     # @return [Array<String>] "owner/repo" names
+    sig { params(owner: String).returns(T::Array[String]) }
     def owner_repos(owner)
-      @owner_repos ||= {}
       @owner_repos[owner] ||= begin
         list = begin
           api("orgs/#{owner}/repos?per_page=100")
@@ -269,6 +338,7 @@ module AiFlow
     # repo: conservative, never over-permissive.
     #
     # @return [Array<String>] "owner/repo" names
+    sig { returns(T::Array[String]) }
     def app_installed_repos
       @app_installed_repos ||= (api("installation/repositories?per_page=100") || {})
                                .fetch("repositories", [])
@@ -281,6 +351,7 @@ module AiFlow
     # /split's discovery pool for existing-issue matching.
     #
     # @return [Array<Issue>]
+    sig { params(owner_repo: String, limit: Integer).returns(T::Array[Issue]) }
     def open_issues(owner_repo, limit: 50)
       list = api("repos/#{owner_repo}/issues?state=open&per_page=#{limit}") || []
       list.reject { |data| data.key?("pull_request") }.map { |data| to_issue(data) }
@@ -288,6 +359,9 @@ module AiFlow
 
     private
 
+    # @param thread [Hash] a GraphQL reviewThreads node
+    # @return [Hash] the REST-shaped thread the commands consume
+    sig { params(thread: T::Hash[String, T.untyped]).returns(T::Hash[String, T.untyped]) }
     def to_review_thread(thread)
       comments = thread.dig("comments", "nodes") || []
       {
@@ -300,6 +374,9 @@ module AiFlow
       }
     end
 
+    # @param data [Hash] a REST issue object
+    # @return [Issue]
+    sig { params(data: T::Hash[String, T.untyped]).returns(Issue) }
     def to_issue(data)
       Issue.new(
         number: data.fetch("number"),

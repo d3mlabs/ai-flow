@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -170,7 +171,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
 
   test "the mint JWT authenticates as the App and is verifiable with its key" do
     Given "an API that captures the Authorization header"
-    captured = nil
+    captured = T.let(nil, T.nilable(String))
     http = lambda do |_method, url, headers|
       captured ||= headers.fetch("Authorization")
       if url.end_with?("/orgs/d3mlabs/installation")
@@ -183,7 +184,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
 
     When "minting"
     provider.token
-    header_b64, payload_b64, signature_b64 = captured.sub("Bearer ", "").split(".")
+    header_b64, payload_b64, signature_b64 = T.must(captured).sub("Bearer ", "").split(".")
     payload = JSON.parse(pad_base64url(payload_b64).tr("-_", "+/").unpack1("m0"))
     signing_input = "#{header_b64}.#{payload_b64}"
     signature = pad_base64url(signature_b64).tr("-_", "+/").unpack1("m0")

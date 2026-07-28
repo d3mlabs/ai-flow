@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "erb"
@@ -14,13 +14,17 @@ module AiFlow
   # structural separators: bold labels were rejected because diff content
   # contains bold prose and the structure dissolved into it.
   class RichDiff
-    # @!attribute backlink
-    #   @return [String, nil] markdown link to the edited section
-    # @!attribute collapsed
-    #   @return [String] the two <details> blocks, closed by default
-    Result = Struct.new(:backlink, :collapsed, keyword_init: true)
+    extend T::Sig
+
+    # backlink: markdown link to the edited section (nil without a URL or
+    # anchor); collapsed: the two <details> blocks, closed by default.
+    class Result < T::Struct
+      const :backlink, T.nilable(String)
+      const :collapsed, String
+    end
 
     # @param executor [AiFlow::Executor] used for git's word/unified diffs
+    sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
       @executor = executor
     end
@@ -29,6 +33,7 @@ module AiFlow
     # @param after [String] the section after the edit
     # @param backlink_url [String, nil] issue/PR URL for the text-fragment link
     # @return [Result]
+    sig { params(before: String, after: String, backlink_url: T.nilable(String)).returns(Result) }
     def render(before:, after:, backlink_url: nil)
       word_diff = [ins_del_prose(before, after)]
       mermaid = changed_mermaid_blocks(before, after)
@@ -48,6 +53,7 @@ module AiFlow
     # @param summary [String]
     # @param content [String]
     # @return [String]
+    sig { params(summary: String, content: String).returns(String) }
     def details(summary, content)
       "<details>\n<summary>#{summary}</summary>\n\n#{content}\n\n</details>"
     end
@@ -61,6 +67,7 @@ module AiFlow
     # distant excerpts as contiguous prose.
     #
     # @return [String]
+    sig { params(before: String, after: String).returns(String) }
     def ins_del_prose(before, after)
       word_diff = git_diff(before, after, ["--word-diff=plain"])
       kept = []
@@ -92,13 +99,17 @@ module AiFlow
     # re-render live in the comment, giving the visual diagram diff.
     #
     # @return [Array<String>] full ```mermaid fenced blocks
+    sig { params(before: String, after: String).returns(T::Array[String]) }
     def changed_mermaid_blocks(before, after)
       extract_mermaid(after) - extract_mermaid(before)
     end
 
     # @return [Array<String>]
+    sig { params(text: String).returns(T::Array[String]) }
     def extract_mermaid(text)
-      text.scan(/^```mermaid\n.*?^```$/m)
+      # T.cast: scan with a group-free pattern always yields strings, but
+      # the stdlib RBI types it for the grouped case too.
+      T.cast(text.scan(/^```mermaid\n.*?^```$/m), T::Array[String])
     end
 
     # The exact unified diff in a colored ```diff fence. Formatter rule from
@@ -107,6 +118,7 @@ module AiFlow
     # comment spills out.
     #
     # @return [String]
+    sig { params(before: String, after: String).returns(String) }
     def source_diff_fence(before, after)
       diff_body = git_diff(before, after, ["--unified=3"])
         .split("\n")
@@ -123,6 +135,7 @@ module AiFlow
     # where the document's first line is usually untouched.
     #
     # @return [String, nil]
+    sig { params(before: String, after: String, url: T.nilable(String)).returns(T.nilable(String)) }
     def backlink(before, after, url)
       return nil unless url
 
@@ -140,6 +153,7 @@ module AiFlow
     # those markers.
     #
     # @return [String, nil]
+    sig { params(before: String, after: String).returns(T.nilable(String)) }
     def anchor_text(before, after)
       lines = after.split("\n").map(&:strip).reject(&:empty?)
       changed = lines.reject { |line| before.include?(line) }
@@ -156,20 +170,23 @@ module AiFlow
     # Diff two strings via git --no-index (exit 1 = differences, not failure).
     #
     # @return [String] raw git diff output
+    sig { params(before: String, after: String, flags: T::Array[String]).returns(String) }
     def git_diff(before, after, flags)
       Dir.mktmpdir("ai-flow-diff-") do |dir|
         before_path = File.join(dir, "before")
         after_path = File.join(dir, "after")
         File.write(before_path, ensure_trailing_newline(before))
         File.write(after_path, ensure_trailing_newline(after))
-        out, _err, _ok = @executor.capture(
-          "git", "diff", "--no-index", *flags, before_path, after_path
-        )
+        argv = ["git", "diff", "--no-index", *flags, before_path, after_path]
+        # T.unsafe: splatting a runtime-built argv into capture's rest param
+        # is beyond Sorbet's static splat support (srb.help/7019).
+        out, _err, _ok = T.unsafe(@executor).capture(*argv)
         out
       end
     end
 
     # @return [String]
+    sig { params(text: String).returns(String) }
     def ensure_trailing_newline(text)
       text.end_with?("\n") ? text : "#{text}\n"
     end

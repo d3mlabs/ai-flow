@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -40,6 +40,8 @@ module AiFlow
     # the corpus); the branch, commit, and draft-PR mechanics are the
     # script's — deterministic, like /build.
     class Learn
+      extend T::Sig
+
       SCAN_FLAG = "--scan"
       PROMOTE_FLAG = "--promote"
 
@@ -50,20 +52,26 @@ module AiFlow
       # the org knowledge repo's root layout (index.md + skills/). The panel
       # names what changed by reading the staged file list, never by trusting
       # agent prose.
-      LEARNING_PATHS = [
-        %r{\A\.cursor/skills/(?:learnings|architecture)/([^/]+)/},
-        %r{\A\.cursor/rules/learnings-index\.mdc\z},
-        %r{\Askills/([^/]+)/},
-        %r{\Aindex\.md\z},
-      ].freeze
+      LEARNING_PATHS = T.let(
+        [
+          %r{\A\.cursor/skills/(?:learnings|architecture)/([^/]+)/},
+          %r{\A\.cursor/rules/learnings-index\.mdc\z},
+          %r{\Askills/([^/]+)/},
+          %r{\Aindex\.md\z},
+        ].freeze,
+        T::Array[Regexp],
+      )
 
       # Pathspecs the /build capture extraction sweeps out of the code
       # commit (repo layout only — build capture lands in the built repo).
-      CAPTURE_PATHSPECS = [
-        INDEX_PATH,
-        SKILLS_DIR,
-        ".cursor/skills/architecture",
-      ].freeze
+      CAPTURE_PATHSPECS = T.let(
+        [
+          INDEX_PATH,
+          SKILLS_DIR,
+          ".cursor/skills/architecture",
+        ].freeze,
+        T::Array[String],
+      )
 
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
@@ -75,6 +83,18 @@ module AiFlow
       # @param org_invariants [AiFlow::OrgInvariants] injected into the prompt
       #   — the learning worktree is fresh, so the rendered org-invariants.mdc
       #   is never present (same reasoning as /build, plans#13)
+      sig do
+        params(
+          context: Context,
+          github: GitHub,
+          agent: Agent,
+          result_writer: ResultWriter,
+          executor: Executor,
+          workdir: String,
+          prefix: String,
+          org_invariants: OrgInvariants,
+        ).void
+      end
       def initialize(context:, github:, agent:, result_writer:, executor:, workdir:, prefix: "",
         org_invariants: OrgInvariants.new)
         @context = context
@@ -85,10 +105,15 @@ module AiFlow
         @workdir = workdir
         @prefix = prefix
         @org_invariants = org_invariants
+        # Build-capture state, seeded/extracted/consumed per build pass.
+        @capture_source = T.let(nil, T.nilable(T::Hash[Symbol, T.untyped]))
+        @capture_existing = T.let(nil, T.nilable(T::Hash[String, T.untyped]))
+        @capture_patch = T.let(nil, T.nilable(String))
       end
 
       # @param segment [CommentParser::Segment]
       # @return [void]
+      sig { params(segment: CommentParser::Segment).void }
       def run(segment)
         return scan(segment) if segment.flags.include?(SCAN_FLAG)
         return promote(segment) if segment.flags.include?(PROMOTE_FLAG)
@@ -105,6 +130,7 @@ module AiFlow
       # surface's own learning branch as a separate draft PR.
 
       # @return [String] the rubric section /build appends to its prompts
+      sig { returns(String) }
       def capture_prompt_section
         <<~SECTION.strip
           LEARNING CAPTURE (side quest — the code work above stays the priority):
@@ -123,6 +149,7 @@ module AiFlow
       #   sub-builds never force-push over each other's drafts), :ref
       #   ("owner/repo#n" for the marker), :url (the PR-body link)
       # @return [void]
+      sig { params(dir: String, source: T::Hash[Symbol, T.untyped]).void }
       def seed_capture(dir, source)
         @capture_source = source
         @capture_existing = @github.open_pull_request_for_head(@context.owner_repo, source.fetch(:branch))
@@ -137,7 +164,9 @@ module AiFlow
           return
         end
 
-        @executor.capture(
+        # T.unsafe: splatting the pathspec constant into capture's rest param
+        # is beyond Sorbet's static splat support (srb.help/7019).
+        T.unsafe(@executor).capture(
           "git", "checkout", "origin/#{source.fetch(:branch)}", "--", *CAPTURE_PATHSPECS, chdir: dir,
         )
       end
@@ -147,9 +176,12 @@ module AiFlow
       #
       # @param dir [String] the build worktree, right after `git add -A`
       # @return [void]
+      sig { params(dir: String).void }
       def extract_capture(dir)
         @capture_patch = nil
-        patch, = @executor.capture(
+        # T.unsafe: splatting the pathspec constant into capture's rest param
+        # is beyond Sorbet's static splat support (srb.help/7019).
+        patch, = T.unsafe(@executor).capture(
           "git", "diff", "--cached", "--binary", "--", *CAPTURE_PATHSPECS, chdir: dir,
         )
         return if patch.strip.empty?
@@ -158,8 +190,8 @@ module AiFlow
         run!(["git", "reset", "-q", "HEAD", "--", *CAPTURE_PATHSPECS], chdir: dir)
         # Working-tree restore is hygiene and best-effort: checkout errors
         # when the agent only *added* learning files, which clean covers.
-        @executor.capture("git", "checkout", "-q", "--", *CAPTURE_PATHSPECS, chdir: dir)
-        @executor.capture("git", "clean", "-fdq", "--", *CAPTURE_PATHSPECS, chdir: dir)
+        T.unsafe(@executor).capture("git", "checkout", "-q", "--", *CAPTURE_PATHSPECS, chdir: dir)
+        T.unsafe(@executor).capture("git", "clean", "-fdq", "--", *CAPTURE_PATHSPECS, chdir: dir)
       end
 
       # Land the extracted diff as the surface's draft learning PR — create,
@@ -168,6 +200,7 @@ module AiFlow
       # pass). Best-effort by contract: capture never fails the code build.
       #
       # @return [String, nil] a panel note, nil when there was nothing to land
+      sig { returns(T.nilable(String)) }
       def land_capture
         # Consume the extraction state: a Build instance is reused across
         # --split sub-builds, and one build's capture must not haunt the next.
@@ -178,7 +211,9 @@ module AiFlow
         @capture_existing = nil
         @capture_source = nil
         return close_dissolved_draft(existing) if patch.nil? && existing
-        return nil if patch.nil?
+        # A patch only exists after seed_capture set the source; the nil
+        # check doubles as the narrowing Sorbet needs.
+        return nil if patch.nil? || source.nil?
 
         note = land_patch(patch, existing, source)
         $stdout.puts note if note
@@ -193,6 +228,9 @@ module AiFlow
 
       # ---- Dictated + bare sweep ----
 
+      # @param segment [CommentParser::Segment]
+      # @return [void]
+      sig { params(segment: CommentParser::Segment).void }
       def capture(segment)
         source = source_descriptor(segment)
         draft(segment, source, learn_prompt(segment, source))
@@ -202,6 +240,7 @@ module AiFlow
       # the marker records the source surface and form in the PR body).
       #
       # @return [Hash] :branch, :marker, :title, :dictated
+      sig { params(segment: CommentParser::Segment).returns(T::Hash[Symbol, T.untyped]) }
       def source_descriptor(segment)
         repo_ref = "#{@context.owner_repo}##{@context.number}"
         if dictated?(segment)
@@ -219,17 +258,22 @@ module AiFlow
       # vice versa (the linked-update rule keys on the branch).
       #
       # @return [String]
+      sig { returns(String) }
       def surface_branch
         @context.pull_request? ? "ai/learn-pr-#{@context.number}" : "ai/learn-issue-#{@context.number}"
       end
 
       # @return [Boolean] a statement was dictated (vs a bare surface sweep)
+      sig { params(segment: CommentParser::Segment).returns(T::Boolean) }
       def dictated?(segment)
         !segment.instruction.empty?
       end
 
       # ---- --scan (survey) ----
 
+      # @param segment [CommentParser::Segment]
+      # @return [void]
+      sig { params(segment: CommentParser::Segment).void }
       def scan(segment)
         source = {
           branch: "ai/learn-scan",
@@ -240,6 +284,8 @@ module AiFlow
         draft(segment, source, scan_prompt(segment))
       end
 
+      # @return [String] the survey pass's prompt
+      sig { params(segment: CommentParser::Segment).returns(String) }
       def scan_prompt(segment)
         <<~PROMPT
           You are ai-flow, surveying this repository checkout to capture durable learnings.
@@ -264,6 +310,7 @@ module AiFlow
       end
 
       # @return [String]
+      sig { params(segment: CommentParser::Segment).returns(String) }
       def scan_steering(segment)
         quote = segment.quote ? "Quoted context:\n#{segment.quote}\n\n" : ""
         steering = "#{quote}#{segment.instruction}".strip
@@ -272,6 +319,9 @@ module AiFlow
 
       # ---- --promote (org-tier curation) ----
 
+      # @param segment [CommentParser::Segment]
+      # @return [void]
+      sig { params(segment: CommentParser::Segment).void }
       def promote(segment)
         knowledge_repo = RepoConfig.load(@workdir).knowledge_repo
         unless knowledge_repo
@@ -295,6 +345,7 @@ module AiFlow
       # are unprefixed and unique per repo.
       #
       # @return [String, nil]
+      sig { params(segment: CommentParser::Segment).returns(T.nilable(String)) }
       def promoted_slug(segment)
         token = segment.instruction.split.first.to_s.split("/").last.to_s
         token.empty? ? nil : token
@@ -302,6 +353,7 @@ module AiFlow
 
       # @return [String] the refusal panel, listing near matches so a typo'd
       #   slug is a one-edit fix
+      sig { params(slug: String).returns(String) }
       def unknown_slug_message(slug)
         known = local_learning_slugs
         near = known.select { |name| name.include?(slug) || slug.include?(name) }
@@ -316,6 +368,7 @@ module AiFlow
       end
 
       # @return [Array<String>]
+      sig { returns(T::Array[String]) }
       def local_learning_slugs
         dir = File.join(@workdir, SKILLS_DIR)
         File.directory?(dir) ? Dir.children(dir).sort : []
@@ -326,6 +379,10 @@ module AiFlow
       # cross-repo path), adapting the learning to org-general wording.
       #
       # @return [Hash] :pr, :refined
+      sig do
+        params(slug: String, knowledge_repo: String, skill_text: String)
+          .returns(T::Hash[Symbol, T.untyped])
+      end
       def promote_into_org(slug, knowledge_repo, skill_text)
         branch = "ai/learn-promote-#{@context.owner_repo.split("/").last}-#{slug}"
         existing = @github.open_pull_request_for_head(knowledge_repo, branch)
@@ -343,6 +400,8 @@ module AiFlow
         end
       end
 
+      # @return [String] the promotion pass's prompt
+      sig { params(slug: String, knowledge_repo: String, skill_text: String).returns(String) }
       def promote_prompt(slug, knowledge_repo, skill_text)
         <<~PROMPT
           You are ai-flow, promoting a repo-local learning to the org knowledge tier in this checkout of #{knowledge_repo} (layout: `index.md` at the root, detail skills at `skills/<slug>/SKILL.md`).
@@ -362,6 +421,7 @@ module AiFlow
       end
 
       # @return [String, nil] the learning's line in this repo's index
+      sig { params(slug: String).returns(T.nilable(String)) }
       def index_line_for(slug)
         path = File.join(@workdir, INDEX_PATH)
         return nil unless File.exist?(path)
@@ -371,6 +431,10 @@ module AiFlow
 
       # @return [Hash] the created proposal PR (ordinary, not GitHub draft
       #   state — see open_learning_pr)
+      sig do
+        params(slug: String, knowledge_repo: String, branch: String)
+          .returns(T::Hash[String, T.untyped])
+      end
       def open_promotion_pr(slug, knowledge_repo, branch)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -390,6 +454,10 @@ module AiFlow
       # removal must not lose the org PR from the panel.
       #
       # @return [Hash] :pr on success, :error on failure
+      sig do
+        params(slug: String, org_pr: T::Hash[String, T.untyped])
+          .returns(T::Hash[Symbol, T.untyped])
+      end
       def drop_local_entry(slug, org_pr)
         branch = "ai/learn-promote-#{slug}"
         existing = @github.open_pull_request_for_head(@context.owner_repo, branch)
@@ -407,6 +475,10 @@ module AiFlow
         { error: e.message }
       end
 
+      # @param worktree [String]
+      # @param slug [String]
+      # @return [void]
+      sig { params(worktree: String, slug: String).void }
       def drop_index_line(worktree, slug)
         path = File.join(worktree, INDEX_PATH)
         return unless File.exist?(path)
@@ -417,6 +489,10 @@ module AiFlow
 
       # @return [Hash] the created proposal PR (ordinary, not GitHub draft
       #   state — see open_learning_pr)
+      sig do
+        params(slug: String, branch: String, org_pr: T::Hash[String, T.untyped])
+          .returns(T::Hash[String, T.untyped])
+      end
       def open_removal_pr(slug, branch, org_pr)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -432,6 +508,14 @@ module AiFlow
       end
 
       # @return [String]
+      sig do
+        params(
+          slug: String,
+          knowledge_repo: String,
+          org: T::Hash[Symbol, T.untyped],
+          removal: T::Hash[Symbol, T.untyped],
+        ).returns(String)
+      end
       def promote_result(slug, knowledge_repo, org, removal)
         verb = org[:refined] ? "refined the open org draft" : "opened an org draft"
         lines = ["✅ **/learn --promote** — `#{slug}` → #{knowledge_repo}: #{verb} #{org.fetch(:pr).fetch("html_url")}"]
@@ -447,6 +531,14 @@ module AiFlow
 
       # ---- The shared draft pipeline (dictated, sweep, scan) ----
 
+      # @return [void]
+      sig do
+        params(
+          segment: CommentParser::Segment,
+          source: T::Hash[Symbol, T.untyped],
+          prompt: String,
+        ).void
+      end
       def draft(segment, source, prompt)
         existing = @github.open_pull_request_for_head(@context.owner_repo, source[:branch])
 
@@ -466,6 +558,11 @@ module AiFlow
         @result_writer.write(@context, [[segment, learn_result(outcome)]])
       end
 
+      # @return [String] the capture pass's prompt
+      sig do
+        params(segment: CommentParser::Segment, source: T::Hash[Symbol, T.untyped])
+          .returns(String)
+      end
       def learn_prompt(segment, source)
         <<~PROMPT
           You are ai-flow, capturing a durable learning in this repository checkout.
@@ -484,6 +581,7 @@ module AiFlow
       end
 
       # @return [String]
+      sig { returns(String) }
       def learning_definition
         "A learning is one lesson materialized two ways: an index line in `#{INDEX_PATH}` (always-on " \
           "awareness) and a detail skill at `#{SKILLS_DIR}/<slug>/SKILL.md` (loaded on demand). This is " \
@@ -494,6 +592,7 @@ module AiFlow
       # shares (including /build's build-time capture).
       #
       # @return [String]
+      sig { returns(String) }
       def shared_rubric
         <<~RUBRIC.strip
           DISTILLATION RUBRIC — only lessons that generalize beyond the immediate diff or discussion become learnings. Three kinds, one format: coding practices (style/API corrections that recur), architecture knowledge (constraints and shapes of the system — "X must never call Y directly", "this subsystem owns that lifecycle"), and process rules. Diff-local fixes (typos, renames, one-off bugs) are NOT learnings.
@@ -510,6 +609,7 @@ module AiFlow
       end
 
       # @return [String]
+      sig { returns(String) }
       def agent_rules
         <<~RULES.strip
           Rules:
@@ -521,6 +621,10 @@ module AiFlow
       # The evidence the pass distills, per form.
       #
       # @return [String]
+      sig do
+        params(segment: CommentParser::Segment, source: T::Hash[Symbol, T.untyped])
+          .returns(String)
+      end
       def evidence_section(segment, source)
         return "DICTATED LESSON (the human already distilled it — format, dedup, and place it):\n#{dictated_evidence(segment)}\n" if source[:dictated]
 
@@ -531,6 +635,7 @@ module AiFlow
       end
 
       # @return [String]
+      sig { params(segment: CommentParser::Segment).returns(String) }
       def dictated_evidence(segment)
         quote = segment.quote ? "Quoted context:\n#{segment.quote}\n\n" : ""
         "#{quote}#{segment.instruction}"
@@ -541,6 +646,7 @@ module AiFlow
       # carries the code they're about.
       #
       # @return [String]
+      sig { returns(String) }
       def surface_evidence
         subject = @github.issue(@context.owner_repo, @context.number)
         blocks = ["#{@context.pull_request? ? "PR" : "ISSUE"} #{@context.owner_repo}##{@context.number}: #{subject.title}",
@@ -551,6 +657,7 @@ module AiFlow
       end
 
       # @return [Array<String>]
+      sig { returns(T::Array[String]) }
       def thread_blocks
         @github.unresolved_review_threads(@context.owner_repo, @context.number).map do |thread|
           conversation = thread["comments"].map { |comment| "@#{comment["author"]}: #{comment["body"]}" }.join("\n")
@@ -559,6 +666,7 @@ module AiFlow
       end
 
       # @return [Array<String>]
+      sig { returns(T::Array[String]) }
       def comment_blocks
         @github.issue_comments(@context.owner_repo, @context.number)
                .reject { |comment| comment["id"] == @context.comment_id }
@@ -568,6 +676,7 @@ module AiFlow
 
       # @return [String] org invariants block with trailing blank line, empty
       #   on unconfigured machines
+      sig { returns(String) }
       def org_invariants_section
         block = @org_invariants.prompt_block
         block ? "#{block}\n\n" : ""
@@ -582,6 +691,7 @@ module AiFlow
       #
       # @return [Array<String>] changed learning slugs (skill folders +
       #   "index" for the index edit), empty when nothing was written
+      sig { params(dir: String, message: String).returns(T::Array[String]) }
       def commit_learnings(dir, message: "ai-flow /learn: capture learnings")
         run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: dir)
         staged, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: dir)
@@ -599,8 +709,9 @@ module AiFlow
       # @param staged [String] git diff --cached --name-only output
       # @return [Array<String>] deduped slugs, "index" standing in for the
       #   index-line edit
+      sig { params(staged: String).returns(T::Array[String]) }
       def learning_slugs(staged)
-        staged.split("\n").each_with_object([]) do |path, slugs|
+        staged.split("\n").each_with_object(T.let([], T::Array[String])) do |path, slugs|
           LEARNING_PATHS.each do |pattern|
             match = pattern.match(path)
             next unless match
@@ -617,6 +728,10 @@ module AiFlow
       # creations is the ready-made valve.
       #
       # @return [Hash] the created proposal PR
+      sig do
+        params(source: T::Hash[Symbol, T.untyped], segment: CommentParser::Segment)
+          .returns(T::Hash[String, T.untyped])
+      end
       def open_learning_pr(source, segment)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -638,6 +753,10 @@ module AiFlow
       # the source.
       #
       # @return [String]
+      sig do
+        params(segment: CommentParser::Segment, source: T::Hash[Symbol, T.untyped])
+          .returns(String)
+      end
       def evidence_quote(segment, source)
         return "" unless source[:dictated]
 
@@ -645,11 +764,13 @@ module AiFlow
       end
 
       # @return [String]
+      sig { returns(String) }
       def source_link
         "#{@context.subject_url} (#{@context.owner_repo}##{@context.number})"
       end
 
       # @return [String]
+      sig { params(outcome: T::Hash[Symbol, T.untyped]).returns(String) }
       def learn_result(outcome)
         return "ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change." if outcome[:slugs].empty?
 
@@ -661,6 +782,7 @@ module AiFlow
       end
 
       # @return [String]
+      sig { params(slugs: T::Array[String]).returns(String) }
       def learning_count(slugs)
         named = named_slugs(slugs)
         count = named.size
@@ -671,6 +793,7 @@ module AiFlow
       # sentinel for the human-facing list.
       #
       # @return [Array<String>]
+      sig { params(slugs: T::Array[String]).returns(T::Array[String]) }
       def named_slugs(slugs)
         slugs.reject { |slug| slug == "index" }
       end
@@ -678,6 +801,13 @@ module AiFlow
       # ---- Build-capture landing (private half) ----
 
       # @return [String, nil]
+      sig do
+        params(
+          patch: String,
+          existing: T.nilable(T::Hash[String, T.untyped]),
+          source: T::Hash[Symbol, T.untyped],
+        ).returns(T.nilable(String))
+      end
       def land_patch(patch, existing, source)
         in_worktree(source.fetch(:branch), refine: false) do |worktree|
           apply_patch(worktree, patch)
@@ -695,6 +825,9 @@ module AiFlow
 
       # The extracted diff was taken against the same origin/<default> base
       # the landing worktree starts from; --3way covers a mid-run base move.
+      #
+      # @return [void]
+      sig { params(worktree: String, patch: String).void }
       def apply_patch(worktree, patch)
         _out, err, ok = @executor.capture(
           "git", "apply", "--index", "--3way", stdin: patch, chdir: worktree,
@@ -704,6 +837,7 @@ module AiFlow
 
       # @return [Hash] the created proposal PR (ordinary, not GitHub draft
       #   state — see open_learning_pr)
+      sig { params(source: T::Hash[Symbol, T.untyped]).returns(T::Hash[String, T.untyped]) }
       def open_capture_pr(source)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -722,6 +856,7 @@ module AiFlow
       # so the draft closes instead of lingering half-refined.
       #
       # @return [String]
+      sig { params(existing: T::Hash[String, T.untyped]).returns(String) }
       def close_dissolved_draft(existing)
         @github.close_pull_request(@context.owner_repo, existing.fetch("number"))
         note = "🧠 closed the draft learning PR #{existing.fetch("html_url")} — this pass dissolved its generalization."
@@ -736,7 +871,18 @@ module AiFlow
       # An isolated worktree per capture (never disturbs the job's checked-out
       # PR branch, safe under concurrency). Refine bases on the existing
       # draft's branch; a fresh capture bases on the default branch.
-      def in_worktree(branch, refine:)
+      #
+      # @yieldparam worktree [String] the worktree's path
+      # @return [Object] the block's value
+      sig do
+        type_parameters(:Result)
+          .params(
+            branch: String,
+            refine: T::Boolean,
+            blk: T.proc.params(worktree: String).returns(T.type_parameter(:Result)),
+          ).returns(T.type_parameter(:Result))
+      end
+      def in_worktree(branch, refine:, &blk)
         default = @github.default_branch(@context.owner_repo)
         base_ref = refine ? branch : default
         Dir.mktmpdir("ai-flow-learn-") do |dir|
@@ -756,7 +902,19 @@ module AiFlow
       # Cross-repo drafts (org promotion) work in a fresh clone via gh — the
       # App installation spans the org, same mechanics as /build's cross-repo
       # path.
-      def in_clone(repo, branch, refine:)
+      #
+      # @yieldparam clone [String] the clone's path
+      # @return [Object] the block's value
+      sig do
+        type_parameters(:Result)
+          .params(
+            repo: String,
+            branch: String,
+            refine: T::Boolean,
+            blk: T.proc.params(clone: String).returns(T.type_parameter(:Result)),
+          ).returns(T.type_parameter(:Result))
+      end
+      def in_clone(repo, branch, refine:, &blk)
         Dir.mktmpdir("ai-flow-learn-") do |dir|
           clone = File.join(dir, "clone")
           run!(["gh", "repo", "clone", repo, clone], chdir: dir)
@@ -766,6 +924,10 @@ module AiFlow
         end
       end
 
+      # @param dir [String]
+      # @param branch [String]
+      # @return [void]
+      sig { params(dir: String, branch: String).void }
       def push_branch(dir, branch)
         _out, err, ok = @executor.capture(
           "git", "push", "-u", "origin", branch, "--force-with-lease", chdir: dir,
@@ -777,6 +939,8 @@ module AiFlow
               "see d3mlabs/ai-flow docs/attribution.md (createCommitOnBranch upgrade path)"
       end
 
+      # @return [void]
+      sig { params(segment: CommentParser::Segment, message: String).void }
       def refuse(segment, message)
         @result_writer.write(@context, [[segment, message]])
       end
@@ -784,8 +948,11 @@ module AiFlow
       # @param argv [Array<String>] command and arguments
       # @param chdir [String] working directory
       # @raise [GitHub::Error] when the command fails
+      sig { params(argv: T::Array[String], chdir: String).void }
       def run!(argv, chdir:)
-        _out, err, ok = @executor.capture(*argv, chdir: chdir)
+        # T.unsafe: splatting a runtime-built argv into capture's rest param
+        # is beyond Sorbet's static splat support (srb.help/7019).
+        _out, err, ok = T.unsafe(@executor).capture(*argv, chdir: chdir)
         raise GitHub::Error, "#{argv.take(2).join(" ")} failed: #{err.strip}" unless ok
       end
     end

@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -26,6 +26,18 @@ module AiFlow
     # `Intended repo:` conventions. /build reconstructs a sub-issue's scope
     # from the parent plan via the native parent relationship.
     class Split
+      extend T::Sig
+
+      # A staged spec entry (SubtasksSection.validate_entry's shape).
+      Entry = T.type_alias { T::Hash[String, T.untyped] }
+      # A resolved issue ref: "repo", "number", "url", "disposition", and
+      # (for created issues) the final "body".
+      IssueRef = T.type_alias { T::Hash[String, T.untyped] }
+      # The reconciliation report: per-disposition lists plus warnings.
+      Report = T.type_alias { T::Hash[Symbol, T::Array[T.untyped]] }
+      # Per-entry-index possible-match suggestion lines.
+      Matches = T.type_alias { T::Hash[Integer, T::Array[String]] }
+
       REPOSITORY_ID_QUERY = <<~GRAPHQL
         query($owner: String!, $name: String!) {
           repository(owner: $owner, name: $name) { id }
@@ -55,16 +67,30 @@ module AiFlow
       # @param agent [AiFlow::Agent]
       # @param result_writer [AiFlow::ResultWriter]
       # @param workdir [String]
+      sig do
+        params(
+          context: Context,
+          github: GitHub,
+          agent: Agent,
+          result_writer: ResultWriter,
+          workdir: String,
+        ).void
+      end
       def initialize(context:, github:, agent:, result_writer:, workdir:)
         @context = context
         @github = github
         @agent = agent
         @result_writer = result_writer
         @workdir = workdir
+        # Memoized GraphQL node-id lookups (see repository_node_id /
+        # parent_node_id) — read once per created sub-issue.
+        @repository_node_ids = T.let({}, T::Hash[String, String])
+        @parent_node_id = T.let(nil, T.nilable(String))
       end
 
       # @param segment [CommentParser::Segment]
       # @return [void]
+      sig { params(segment: CommentParser::Segment).void }
       def run(segment)
         dry = segment.flags.include?("--dry")
         apply_flag = segment.flags.include?("--apply")
@@ -96,6 +122,10 @@ module AiFlow
 
       # @return [Array(Array<Hash>, Hash)] normalized entries and per-index
       #   possible-match suggestion lines
+      sig do
+        params(parent: GitHub::Issue, existing: T::Array[GitHub::Issue], segment: CommentParser::Segment)
+          .returns([T::Array[Entry], Matches])
+      end
       def propose(parent, existing, segment)
         menu = repo_menu(parent)
         pool = discovery_pool(menu, parent, existing)
@@ -107,6 +137,16 @@ module AiFlow
         [entries, possible_matches(entries, pool)]
       end
 
+      # @return [String] the propose pass's prompt
+      sig do
+        params(
+          parent: GitHub::Issue,
+          existing: T::Array[GitHub::Issue],
+          segment: CommentParser::Segment,
+          menu: T::Array[String],
+          pool: T::Array[GitHub::Issue],
+        ).returns(String)
+      end
       def propose_prompt(parent, existing, segment, menu, pool)
         existing_list = existing.map { |issue| "- #{issue.repo}##{issue.number} #{issue.title} (#{issue.state})" }.join("\n")
         <<~PROMPT
@@ -138,6 +178,9 @@ module AiFlow
       # The full menu, never a blindfolded subset: repos without the App are
       # shown with the consequence spelled out, and deterministic Ruby
       # enforces the fallback at apply time.
+      #
+      # @return [String]
+      sig { params(menu: T::Array[String]).returns(String) }
       def menu_descriptions(menu)
         installed = installed_repos
         menu.map do |repo|
@@ -146,6 +189,8 @@ module AiFlow
         end.join("\n")
       end
 
+      # @return [String]
+      sig { params(pool: T::Array[GitHub::Issue]).returns(String) }
       def pool_descriptions(pool)
         return "(none)" if pool.empty?
 
@@ -157,12 +202,14 @@ module AiFlow
       # always present — it is the routing fallback.
       #
       # @return [Array<String>]
+      sig { params(parent: GitHub::Issue).returns(T::Array[String]) }
       def repo_menu(parent)
         targets = (parent.body[/^Target repos?:\s*(.+)$/, 1] || "")
                   .split(",").map(&:strip).reject(&:empty?)
         return targets | [@context.owner_repo] unless targets.empty?
 
-        @github.owner_repos(@context.owner_repo.split("/", 2).first) | [@context.owner_repo]
+        owner = T.must(@context.owner_repo.split("/", 2).first)
+        @github.owner_repos(owner) | [@context.owner_repo]
       end
 
       # Repos sub-issues can actually be created in. The parent's repo is
@@ -171,6 +218,7 @@ module AiFlow
       # unavailable.
       #
       # @return [Array<String>]
+      sig { returns(T::Array[String]) }
       def installed_repos
         @github.app_installed_repos | [@context.owner_repo]
       end
@@ -180,6 +228,10 @@ module AiFlow
       # minting duplicates.
       #
       # @return [Array<GitHub::Issue>]
+      sig do
+        params(menu: T::Array[String], parent: GitHub::Issue, existing: T::Array[GitHub::Issue])
+          .returns(T::Array[GitHub::Issue])
+      end
       def discovery_pool(menu, parent, existing)
         existing_refs = existing.map { |issue| [issue.repo, issue.number] }
         keywords = discovery_keywords(parent)
@@ -193,6 +245,9 @@ module AiFlow
       # The menu shows every owner repo, but the token may not read all of
       # them (App not installed there) — an unreadable pool repo is skipped,
       # not fatal.
+      #
+      # @return [Array<GitHub::Issue>]
+      sig { params(repo: String).returns(T::Array[GitHub::Issue]) }
       def readable_open_issues(repo)
         @github.open_issues(repo)
       rescue GitHub::Error
@@ -203,14 +258,21 @@ module AiFlow
       # would match everything.
       #
       # @return [Array<String>]
+      sig { params(parent: GitHub::Issue).returns(T::Array[String]) }
       def discovery_keywords(parent)
-        headings = parent.body.to_s.scan(/^#+\s+(.+)$/).flatten
-        [parent.title, *headings].join(" ").downcase.scan(/[a-z0-9][a-z0-9-]{3,}/).uniq
+        headings = parent.body.scan(/^#+\s+(.+)$/).flatten
+        # T.cast: a group-free scan always yields strings, but the stdlib RBI
+        # types it for the grouped case too.
+        T.cast(
+          [parent.title, *headings].join(" ").downcase.scan(/[a-z0-9][a-z0-9-]{3,}/),
+          T::Array[String],
+        ).uniq
       end
 
       # @return [Array<Hash>] entries normalized through the section schema
       #   (same shape a hand-edited spec parses to), repo defaulted to the
       #   parent's
+      sig { params(output: String).returns(T::Array[Entry]) }
       def parse_proposal(output)
         json = output[/\[.*\]/m]
         raise Agent::Error, "the agent returned no subtask JSON:\n#{output}" unless json
@@ -226,6 +288,7 @@ module AiFlow
       # human resolves during the body review — annotations, never decisions.
       #
       # @return [Hash{Integer => Array<String>}]
+      sig { params(entries: T::Array[Entry], pool: T::Array[GitHub::Issue]).returns(Matches) }
       def possible_matches(entries, pool)
         entries.each_with_index.with_object({}) do |(entry, index), matches|
           next if entry["existing"]
@@ -238,6 +301,7 @@ module AiFlow
       end
 
       # @return [Boolean] whether two titles overlap enough to flag
+      sig { params(title: String, candidate: String).returns(T::Boolean) }
       def similar_title?(title, candidate)
         title_words = PlanBody.normalize(title).split.uniq
         candidate_words = PlanBody.normalize(candidate).split.uniq
@@ -247,6 +311,8 @@ module AiFlow
 
       # ---- Staging (the --dry write) ----
 
+      # @return [void]
+      sig { params(parent: GitHub::Issue, entries: T::Array[Entry], matches: Matches).void }
       def stage_spec(parent, entries, matches)
         snapshot = PlanBody.from_issue_body(parent.body)
         section = SubtasksSection.render_spec(entries, possible_matches: matches)
@@ -255,6 +321,9 @@ module AiFlow
 
       # One guarded PATCH, same race window as Batch: refetch and refuse when
       # the body moved since the snapshot.
+      #
+      # @return [void]
+      sig { params(snapshot: String, new_body: String).void }
       def guarded_patch(snapshot, new_body)
         current = @github.issue(@context.owner_repo, @context.number)
         if PlanBody.from_issue_body(current.body) != snapshot
@@ -269,6 +338,10 @@ module AiFlow
 
       # @return [Hash] the reconciliation report (per-disposition lists plus
       #   warnings)
+      sig do
+        params(parent: GitHub::Issue, entries: T::Array[Entry], existing: T::Array[GitHub::Issue])
+          .returns(Report)
+      end
       def apply(parent, entries, existing)
         snapshot = PlanBody.from_issue_body(parent.body)
         report = { created: [], adopted: [], referenced: [], kept: [], closed: [], warnings: [] }
@@ -284,6 +357,10 @@ module AiFlow
 
       # @return [Hash] the entry's issue ref: "repo", "number", "url",
       #   "disposition", and (for created issues) the final "body"
+      sig do
+        params(entry: Entry, existing: T::Array[GitHub::Issue], report: Report)
+          .returns(IssueRef)
+      end
       def resolve_entry(entry, existing, report)
         ref =
           if entry["existing"]
@@ -301,6 +378,9 @@ module AiFlow
       # A parentless `existing:` issue is adopted as a native sub-issue; one
       # already owned by another parent (GitHub allows one parent per issue)
       # is referenced in the linked map without adoption.
+      #
+      # @return [Hash] the ref with its disposition
+      sig { params(entry: Entry, existing: T::Array[GitHub::Issue]).returns(IssueRef) }
       def adopt_or_reference(entry, existing)
         repo, number = parse_issue_ref(entry.fetch("existing"))
         ref = { "repo" => repo, "number" => number, "url" => "https://github.com/#{repo}/issues/#{number}" }
@@ -324,13 +404,16 @@ module AiFlow
       # `Part of` line is human-facing decoration — /build trusts the native
       # parent relationship, not prose. Bespoke context belongs on the
       # created sub-issue, added after apply.
+      #
+      # @return [Hash] the created issue's ref
+      sig { params(entry: Entry, report: Report).returns(IssueRef) }
       def create_sub_issue(entry, report)
         target = entry.fetch("repo")
         body = "Part of #{@context.owner_repo}##{@context.number}.\n"
         unless installed_repos.include?(target)
-          report[:warnings] << "#{target} has no ai-flow App installation — created #{entry.fetch("title").inspect} " \
-                               "on #{@context.owner_repo} instead (`Intended repo: #{target}`); " \
-                               "install the App there and re-run /split to move it."
+          report.fetch(:warnings) << "#{target} has no ai-flow App installation — created #{entry.fetch("title").inspect} " \
+                                     "on #{@context.owner_repo} instead (`Intended repo: #{target}`); " \
+                                     "install the App there and re-run /split to move it."
           body = "#{body.rstrip}\n\nIntended repo: #{target}\n"
           target = @context.owner_repo
         end
@@ -351,6 +434,9 @@ module AiFlow
       # autolinks the full form everywhere and shortens it visually for
       # same-repo, so one format, no branching. Only issues created this run
       # are annotated; adopted/kept bodies are not ours to rewrite.
+      #
+      # @return [void]
+      sig { params(entries: T::Array[Entry], refs: T::Hash[Integer, IssueRef]).void }
       def annotate_dependencies(entries, refs)
         entries.each_with_index do |entry, index|
           ref = refs.fetch(index)
@@ -370,6 +456,16 @@ module AiFlow
       # Close-with-comment, never delete: open sub-issues absent from the
       # spec are stale. Repo-aware — a cross-repo sub-issue closes in its own
       # repo.
+      #
+      # @return [void]
+      sig do
+        params(
+          entries: T::Array[Entry],
+          existing: T::Array[GitHub::Issue],
+          refs: T::Hash[Integer, IssueRef],
+          report: Report,
+        ).void
+      end
       def close_stale(entries, existing, refs, report)
         specified = refs.values.map { |ref| [ref.fetch("repo"), ref.fetch("number")] }
         stale = existing.select do |issue|
@@ -381,11 +477,16 @@ module AiFlow
             comment: "Closed by /split reconciliation: no longer part of the parent plan's subtask set.",
           )
         end
-        report[:closed].concat(stale)
+        report.fetch(:closed).concat(stale)
       end
 
       # Canonicity transfer: the spec section becomes the linked map, so the
       # sub-issues are the single source of truth from here on.
+      #
+      # @return [void]
+      sig do
+        params(snapshot: String, entries: T::Array[Entry], refs: T::Hash[Integer, IssueRef]).void
+      end
       def rewrite_section(snapshot, entries, refs)
         lines = entries.each_with_index.map do |entry, index|
           ref = refs.fetch(index)
@@ -398,6 +499,7 @@ module AiFlow
       # ---- Result panels ----
 
       # @return [String]
+      sig { params(report: Report).returns(String) }
       def apply_summary(report)
         counts = %i[created adopted referenced kept closed]
                  .map { |disposition| "#{disposition} #{report.fetch(disposition).size}" }.join(", ")
@@ -413,6 +515,7 @@ module AiFlow
       end
 
       # @return [String]
+      sig { params(entries: T::Array[Entry], matches: Matches).returns(String) }
       def dry_summary(entries, matches)
         lines = ["📋 **/split --dry** — staged #{entries.size} subtasks in the `#{SubtasksSection::HEADER}` section"]
         entries.each { |entry| lines << "- #{entry.fetch("repo")} — #{entry.fetch("title")}" }
@@ -424,14 +527,17 @@ module AiFlow
       end
 
       # @return [Array(String, Integer)]
+      sig { params(ref: String).returns([String, Integer]) }
       def parse_issue_ref(ref)
+        # T.must: an `existing:` ref passed validate_entry's owner/repo#n
+        # shape check, so both parts are present.
         repo, number = ref.split("#", 2)
-        [repo, Integer(number)]
+        [T.must(repo), Integer(T.must(number))]
       end
 
       # @return [String] GraphQL node id, memoized per repo
+      sig { params(owner_repo: String).returns(String) }
       def repository_node_id(owner_repo)
-        @repository_node_ids ||= {}
         @repository_node_ids[owner_repo] ||= begin
           owner, name = owner_repo.split("/", 2)
           @github.graphql(REPOSITORY_ID_QUERY, { owner: owner, name: name }).fetch("repository").fetch("id")
@@ -439,6 +545,7 @@ module AiFlow
       end
 
       # @return [String] the parent issue's GraphQL node id
+      sig { returns(String) }
       def parent_node_id
         @parent_node_id ||= begin
           owner, name = @context.owner_repo.split("/", 2)

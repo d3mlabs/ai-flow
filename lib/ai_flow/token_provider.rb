@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -26,11 +26,13 @@ module AiFlow
   # only ever sees short-lived installation tokens, the same blast radius as
   # the pre-minted design.
   class TokenProvider
+    extend T::Sig
+
     class Error < StandardError; end
 
     # Re-mint when the token is older than this. GitHub caps installation
     # tokens at 60 minutes; 50 leaves headroom for the call the check guards.
-    MAX_AGE_SECONDS = 50 * 60
+    MAX_AGE_SECONDS = T.let(50 * 60, Integer)
 
     # App JWTs may live 10 minutes; mint short and backdate against clock
     # skew, per GitHub's own guidance.
@@ -43,6 +45,7 @@ module AiFlow
     #
     # @param env [Hash-like] injectable for tests; the Actions job env
     # @return [TokenProvider]
+    sig { params(env: T.untyped).returns(TokenProvider) }
     def self.from_env(env: ENV)
       new(
         app_id: env["AI_FLOW_APP_ID"],
@@ -61,20 +64,34 @@ module AiFlow
     # @param http [#call, nil] transport `(method, url, headers) ->
     #   [status, body]`, injectable for tests
     # @param clock [#call] returns the current Time, injectable for tests
+    sig do
+      params(
+        app_id: T.nilable(String),
+        private_key_pem: T.nilable(String),
+        owner: T.nilable(String),
+        static_token: T.nilable(String),
+        api_url: String,
+        http: T.untyped,
+        clock: T.proc.returns(Time),
+      ).void
+    end
     def initialize(app_id:, private_key_pem:, owner:, static_token: nil,
                    api_url: "https://api.github.com", http: nil, clock: -> { Time.now })
-      @app_id = presence(app_id)
-      @private_key = presence(private_key_pem) && OpenSSL::PKey::RSA.new(private_key_pem)
-      @owner = presence(owner)
-      @static_token = presence(static_token)
-      @api_url = api_url.chomp("/")
-      @http = http || method(:default_http)
+      @app_id = T.let(presence(app_id), T.nilable(String))
+      pem = presence(private_key_pem)
+      @private_key = T.let(pem && OpenSSL::PKey::RSA.new(pem), T.nilable(OpenSSL::PKey::RSA))
+      @owner = T.let(presence(owner), T.nilable(String))
+      @static_token = T.let(presence(static_token), T.nilable(String))
+      @api_url = T.let(api_url.chomp("/"), String)
+      @http = T.let(http || method(:default_http), T.untyped)
       @clock = clock
-      @minted_token = nil
-      @minted_at = nil
+      @minted_token = T.let(nil, T.nilable(String))
+      @minted_at = T.let(nil, T.nilable(Time))
+      @installation_id = T.let(nil, T.nilable(Integer))
     end
 
     # @return [Boolean] whether App credentials are present (minting mode)
+    sig { returns(T::Boolean) }
     def app?
       !(@app_id.nil? || @private_key.nil?)
     end
@@ -83,10 +100,12 @@ module AiFlow
     # here, on every call.
     #
     # @return [String, nil] nil when there is no auth at all (ambient mode)
+    sig { returns(T.nilable(String)) }
     def token
       return @static_token unless app?
 
-      refresh! if @minted_token.nil? || @clock.call - @minted_at > MAX_AGE_SECONDS
+      minted_at = @minted_at
+      refresh! if minted_at.nil? || @clock.call - minted_at > MAX_AGE_SECONDS
       @minted_token
     end
 
@@ -95,6 +114,7 @@ module AiFlow
     # App credentials (a static token can't be refreshed).
     #
     # @return [void]
+    sig { void }
     def refresh!
       return unless app?
 
@@ -106,11 +126,13 @@ module AiFlow
 
     # @param value [String, nil]
     # @return [String, nil] the value, nil when blank
+    sig { params(value: T.nilable(String)).returns(T.nilable(String)) }
     def presence(value)
       value.to_s.strip.empty? ? nil : value
     end
 
     # @return [String] a fresh installation token
+    sig { returns(String) }
     def mint
       jwt = app_jwt
       response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt)
@@ -123,6 +145,7 @@ module AiFlow
     #
     # @param jwt [String]
     # @return [Integer]
+    sig { params(jwt: String).returns(Integer) }
     def installation_id(jwt)
       @installation_id ||= begin
         response = begin
@@ -138,18 +161,25 @@ module AiFlow
     # no jwt gem; pack("m0") because base64 left the default gems).
     #
     # @return [String]
+    # @raise [Error] when called without the App private key (mint paths are
+    #   app?-guarded, so this indicates a caller bug)
+    sig { returns(String) }
     def app_jwt
+      private_key = @private_key
+      raise Error, "cannot mint an App JWT without the App private key" if private_key.nil?
+
       now = @clock.call.to_i
       header = base64url(JSON.generate(alg: "RS256", typ: "JWT"))
       payload = base64url(JSON.generate(
                             iat: now - JWT_BACKDATE_SECONDS, exp: now + JWT_TTL_SECONDS, iss: @app_id,
                           ))
       signing_input = "#{header}.#{payload}"
-      "#{signing_input}.#{base64url(@private_key.sign(OpenSSL::Digest.new("SHA256"), signing_input))}"
+      "#{signing_input}.#{base64url(private_key.sign(OpenSSL::Digest.new("SHA256"), signing_input))}"
     end
 
     # @param data [String]
     # @return [String]
+    sig { params(data: String).returns(String) }
     def base64url(data)
       [data].pack("m0").tr("+/", "-_").delete("=")
     end
@@ -158,6 +188,7 @@ module AiFlow
     # @param path [String]
     # @param jwt [String]
     # @return [Hash] the parsed response body
+    sig { params(method: String, path: String, jwt: String).returns(T::Hash[String, T.untyped]) }
     def request(method, path, jwt)
       status, body = @http.call(
         method, "#{@api_url}/#{path}",
@@ -170,9 +201,18 @@ module AiFlow
 
     # In-process transport (never a subprocess: the JWT and the minted token
     # must not appear on any argv).
+    #
+    # @param method [String]
+    # @param url [String]
+    # @param headers [Hash{String => String}]
+    # @return [Array(Integer, String)] status code and response body
+    sig do
+      params(method: String, url: String, headers: T::Hash[String, String])
+        .returns([Integer, String])
+    end
     def default_http(method, url, headers)
       uri = URI.parse(url)
-      response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+      response = Net::HTTP.start(T.must(uri.host), uri.port, use_ssl: uri.scheme == "https") do |http|
         request = (method == "POST" ? Net::HTTP::Post : Net::HTTP::Get).new(uri, headers)
         http.request(request)
       end

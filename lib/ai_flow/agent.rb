@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -14,18 +14,23 @@ module AiFlow
   # working directory, prompt passing, output parsing. Runaway runs are
   # bounded by the workflow job's timeout-minutes, not here.
   class Agent
+    extend T::Sig
+
     class Error < StandardError; end
 
     # Code-level model fallback. Deliberately all-nil: ai-flow code carries
     # no model opinion — per-repo policy lives in .github/ai-flow.yml (see
     # RepoConfig), and nil means the CLI's account default.
-    MODELS = {
-      "ask" => nil,
-      "edit" => nil,
-      "split" => nil,
-      "build" => nil,
-      "learn" => nil,
-    }.freeze
+    MODELS = T.let(
+      {
+        "ask" => nil,
+        "edit" => nil,
+        "split" => nil,
+        "build" => nil,
+        "learn" => nil,
+      }.freeze,
+      T::Hash[String, T.nilable(String)],
+    )
 
     # What each command actually ran on, keyed by command so a batch that
     # launches the same command repeatedly records one entry. Feeds the
@@ -33,6 +38,7 @@ module AiFlow
     #
     # @return [Hash{String => String}] command => model ("cursor default"
     #   when no policy resolved and the CLI's account default applied)
+    sig { returns(T::Hash[String, String]) }
     attr_reader :models_used
 
     # Skill and rule reads observed in the event stream — the loop's own
@@ -40,21 +46,26 @@ module AiFlow
     # retire decisions). Feeds the dispatcher's GITHUB_STEP_SUMMARY list.
     #
     # @return [Array<String>] deduped names, in first-read order
+    sig { returns(T::Array[String]) }
     attr_reader :knowledge_applied
 
     # A read under one of these paths is knowledge consumption, not generic
     # file reading: on-demand skills (installed user-globally by dev) and a
     # project's Cursor rules (learnings-index.mdc, committed conventions).
-    KNOWLEDGE_PATH_PATTERNS = [
-      %r{\.cursor/skills/([^/]+)/},
-      %r{\.cursor/rules/([^/]+)\.mdc\z},
-    ].freeze
+    KNOWLEDGE_PATH_PATTERNS = T.let(
+      [
+        %r{\.cursor/skills/([^/]+)/},
+        %r{\.cursor/rules/([^/]+)\.mdc\z},
+      ].freeze,
+      T::Array[Regexp],
+    )
 
     # @param executor [AiFlow::Executor]
+    sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
       @executor = executor
-      @models_used = {}
-      @knowledge_applied = []
+      @models_used = T.let({}, T::Hash[String, String])
+      @knowledge_applied = T.let([], T::Array[String])
     end
 
     # Run the headless agent to completion and return its final answer text.
@@ -71,6 +82,10 @@ module AiFlow
     #   by /edit-on-PR and /build, which work in disposable worktrees)
     # @return [String] the agent's result text
     # @raise [Error] when the agent fails
+    sig do
+      params(prompt: String, workdir: String, command: String, force: T::Boolean)
+        .returns(String)
+    end
     def launch(prompt:, workdir:, command:, force: false)
       # --trust: headless runs can't answer the workspace-trust prompt, and the
       # workdir is always a CI checkout of a repo we dispatched for.
@@ -85,8 +100,10 @@ module AiFlow
 
       log_group("ai-flow agent prompt (/#{command})", prompt)
       result = T.let(nil, T.nilable(String))
-      assistant_texts = []
-      err, ok = @executor.stream(*argv, stdin: prompt, chdir: workdir) do |line|
+      assistant_texts = T.let([], T::Array[String])
+      # T.unsafe: splatting a runtime-built argv into stream's rest param is
+      # beyond Sorbet's static splat support (srb.help/7019).
+      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir) do |line|
         event = parse_event(line)
         result = event["result"].to_s if event && event["type"] == "result"
         render_event(command, line, event, assistant_texts)
@@ -118,6 +135,7 @@ module AiFlow
     # @param command [String]
     # @param workdir [String]
     # @return [String, nil]
+    sig { params(command: String, workdir: String).returns(T.nilable(String)) }
     def model_for(command, workdir)
       models = RepoConfig.load(workdir).models
       [ENV["AI_FLOW_MODEL"], models[command], models["default"], MODELS[command]]
@@ -129,6 +147,7 @@ module AiFlow
 
     # @param line [String] one NDJSON line from the stream
     # @return [Hash, nil] nil when the line isn't a JSON event (format drift)
+    sig { params(line: String).returns(T.nilable(T::Hash[String, T.untyped])) }
     def parse_event(line)
       parsed = JSON.parse(line)
       parsed.is_a?(Hash) ? parsed : nil
@@ -148,6 +167,14 @@ module AiFlow
     # @param event [Hash, nil] the parsed event
     # @param assistant_texts [Array<String>] accumulator for the result
     #   fallback when the stream ends without a terminal result event
+    sig do
+      params(
+        command: String,
+        line: String,
+        event: T.nilable(T::Hash[String, T.untyped]),
+        assistant_texts: T::Array[String],
+      ).void
+    end
     def render_event(command, line, event, assistant_texts)
       unless event
         $stdout.puts line.chomp unless line.strip.empty?
@@ -181,6 +208,7 @@ module AiFlow
     #
     # @param event [Hash] a tool_call event
     # @return [String, nil] nil for every other tool call
+    sig { params(event: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
     def knowledge_name(event)
       kind, payload = (event["tool_call"] || {}).find { |key, _value| key.end_with?("ToolCall") }
       return nil unless kind == "readToolCall"
@@ -200,6 +228,7 @@ module AiFlow
     #
     # @param event [Hash] a tool_call event
     # @return [String]
+    sig { params(event: T::Hash[String, T.untyped]).returns(String) }
     def tool_summary(event)
       kind, payload = (event["tool_call"] || {}).find { |key, _value| key.end_with?("ToolCall") }
       return "tool call" unless kind
@@ -212,10 +241,15 @@ module AiFlow
 
     # @param text [String]
     # @return [String] at most ~120 chars, ellipsized
+    sig { params(text: String, max: Integer).returns(String) }
     def truncate(text, max = 120)
       text.length > max ? "#{text[0, max - 1]}…" : text
     end
 
+    # @param title [String]
+    # @param content [String]
+    # @return [void]
+    sig { params(title: String, content: String).void }
     def log_group(title, content)
       $stdout.puts "::group::#{title}"
       $stdout.puts content
@@ -223,6 +257,7 @@ module AiFlow
     end
 
     # @return [String]
+    sig { returns(String) }
     def binary
       ENV.fetch("AI_FLOW_AGENT_BIN", "agent")
     end
