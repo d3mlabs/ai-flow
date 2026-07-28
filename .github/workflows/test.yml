@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No ruby-version input: setup-ruby reads .ruby-version, which dev
+      # generates from dependencies.rb — the Gemfile pins that exact patch
+      # version, so a floating "3.3" here would fail bundler's version check.
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.3"
           bundler-cache: true
       - name: Verify gem RBIs are current
         run: bundle exec tapioca gem --verify
