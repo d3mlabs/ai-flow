@@ -368,7 +368,8 @@ module AiFlow
         File.readlines(path).find { |line| line.include?("learnings/#{slug}/") }&.strip
       end
 
-      # @return [Hash] the created draft PR
+      # @return [Hash] the created proposal PR (ordinary, not GitHub draft
+      #   state — see open_learning_pr)
       def open_promotion_pr(slug, knowledge_repo, branch)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -379,7 +380,7 @@ module AiFlow
         @github.create_pull_request(
           knowledge_repo,
           title: "ai-flow /learn: promote #{slug} from #{@context.owner_repo}",
-          body: body, head: branch, base: @github.default_branch(knowledge_repo), draft: true,
+          body: body, head: branch, base: @github.default_branch(knowledge_repo),
         )
       end
 
@@ -413,7 +414,8 @@ module AiFlow
         File.write(path, kept.join)
       end
 
-      # @return [Hash] the created draft PR
+      # @return [Hash] the created proposal PR (ordinary, not GitHub draft
+      #   state — see open_learning_pr)
       def open_removal_pr(slug, branch, org_pr)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -424,7 +426,7 @@ module AiFlow
         @github.create_pull_request(
           @context.owner_repo,
           title: "ai-flow /learn: drop #{slug} (promoted to the org tier)",
-          body: body, head: branch, base: @github.default_branch(@context.owner_repo), draft: true,
+          body: body, head: branch, base: @github.default_branch(@context.owner_repo),
         )
       end
 
@@ -607,7 +609,13 @@ module AiFlow
         end.uniq
       end
 
-      # @return [Hash] the created draft PR
+      # Proposals open as ordinary PRs, not GitHub draft state: they are
+      # ready for the gate's attention, and draft state would mute
+      # CODEOWNERS review requests while reading as not-ready. If
+      # unsolicited proposals ever get noisy, `draft: true` on these
+      # creations is the ready-made valve.
+      #
+      # @return [Hash] the created proposal PR
       def open_learning_pr(source, segment)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -621,7 +629,6 @@ module AiFlow
           body: body,
           head: source[:branch],
           base: @github.default_branch(@context.owner_repo),
-          draft: true,
         )
       end
 
@@ -694,7 +701,8 @@ module AiFlow
         raise GitHub::Error, "applying the learning diff failed: #{err.strip}" unless ok
       end
 
-      # @return [Hash] the created draft PR
+      # @return [Hash] the created proposal PR (ordinary, not GitHub draft
+      #   state — see open_learning_pr)
       def open_capture_pr(source)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -705,7 +713,7 @@ module AiFlow
         @github.create_pull_request(
           @context.owner_repo,
           title: "ai-flow /learn: learnings from #{source.fetch(:ref)}",
-          body: body, head: source.fetch(:branch), base: @github.default_branch(@context.owner_repo), draft: true,
+          body: body, head: source.fetch(:branch), base: @github.default_branch(@context.owner_repo),
         )
       end
 

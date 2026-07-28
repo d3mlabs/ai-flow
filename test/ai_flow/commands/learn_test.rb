@@ -116,12 +116,12 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     When "learning"
     run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods", agent: agent)
 
-    Then "the agent got the dictated statement, and a draft PR opened on ai/learn-c55 with the marker"
+    Then "the agent got the dictated statement, and a proposal PR opened on ai/learn-c55 — ordinary, not GitHub draft state — with the marker"
     agent.launches.first[:command] == "learn"
     agent.prompts.first.include?("DICTATED LESSON")
     agent.prompts.first.include?("prefer a factory over class methods")
     github.calls.include?([:create_pull_request, REPO, "ai/learn-c55", "main"])
-    github.pull_request_drafts.first == true
+    github.pull_request_drafts.first == false
     github.pull_request_bodies.first.include?("learned-from: #{REPO}#7 (dictated)")
     github.pull_request_bodies.first.include?("> prefer a factory over class methods")
     github.comment_edits.fetch(55).include?("✅ **/learn** — drafted")
