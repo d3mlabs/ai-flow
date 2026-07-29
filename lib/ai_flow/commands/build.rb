@@ -123,7 +123,7 @@ module AiFlow
           @learn.seed_capture(worktree, issue_capture_source(issue, issue_repo)) if capture
           @agent.launch(
             prompt: build_prompt(issue, extra_instruction, capture: capture),
-            workdir: worktree, command: "build", force: true,
+            workdir: worktree, command: Command::Build.new, force: true,
           )
           # The agent may have run for close to the token's lifetime; the
           # write phase (commit, push, PR) starts on a fresh mint.
@@ -214,7 +214,7 @@ module AiFlow
         @learn.seed_capture(@workdir, pr_capture_source) if capture
         output = @agent.launch(
           prompt: iteration_prompt(segment, branch, threads, comments, capture: capture),
-          workdir: @workdir, command: "build", force: true,
+          workdir: @workdir, command: Command::Build.new, force: true,
         )
         parsed = AgentOutput.parse(output)
         # The agent may have run for close to the token's lifetime; the

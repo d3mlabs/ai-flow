@@ -137,7 +137,7 @@ class AiFlow::DispatcherTest < Minitest::Test
     github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n\nBody.\n")
     comment = "/ask why?\n\n/edit tighten the plan"
     context = ContextBuilder.issue_comment(body: comment, env: ACTIONS_ENV)
-    models = { "ask" => "cheap-ask-model", "edit" => "strong-edit-model" }
+    models = { AiFlow::Command::Ask.new => "cheap-ask-model", AiFlow::Command::Edit.new => "strong-edit-model" }
     agent = FakeAgent.new(
       ["<<<AI-FLOW:SEGMENT 1>>>\nBecause.\n<<<AI-FLOW:SEGMENT 2>>>\nTightened."],
       models_by_command: models,
@@ -324,7 +324,7 @@ class AiFlow::DispatcherTest < Minitest::Test
 
     Then "the status line predicted the lifecycle command's own model; the pass ran; an ordinary (non-GitHub-draft) proposal PR was created"
     github.comment_edit_history.first.include?("⏳ ai-flow is running")
-    agent.launches.first[:command] == "learn"
+    agent.launches.first[:command] == AiFlow::Command::Learn.new
     github.calls.map(&:first).include?(:create_pull_request)
     github.pull_request_drafts.first == false
 

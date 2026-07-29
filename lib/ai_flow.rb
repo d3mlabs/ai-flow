@@ -6,6 +6,8 @@
 # via `dev install-deps` like every other locked dependency.
 require "sorbet-runtime"
 
+require "ai_flow/value_equality"
+require "ai_flow/command"
 require "ai_flow/token_provider"
 require "ai_flow/executor"
 require "ai_flow/github"

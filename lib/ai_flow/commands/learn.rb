@@ -388,7 +388,7 @@ module AiFlow
         existing = @github.open_pull_request_for_head(knowledge_repo, branch)
         in_clone(knowledge_repo, branch, refine: !existing.nil?) do |clone|
           @agent.launch(
-            prompt: promote_prompt(slug, knowledge_repo, skill_text), workdir: clone, command: "learn", force: true,
+            prompt: promote_prompt(slug, knowledge_repo, skill_text), workdir: clone, command: Command::Learn.new, force: true,
           )
           @executor.refresh_auth!
           slugs = commit_learnings(clone, message: "ai-flow /learn: promote #{slug} to the org tier")
@@ -543,7 +543,7 @@ module AiFlow
         existing = @github.open_pull_request_for_head(@context.owner_repo, source[:branch])
 
         outcome = in_worktree(source[:branch], refine: !existing.nil?) do |worktree|
-          @agent.launch(prompt: prompt, workdir: worktree, command: "learn", force: true)
+          @agent.launch(prompt: prompt, workdir: worktree, command: Command::Learn.new, force: true)
           # The agent may have run close to the token's lifetime; the write
           # phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!

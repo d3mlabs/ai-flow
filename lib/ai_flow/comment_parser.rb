@@ -19,10 +19,41 @@ module AiFlow
   class CommentParser
     extend T::Sig
 
-    COMMANDS = %w[ask edit split build learn].freeze
-    BATCHABLE_COMMANDS = %w[ask edit].freeze
+    # The comment-surface vocabulary — this boundary's own mapping of
+    # command words to Command values. Serialization is context-dependent
+    # (RepoConfig keeps its own table for YAML keys), so the word "ask" is
+    # a parser concern, not a property of Command::Ask.
+    COMMAND_WORDS = T.let(
+      {
+        "ask" => Command::Ask.new,
+        "edit" => Command::Edit.new,
+        "split" => Command::Split.new,
+        "build" => Command::Build.new,
+        "learn" => Command::Learn.new,
+      }.freeze,
+      T::Hash[String, Command],
+    )
+
+    # Batching is a dispatch policy (which commands may share a comment),
+    # not a property of the commands themselves, so the list lives here.
+    BATCHABLE_COMMANDS = T.let(
+      [Command::Ask.new, Command::Edit.new].freeze,
+      T::Array[Command],
+    )
 
     class ParseError < StandardError; end
+
+    # The table inverted, for display sites that speak this boundary's
+    # vocabulary (the "/ask" in log prefixes and error text).
+    WORDS_BY_COMMAND = T.let(COMMAND_WORDS.invert.freeze, T::Hash[Command, String])
+
+    # @param command [AiFlow::Command]
+    # @return [String] the comment word for the command
+    # @raise [KeyError] for a command missing from the table
+    sig { params(command: Command).returns(String) }
+    def self.word_for(command)
+      WORDS_BY_COMMAND.fetch(command)
+    end
 
     # One quote+command pair. `quote` is the anchor text (de-quoted, nil when
     # unscoped); `instruction` is the command line's remainder plus the free
@@ -31,7 +62,7 @@ module AiFlow
     # index of the last line the segment owns — the insertion point for its
     # interleaved result.
     class Segment < T::Struct
-      const :command, String
+      const :command, Command
       const :flags, T::Array[String]
       const :quote, T.nilable(String)
       prop :instruction, String
@@ -43,7 +74,7 @@ module AiFlow
     sig { params(prefix: String).void }
     def initialize(prefix: "")
       @command_pattern = T.let(
-        /\A\/#{Regexp.escape(prefix)}(#{COMMANDS.join("|")})(?:\s+(.*))?\z/,
+        /\A\/#{Regexp.escape(prefix)}(#{COMMAND_WORDS.keys.join("|")})(?:\s+(.*))?\z/,
         Regexp,
       )
     end
@@ -63,7 +94,7 @@ module AiFlow
         if (match = @command_pattern.match(line.rstrip))
           flags, instruction = split_flags(match[2].to_s.strip)
           segments << (current_segment = Segment.new(
-            command: T.must(match[1]),
+            command: COMMAND_WORDS.fetch(T.must(match[1])),
             flags: flags,
             quote: dequote(pending_quote),
             instruction: instruction,
@@ -118,10 +149,11 @@ module AiFlow
       return if segments.size <= 1
 
       lifecycle = segments.map(&:command).reject { |command| BATCHABLE_COMMANDS.include?(command) }
-      return if lifecycle.empty?
+      first_lifecycle = lifecycle.first
+      return unless first_lifecycle
 
       raise ParseError,
-            "/#{lifecycle.first} must be a comment's only command — " \
+            "/#{self.class.word_for(first_lifecycle)} must be a comment's only command — " \
             "batches are limited to /ask and /edit."
     end
   end

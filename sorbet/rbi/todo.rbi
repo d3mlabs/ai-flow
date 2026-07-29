@@ -10,6 +10,7 @@ module AiFlow::AgentOutputTest::Expect; end
 module AiFlow::AgentOutputTest::Then; end
 module AiFlow::AgentTest::Cleanup; end
 module AiFlow::AgentTest::Then; end
+module AiFlow::CommandTest::Where; end
 module AiFlow::Commands::BatchTest::Cleanup; end
 module AiFlow::Commands::BatchTest::Then; end
 module AiFlow::Commands::BuildSplitTest::Cleanup; end
@@ -43,3 +44,4 @@ module AiFlow::RichDiffTest::Given; end
 module AiFlow::RichDiffTest::Then; end
 module AiFlow::TokenProviderTest::Cleanup; end
 module AiFlow::TokenProviderTest::Then; end
+module AiFlow::ValueEqualityTest::Where; end

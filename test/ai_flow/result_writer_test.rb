@@ -94,8 +94,8 @@ class AiFlow::ResultWriterTest < Minitest::Test
   test "one distinct model collapses to a single footer name, whatever the command mix" do
     Given "an agent whose /ask and /edit both resolved to the same model"
     agent = FakeAgent.new(["out", "out"], model: "claude-fable-5-high")
-    agent.launch(prompt: "p", workdir: ".", command: "ask")
-    agent.launch(prompt: "p", workdir: ".", command: "edit")
+    agent.launch(prompt: "p", workdir: ".", command: AiFlow::Command::Ask.new)
+    agent.launch(prompt: "p", workdir: ".", command: AiFlow::Command::Edit.new)
     writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
 
     When "rendering the footer"
@@ -111,8 +111,8 @@ class AiFlow::ResultWriterTest < Minitest::Test
   test "distinct model values list out (defensive — a job launches under one policy)" do
     Given "an agent seeded with two distinct models"
     agent = FakeAgent.new([], model: nil)
-    agent.models_used["ask"] = "claude-fable-5-high"
-    agent.models_used["edit"] = "gpt-5.3-codex"
+    agent.models_used[AiFlow::Command::Ask.new] = "claude-fable-5-high"
+    agent.models_used[AiFlow::Command::Edit.new] = "gpt-5.3-codex"
     writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
 
     When "rendering the footer"

@@ -17,6 +17,21 @@ module AiFlow
 
     PATH = ".github/ai-flow.yml"
 
+    # The models: section's vocabulary — this boundary's own mapping of
+    # YAML keys to Command values, deliberately separate from
+    # CommentParser's comment-word table (two boundaries, two tables; if
+    # they ever diverge the drift is visible in two explicit constants).
+    MODEL_KEYS = T.let(
+      {
+        "ask" => Command::Ask.new,
+        "edit" => Command::Edit.new,
+        "split" => Command::Split.new,
+        "build" => Command::Build.new,
+        "learn" => Command::Learn.new,
+      }.freeze,
+      T::Hash[String, Command],
+    )
+
     # @param workdir [String] repo checkout root
     # @return [RepoConfig]
     # @raise [Error] when the file exists but is not a YAML mapping
@@ -39,15 +54,30 @@ module AiFlow
       @config = config
     end
 
-    # Model policy: command name => model, plus an optional "default"
-    # blanket. Unknown keys elsewhere in the file are ignored — it's the
-    # adopter's file (same posture as the /split spec).
+    # Model policy, coerced at this boundary: only recognized command keys
+    # with non-blank string values survive (unknown keys are ignored — it's
+    # the adopter's file, same posture as the /split spec; blanks are unset
+    # per link so `build: ""` falls through to the default).
     #
-    # @return [Hash]
-    sig { returns(T::Hash[T.untyped, T.untyped]) }
+    # @return [Hash{AiFlow::Command => String}]
+    sig { returns(T::Hash[Command, String]) }
     def models
-      section = @config["models"]
-      section.is_a?(Hash) ? section : {}
+      models_section.each_with_object({}) do |(key, value), coerced|
+        command = MODEL_KEYS[key.to_s]
+        next unless command && value.is_a?(String) && !value.strip.empty?
+
+        coerced[command] = value.strip
+      end
+    end
+
+    # The optional "default" blanket under models: — a config-schema
+    # keyword, not a command, so it gets its own accessor.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def default_model
+      value = models_section["default"]
+      value.is_a?(String) && !value.strip.empty? ? value.strip : nil
     end
 
     # The org knowledge repo ("owner/repo") learnings promote into — where
@@ -75,6 +105,15 @@ module AiFlow
     end
 
     private
+
+    # The raw models: mapping (or empty when absent/non-mapping).
+    #
+    # @return [Hash]
+    sig { returns(T::Hash[T.untyped, T.untyped]) }
+    def models_section
+      section = @config["models"]
+      section.is_a?(Hash) ? section : {}
+    end
 
     # The optional `learn:` section (the build-capture switch). A
     # non-mapping value (or absence) means all defaults.

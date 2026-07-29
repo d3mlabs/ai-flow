@@ -51,4 +51,28 @@ class AiFlow::RepoConfigTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "models coerces to Command keys, dropping unknown, blank, and non-string entries" do
+    Given "a models section mixing valid links with every kind of junk"
+    config = load_config("models:\n  default: gpt-5\n  build: opus\n  ask: \"\"\n  split: 3\n  potato: nope\n")
+
+    Expect "only the recognized non-blank string links survive, keyed by value object"
+    config.models == { AiFlow::Command::Build.new => "opus" }
+    config.default_model == "gpt-5"
+
+    Cleanup
+    nil
+  end
+
+  test "a blank default counts as unset" do
+    Given "a models section whose only value is a blank default"
+    config = load_config("models:\n  default: \"\"\n")
+
+    Expect
+    config.default_model.nil?
+    config.models == {}
+
+    Cleanup
+    nil
+  end
 end

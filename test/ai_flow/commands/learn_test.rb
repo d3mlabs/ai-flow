@@ -122,7 +122,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods", agent: agent)
 
     Then "the agent got the dictated statement, and a proposal PR opened on ai/learn-c55 — ordinary, not GitHub draft state — with the marker"
-    agent.launches.first[:command] == "learn"
+    agent.launches.first[:command] == AiFlow::Command::Learn.new
     agent.prompts.first.include?("DICTATED LESSON")
     agent.prompts.first.include?("prefer a factory over class methods")
     github.calls.include?([:create_pull_request, REPO, "ai/learn-c55", "main"])

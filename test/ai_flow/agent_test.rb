@@ -43,13 +43,13 @@ class AiFlow::AgentTest < Minitest::Test
     index && argv.fetch(index + 1)
   end
 
-  test "no repo config and nil MODELS: no --model flag (CLI account default)" do
+  test "no repo config: no --model flag (CLI account default)" do
     Given "a workdir without .github/ai-flow.yml"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     executor = RecordingExecutor.new
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(executor).nil?
@@ -66,8 +66,8 @@ class AiFlow::AgentTest < Minitest::Test
     ask_executor = RecordingExecutor.new
 
     When "launching /build and /ask"
-    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: "build")
-    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then "/build carries the model and /ask stays on the CLI default"
     model_flag(build_executor) == "opus"
@@ -85,8 +85,8 @@ class AiFlow::AgentTest < Minitest::Test
     ask_executor = RecordingExecutor.new
 
     When "launching /build and /ask"
-    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: "build")
-    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(build_executor) == "opus"
@@ -103,7 +103,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching /build"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "build")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then "the blank command link falls through to the default"
     model_flag(executor) == "gpt-5"
@@ -112,14 +112,14 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a blank default falls through to the code fallback (nil today)" do
+  test "a blank default falls through to the CLI account default" do
     Given "a config whose only value is a blank default"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  default: \"\"\n")
     executor = RecordingExecutor.new
 
     When "launching /ask"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(executor).nil?
@@ -136,7 +136,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching /build"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "build")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then
     model_flag(executor) == "env-model"
@@ -153,7 +153,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     raises AiFlow::RepoConfig::Error
@@ -169,7 +169,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     raises AiFlow::RepoConfig::Error
@@ -186,12 +186,12 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching /ask twice and /build once"
-    agent.launch(prompt: "p", workdir: dir, command: "ask")
-    agent.launch(prompt: "p", workdir: dir, command: "ask")
-    agent.launch(prompt: "p", workdir: dir, command: "build")
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then
-    agent.models_used == { "ask" => "gpt-5", "build" => "gpt-5" }
+    agent.models_used == { AiFlow::Command::Ask.new => "gpt-5", AiFlow::Command::Build.new => "gpt-5" }
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -204,10 +204,10 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching /ask"
-    agent.launch(prompt: "p", workdir: dir, command: "ask")
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
-    agent.models_used == { "ask" => "cursor default" }
+    agent.models_used == { AiFlow::Command::Ask.new => "cursor default" }
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -220,7 +220,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching /ask"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(executor).nil?
@@ -240,7 +240,7 @@ class AiFlow::AgentTest < Minitest::Test
     ])
 
     When "launching"
-    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then "the result event wins and the argv asked for the streaming format"
     answer == "THE ANSWER"
@@ -259,7 +259,7 @@ class AiFlow::AgentTest < Minitest::Test
     ])
 
     When "launching"
-    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     answer == "First.\n\nSecond."
@@ -278,7 +278,7 @@ class AiFlow::AgentTest < Minitest::Test
     ])
 
     When "launching"
-    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     answer == "ok"
@@ -313,7 +313,7 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching and capturing the progress lines"
-    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: "build") }
+    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new) }
 
     Then "knowledge reads get their own line, plain reads stay generic, and the accumulator dedupes"
     output.include?("[/build] knowledge: typed-errors")
@@ -336,7 +336,7 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching"
-    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: "build") }
+    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new) }
 
     Then "no knowledge line, nothing accumulated"
     output.include?("[/build] → shell: ls ~/.cursor/skills/typed-errors/")
@@ -352,7 +352,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new(lines: [], err: "boom from the CLI", ok: false)
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     raises AiFlow::Agent::Error
@@ -368,7 +368,7 @@ class AiFlow::AgentTest < Minitest::Test
 
     When "launching and capturing the failure"
     error = begin
-      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: "ask")
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
       nil
     rescue AiFlow::Agent::Error => e
       e

@@ -85,9 +85,9 @@ module AiFlow
     # status line renders its pre-launch prediction with the same grammar
     # as the footer.
     #
-    # @param models [Hash{String => String}] command => model
+    # @param models [Hash{AiFlow::Command => String}] command => model
     # @return [String, nil]
-    sig { params(models: T::Hash[String, String]).returns(T.nilable(String)) }
+    sig { params(models: T::Hash[Command, String]).returns(T.nilable(String)) }
     def self.models_note(models)
       return nil if models.empty?
 

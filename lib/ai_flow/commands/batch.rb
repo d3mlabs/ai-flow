@@ -109,7 +109,7 @@ module AiFlow
         output = @agent.launch(
           prompt: batch_prompt(resolved),
           workdir: @workdir,
-          command: edits?(resolved) ? "edit" : "ask",
+          command: edits?(resolved) ? Command::Edit.new : Command::Ask.new,
           force: edits?(resolved),
         )
 
@@ -296,12 +296,12 @@ module AiFlow
       def segment_results(resolved, parsed, edits_applied:)
         resolved.each_with_index.map do |(segment, _span), index|
           text = parsed.segments[index + 1]
-          if segment.command == "edit" && text&.start_with?("CONFLICT:")
+          if segment.command == Command::Edit.new && text&.start_with?("CONFLICT:")
             [segment, "⚠️ **/edit** — #{text}"]
-          elsif segment.command == "edit" && !edits_applied
+          elsif segment.command == Command::Edit.new && !edits_applied
             [segment, "⚠️ **/edit** — the agent made no change to the document." \
                       "#{text ? " Its report: #{text}" : ""}"]
-          elsif segment.command == "edit"
+          elsif segment.command == Command::Edit.new
             # A missing summary is cosmetic when the edit itself landed — the
             # appended diff carries the change; don't fail the batch over it.
             [segment, "✅ **/edit** — #{text || "(the agent returned no summary — see the diff below)"}"]
@@ -332,7 +332,7 @@ module AiFlow
       # @return [Boolean] whether any segment is an /edit
       sig { params(resolved: T::Array[ResolvedSegment]).returns(T::Boolean) }
       def edits?(resolved)
-        resolved.any? { |segment, _span| segment.command == "edit" }
+        resolved.any? { |segment, _span| segment.command == Command::Edit.new }
       end
 
       # Standalone /ask gets a reply (a question-and-answer is a legitimate
@@ -352,7 +352,7 @@ module AiFlow
         ).returns(T::Boolean)
       end
       def deliver(segments, results, appendix: nil)
-        if !@context.review_summary? && segments.size == 1 && segments.first&.command == "ask" && appendix.nil?
+        if !@context.review_summary? && segments.size == 1 && segments.first&.command == Command::Ask.new && appendix.nil?
           reply(with_footer(T.must(results.first).last))
           # The reply doesn't rewrite the command comment, so the dispatcher's
           # ⏳ status line (only added inside Actions, where run_url is set)

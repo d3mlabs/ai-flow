@@ -10,35 +10,23 @@ module AiFlow
   # be a change here, not in the four command scripts.
   #
   # Invocation details owned here: binary path (AI_FLOW_AGENT_BIN), model
-  # resolution (repo config via RepoConfig, env override, MODELS fallback),
-  # working directory, prompt passing, output parsing. Runaway runs are
-  # bounded by the workflow job's timeout-minutes, not here.
+  # resolution (repo config via RepoConfig, env override), working
+  # directory, prompt passing, output parsing. Runaway runs are bounded by
+  # the workflow job's timeout-minutes, not here. ai-flow code carries no
+  # model opinion of its own: per-repo policy lives in .github/ai-flow.yml
+  # (see RepoConfig), and no policy means the CLI's account default.
   class Agent
     extend T::Sig
 
     class Error < StandardError; end
 
-    # Code-level model fallback. Deliberately all-nil: ai-flow code carries
-    # no model opinion — per-repo policy lives in .github/ai-flow.yml (see
-    # RepoConfig), and nil means the CLI's account default.
-    MODELS = T.let(
-      {
-        "ask" => nil,
-        "edit" => nil,
-        "split" => nil,
-        "build" => nil,
-        "learn" => nil,
-      }.freeze,
-      T::Hash[String, T.nilable(String)],
-    )
-
     # What each command actually ran on, keyed by command so a batch that
     # launches the same command repeatedly records one entry. Feeds the
     # ResultWriter footer's model note.
     #
-    # @return [Hash{String => String}] command => model ("cursor default"
-    #   when no policy resolved and the CLI's account default applied)
-    sig { returns(T::Hash[String, String]) }
+    # @return [Hash{AiFlow::Command => String}] command => model ("cursor
+    #   default" when no policy resolved and the CLI's account default applied)
+    sig { returns(T::Hash[Command, String]) }
     attr_reader :models_used
 
     # Skill and rule reads observed in the event stream — the loop's own
@@ -64,7 +52,7 @@ module AiFlow
     sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
       @executor = executor
-      @models_used = T.let({}, T::Hash[String, String])
+      @models_used = T.let({}, T::Hash[Command, String])
       @knowledge_applied = T.let([], T::Array[String])
     end
 
@@ -77,13 +65,13 @@ module AiFlow
     #
     # @param prompt [String]
     # @param workdir [String] repo checkout the agent works in
-    # @param command [String] ai-flow command name, for model policy
+    # @param command [AiFlow::Command] the policy the pass runs under
     # @param force [Boolean] allow file edits/commands without approval (used
     #   by /edit-on-PR and /build, which work in disposable worktrees)
     # @return [String] the agent's result text
     # @raise [Error] when the agent fails
     sig do
-      params(prompt: String, workdir: String, command: String, force: T::Boolean)
+      params(prompt: String, workdir: String, command: Command, force: T::Boolean)
         .returns(String)
     end
     def launch(prompt:, workdir:, command:, force: false)
@@ -92,13 +80,16 @@ module AiFlow
       argv = [binary, "-p", "--output-format", "stream-json", "--trust"]
       model = model_for(command, workdir)
       @models_used[command] = model || "cursor default"
+      # Display names speak the comment vocabulary, so they come from the
+      # parser's table.
+      word = CommentParser.word_for(command)
       # Ungrouped so the effective model is scannable on the run page next
       # to the config + --list-models printout from the Log versions step.
-      $stdout.puts "ai-flow model (/#{command}): #{model || "(CLI account default)"}"
+      $stdout.puts "ai-flow model (/#{word}): #{model || "(CLI account default)"}"
       argv += ["--model", model] if model
       argv << "--force" if force
 
-      log_group("ai-flow agent prompt (/#{command})", prompt)
+      log_group("ai-flow agent prompt (/#{word})", prompt)
       result = T.let(nil, T.nilable(String))
       assistant_texts = T.let([], T::Array[String])
       # T.unsafe: splatting a runtime-built argv into stream's rest param is
@@ -106,14 +97,14 @@ module AiFlow
       err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir) do |line|
         event = parse_event(line)
         result = event["result"].to_s if event && event["type"] == "result"
-        render_event(command, line, event, assistant_texts)
+        render_event(word, line, event, assistant_texts)
       end
 
       # The stream already scrolled by live, so the post-hoc groups carry
       # only the prompt (above), the final text, and any stderr.
       final_text = result || assistant_texts.join("\n\n")
-      log_group("ai-flow agent final result (/#{command})", final_text)
-      log_group("ai-flow agent stderr (/#{command})", err) unless err.strip.empty?
+      log_group("ai-flow agent final result (/#{word})", final_text)
+      log_group("ai-flow agent stderr (/#{word})", err) unless err.strip.empty?
       raise Error, "agent CLI not found — install the Cursor agent CLI on this runner" if err.include?("No such file")
       unless ok
         detail = err.strip.empty? ? final_text.strip : err.strip
@@ -126,21 +117,20 @@ module AiFlow
 
     # Model precedence: AI_FLOW_MODEL env (ops escape hatch on the runner
     # box) > models.<command> > models.default (both from the repo's
-    # .github/ai-flow.yml) > MODELS[command] (code fallback) > nil, meaning
-    # the CLI's account default. Blanks are unset per link, so e.g.
-    # `build: ""` falls through to `default` rather than passing
-    # `--model ""` to the CLI. Public and pure: the dispatcher calls it
-    # pre-launch to predict the model for the ⏳ status line.
+    # .github/ai-flow.yml) > nil, meaning the CLI's account default.
+    # RepoConfig coerces its section at load (blank links are already
+    # unset), so only the env link needs blank-stripping here. Public and
+    # pure: the dispatcher calls it pre-launch to predict the model for
+    # the ⏳ status line.
     #
-    # @param command [String]
+    # @param command [AiFlow::Command]
     # @param workdir [String]
     # @return [String, nil]
-    sig { params(command: String, workdir: String).returns(T.nilable(String)) }
+    sig { params(command: Command, workdir: String).returns(T.nilable(String)) }
     def model_for(command, workdir)
-      models = RepoConfig.load(workdir).models
-      [ENV["AI_FLOW_MODEL"], models[command], models["default"], MODELS[command]]
-        .map { |candidate| candidate.to_s.strip }
-        .find { |candidate| !candidate.empty? }
+      config = RepoConfig.load(workdir)
+      env_override = ENV["AI_FLOW_MODEL"].to_s.strip
+      [env_override.empty? ? nil : env_override, config.models[command], config.default_model].compact.first
     end
 
     private
@@ -158,24 +148,24 @@ module AiFlow
     # One concise progress line per event, printed as it arrives. Unknown
     # event types print nothing (CLI additions must never break a run);
     # unparseable lines print raw so a format drift degrades to noise, not
-    # silence. The `[/command]` prefix names the policy the pass runs
+    # silence. The `[/word]` prefix names the policy the pass runs
     # under — a batch is a single pass (as /edit when any edit is present),
     # and /build --split runs one /build pass per sub-issue.
     #
-    # @param command [String]
+    # @param word [String] the command's comment word, for the line prefix
     # @param line [String] the raw NDJSON line
     # @param event [Hash, nil] the parsed event
     # @param assistant_texts [Array<String>] accumulator for the result
     #   fallback when the stream ends without a terminal result event
     sig do
       params(
-        command: String,
+        word: String,
         line: String,
         event: T.nilable(T::Hash[String, T.untyped]),
         assistant_texts: T::Array[String],
       ).void
     end
-    def render_event(command, line, event, assistant_texts)
+    def render_event(word, line, event, assistant_texts)
       unless event
         $stdout.puts line.chomp unless line.strip.empty?
         return
@@ -183,22 +173,22 @@ module AiFlow
 
       case event["type"]
       when "system"
-        $stdout.puts "[/#{command}] session started (model: #{event["model"]})" if event["subtype"] == "init"
+        $stdout.puts "[/#{word}] session started (model: #{event["model"]})" if event["subtype"] == "init"
       when "assistant"
         text = event.dig("message", "content", 0, "text").to_s
         return if text.empty?
 
         assistant_texts << text
-        $stdout.puts "[/#{command}] assistant: #{truncate(text.lines.first.to_s.strip)}"
+        $stdout.puts "[/#{word}] assistant: #{truncate(text.lines.first.to_s.strip)}"
       when "tool_call"
         return unless event["subtype"] == "started"
 
         knowledge = knowledge_name(event)
         if knowledge
           @knowledge_applied << knowledge unless @knowledge_applied.include?(knowledge)
-          $stdout.puts "[/#{command}] knowledge: #{knowledge}"
+          $stdout.puts "[/#{word}] knowledge: #{knowledge}"
         else
-          $stdout.puts "[/#{command}] → #{tool_summary(event)}"
+          $stdout.puts "[/#{word}] → #{tool_summary(event)}"
         end
       end
     end

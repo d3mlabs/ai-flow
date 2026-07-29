@@ -123,10 +123,10 @@ module AiFlow
     end
 
     # @param segments [Array<CommentParser::Segment>]
-    # @return [Hash{String => String}] the effective command => its model
-    #   (same shape as Agent#models_used, which will hold exactly this
+    # @return [Hash{AiFlow::Command => String}] the effective command => its
+    #   model (same shape as Agent#models_used, which will hold exactly this
     #   entry after the pass)
-    sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Hash[String, String]) }
+    sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Hash[Command, String]) }
     def predicted_models(segments)
       command = effective_command(segments)
       { command => @agent.model_for(command, @workdir) || "cursor default" }
@@ -138,11 +138,11 @@ module AiFlow
     # comment's only command and launches under its own policy.
     #
     # @param segments [Array<CommentParser::Segment>]
-    # @return [String]
-    sig { params(segments: T::Array[CommentParser::Segment]).returns(String) }
+    # @return [AiFlow::Command]
+    sig { params(segments: T::Array[CommentParser::Segment]).returns(Command) }
     def effective_command(segments)
       if segments.all? { |segment| CommentParser::BATCHABLE_COMMANDS.include?(segment.command) }
-        segments.any? { |segment| segment.command == "edit" } ? "edit" : "ask"
+        segments.any? { |segment| segment.command == Command::Edit.new } ? Command::Edit.new : Command::Ask.new
       else
         T.must(segments.first).command
       end
@@ -152,25 +152,31 @@ module AiFlow
     #   have per-segment soft failures; the other commands raise on failure.
     sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Boolean) }
     def route(segments)
-      if segments.all? { |segment| CommentParser::BATCHABLE_COMMANDS.include?(segment.command) }
-        return batch.run(segments)
-      end
-
-      # The parser guarantees lifecycle commands arrive alone, so the first
-      # segment is the comment's only command.
+      # The parser guarantees comment shape — batchable commands may share a
+      # comment (the whole comment batches as one pass) and lifecycle
+      # commands arrive alone — so the first segment's command routes the
+      # comment. Exhaustive over the sealed hierarchy: a new command fails
+      # srb here until routed.
       segment = T.must(segments.first)
-      if segment.command == "split"
+      case (command = segment.command)
+      when Command::Ask, Command::Edit
+        return batch.run(segments)
+      when Command::Split
         split.run(segment)
-      elsif segment.command == "learn"
+      when Command::Learn
         learn.run(segment)
-      elsif segment.flags.include?("--split")
-        if @context.pull_request?
-          raise CommentParser::ParseError, "/build --split runs on plan issues, not pull requests."
-        end
+      when Command::Build
+        if segment.flags.include?("--split")
+          if @context.pull_request?
+            raise CommentParser::ParseError, "/build --split runs on plan issues, not pull requests."
+          end
 
-        build_split.run(segment)
+          build_split.run(segment)
+        else
+          build.run(segment)
+        end
       else
-        build.run(segment)
+        T.absurd(command)
       end
       true
     end

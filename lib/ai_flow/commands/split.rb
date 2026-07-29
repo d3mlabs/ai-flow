@@ -131,7 +131,7 @@ module AiFlow
         pool = discovery_pool(menu, parent, existing)
         output = @agent.launch(
           prompt: propose_prompt(parent, existing, segment, menu, pool),
-          workdir: @workdir, command: "split",
+          workdir: @workdir, command: Command::Split.new,
         )
         entries = parse_proposal(output)
         [entries, possible_matches(entries, pool)]
