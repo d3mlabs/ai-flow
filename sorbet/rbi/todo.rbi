@@ -43,4 +43,3 @@ module AiFlow::RichDiffTest::Given; end
 module AiFlow::RichDiffTest::Then; end
 module AiFlow::TokenProviderTest::Cleanup; end
 module AiFlow::TokenProviderTest::Then; end
-module SimpleCov::Formatter::JSONFormatter; end

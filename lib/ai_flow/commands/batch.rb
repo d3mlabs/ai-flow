@@ -26,11 +26,13 @@ module AiFlow
 
       # Phase 1's output: segment + resolved document span (nil when the
       # quote isn't in the body) + discussion source (see #discussion_source).
-      # Single-line on purpose: sorbet-runtime only calls the alias block if
-      # a value is ever validated directly against it (collection checks are
-      # shallow), so a multi-line block body would be uncoverable dead lines.
-      ResolvedSegment =
-        T.type_alias { [CommentParser::Segment, T.nilable(String), T.nilable(T::Hash[Symbol, T.untyped])] }
+      ResolvedSegment = T.type_alias do
+        [
+          CommentParser::Segment,
+          T.nilable(String),
+          T.nilable(T::Hash[Symbol, T.untyped]),
+        ]
+      end
 
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]

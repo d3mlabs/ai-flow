@@ -23,7 +23,10 @@ Dev::Deps.define do
     gem "minitest"
     gem "minitest-reporters"
     gem "rake"
-    gem "rspock", "~> 2.3"
-    gem "simplecov", "~> 0.22"
+    gem "rspock", "~> 3.0"
+    gem "simplecov", "~> 1.0"
+    # Skips type-level Sorbet constructs (T.type_alias/sig blocks, T.absurd)
+    # so they never read as coverage misses.
+    gem "simplecov-sorbet", "~> 0.2", require: false
   end
 end

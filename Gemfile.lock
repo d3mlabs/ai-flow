@@ -3,14 +3,13 @@ GEM
   specs:
     ansi (1.6.0)
     ast (2.4.3)
-    ast_transform (2.1.4)
-      parser (>= 3.0)
+    ast_transform (3.1.0)
+      parser (>= 3.3)
       prism (>= 1.5)
-      unparser (>= 0.6)
+      unparser (>= 0.8)
     benchmark (0.5.0)
     builder (3.3.0)
     diff-lcs (2.0.0)
-    docile (1.4.1)
     erubi (1.13.1)
     logger (1.7.0)
     minitest (5.27.0)
@@ -38,24 +37,21 @@ GEM
       tsort
     require-hooks (0.4.1)
     rexml (3.4.4)
-    rspock (2.5.0)
-      ast_transform (~> 2.0)
+    rspock (3.0.0)
+      ast_transform (~> 3.0)
       minitest (~> 5.0)
       mocha (>= 1.0)
-      parser (>= 3.0)
-      unparser (>= 0.6)
     ruby-progressbar (1.13.0)
     ruby2_keywords (0.0.5)
     rubydex (0.3.0-aarch64-linux)
     rubydex (0.3.0-arm64-darwin)
     rubydex (0.3.0-x86_64-darwin)
     rubydex (0.3.0-x86_64-linux)
-    simplecov (0.22.0)
-      docile (~> 1.1)
-      simplecov-html (~> 0.11)
-      simplecov_json_formatter (~> 0.1)
-    simplecov-html (0.13.2)
-    simplecov_json_formatter (0.1.4)
+    simplecov (1.0.3)
+    simplecov-sorbet (0.2.0)
+      ast_transform (~> 3.1)
+      simplecov (~> 1.0)
+      sorbet-runtime
     sorbet (0.6.13365)
       sorbet-static (= 0.6.13365)
     sorbet-runtime (0.6.13365)
@@ -103,8 +99,9 @@ DEPENDENCIES
   minitest
   minitest-reporters
   rake
-  rspock (~> 2.3)
-  simplecov (~> 0.22)
+  rspock (~> 3.0)
+  simplecov (~> 1.0)
+  simplecov-sorbet (~> 0.2)
   sorbet
   sorbet-runtime
   tapioca

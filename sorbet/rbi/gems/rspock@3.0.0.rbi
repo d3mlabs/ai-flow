@@ -13,38 +13,38 @@ module RSpock; end
 # pkg:gem/rspock#lib/rspock/ast/node.rb:5
 module RSpock::AST; end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:104
-class RSpock::AST::BinaryStatementNode < ::RSpock::AST::Node
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:107
+# pkg:gem/rspock#lib/rspock/ast/node.rb:95
+class RSpock::AST::BinaryStatementNode < ::ASTTransform::Node
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:98
   def lhs; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:108
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:99
   def operator; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:109
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:100
   def rhs; end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:27
-class RSpock::AST::BodyNode < ::RSpock::AST::Node; end
+# pkg:gem/rspock#lib/rspock/ast/node.rb:18
+class RSpock::AST::BodyNode < ::ASTTransform::Node; end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:54
-class RSpock::AST::CleanupNode < ::RSpock::AST::Node; end
+# pkg:gem/rspock#lib/rspock/ast/node.rb:45
+class RSpock::AST::CleanupNode < ::ASTTransform::Node; end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:31
-class RSpock::AST::DefNode < ::RSpock::AST::Node
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:35
+# pkg:gem/rspock#lib/rspock/ast/node.rb:22
+class RSpock::AST::DefNode < ::ASTTransform::Node
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:26
   def args; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:34
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:25
   def method_call; end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:50
-class RSpock::AST::ExpectNode < ::RSpock::AST::Node; end
+# pkg:gem/rspock#lib/rspock/ast/node.rb:41
+class RSpock::AST::ExpectNode < ::ASTTransform::Node; end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:38
-class RSpock::AST::GivenNode < ::RSpock::AST::Node; end
+# pkg:gem/rspock#lib/rspock/ast/node.rb:29
+class RSpock::AST::GivenNode < ::ASTTransform::Node; end
 
 # pkg:gem/rspock#lib/rspock/ast/header_nodes_transformation.rb:6
 class RSpock::AST::HeaderNodesTransformation < ::ASTTransform::AbstractTransformation
@@ -63,27 +63,27 @@ class RSpock::AST::HeaderNodesTransformation < ::ASTTransform::AbstractTransform
   def header_node?(node); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:92
-class RSpock::AST::InteractionNode < ::RSpock::AST::Node
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:99
+# pkg:gem/rspock#lib/rspock/ast/node.rb:83
+class RSpock::AST::InteractionNode < ::ASTTransform::Node
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:90
   def args; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:101
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:92
   def block_pass; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:95
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:86
   def cardinality; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:98
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:89
   def message; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:97
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:88
   def message_sym; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:100
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:91
   def outcome; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:96
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:87
   def receiver; end
 end
 
@@ -122,140 +122,104 @@ class RSpock::AST::InteractionToMochaMockTransformation < ::ASTTransform::Abstra
 
   private
 
-  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:108
+  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:110
   def any_matcher_node?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:89
+  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:91
   def build_block_capture_setup(expects_node, receiver, message); end
 
-  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:44
+  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:46
   def build_cardinality(result, cardinality); end
 
-  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:75
+  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:77
   def build_erange(result, min_node, max_node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:61
+  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:63
   def build_irange(result, min_node, max_node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:104
+  # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:106
   def chain_call(receiver_node, method_name, *arg_nodes); end
 end
 
 # pkg:gem/rspock#lib/rspock/ast/interaction_to_mocha_mock_transformation.rb:18
 RSpock::AST::InteractionToMochaMockTransformation::OUTCOME_METHODS = T.let(T.unsafe(nil), Hash)
 
-# pkg:gem/rspock#lib/rspock/ast/method_call_to_lvar_transformation.rb:6
-class RSpock::AST::MethodCallToLVarTransformation < ::ASTTransform::AbstractTransformation
-  # pkg:gem/rspock#lib/rspock/ast/method_call_to_lvar_transformation.rb:7
-  def initialize(*method_symbols); end
+# pkg:gem/rspock#lib/rspock/ast/node.rb:64
+class RSpock::AST::OutcomeNode < ::ASTTransform::Node; end
 
-  # pkg:gem/rspock#lib/rspock/ast/method_call_to_lvar_transformation.rb:19
-  def method_call_node?(node); end
-
-  # pkg:gem/rspock#lib/rspock/ast/method_call_to_lvar_transformation.rb:13
-  def on_send(node); end
-end
-
-# pkg:gem/rspock#lib/rspock/ast/node.rb:6
-class RSpock::AST::Node < ::Parser::AST::Node
-  class << self
-    # pkg:gem/rspock#lib/rspock/ast/node.rb:13
-    def build(type, *children); end
-
-    # pkg:gem/rspock#lib/rspock/ast/node.rb:9
-    def register(type); end
-  end
-end
-
-# pkg:gem/rspock#lib/rspock/ast/node.rb:7
-RSpock::AST::Node::REGISTRY = T.let(T.unsafe(nil), Hash)
-
-# pkg:gem/rspock#lib/rspock/ast/node.rb:119
-module RSpock::AST::NodeBuilder
-  include ::ASTTransform::TransformationHelper
-  include ::ASTTransform::TransformationHelper::Methods
-  extend ::ASTTransform::TransformationHelper::Methods
-
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:122
-  def s(type, *children); end
-end
-
-# pkg:gem/rspock#lib/rspock/ast/node.rb:73
-class RSpock::AST::OutcomeNode < ::RSpock::AST::Node; end
-
-# pkg:gem/rspock#lib/rspock/ast/parser/block.rb:6
+# pkg:gem/rspock#lib/rspock/ast/parser/block.rb:7
 module RSpock::AST::Parser; end
 
-# pkg:gem/rspock#lib/rspock/ast/parser/block.rb:9
+# pkg:gem/rspock#lib/rspock/ast/parser/block.rb:10
 class RSpock::AST::Parser::Block
   include ::ASTTransform::TransformationHelper
   include ::ASTTransform::TransformationHelper::Methods
-  include ::RSpock::AST::NodeBuilder
+  extend ::ASTTransform::TransformationHelper::Methods
 
   # Constructs a new Block.
   #
   # @param type [Symbol] The Block type.
   # @param node [Parser::AST::Node] The node associated to this Block.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:16
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:17
   def initialize(type, node); end
 
   # Adds the given +child_node+ to this Block.
   #
   # @param child_node [Parser::AST::Node] The node to be added.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:27
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:28
   def <<(child_node); end
 
   # Whether this block can be the last block in a test method.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:44
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:45
   def can_end?; end
 
   # Whether this block can be the first block in a test method.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:39
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:40
   def can_start?; end
 
   # Retrieves the duped array of children AST nodes for this Block.
   #
   # @return [Array<Parser::AST::Node>] The children nodes.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:58
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:59
   def children; end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:22
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:23
   def node; end
 
   # Retrieves the Parser::Source::Range for this Block.
   #
   # @return [Parser::Source::Range] The range.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:34
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:35
   def range; end
 
   # Retrieves the error message for succession errors.
   #
   # @return [String] The error message.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:82
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:83
   def succession_error_msg; end
 
   # Retrieves the valid successors for this Block.
   #
   # @return [Array<Symbol>] This Block's successors.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:51
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:52
   def successors; end
 
   # Converts this Block into an RSpock node.
   #
   # @return [Parser::AST::Node] A node with type :rspock_<block_type>.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:65
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:66
   def to_rspock_node; end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:22
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:23
   def type; end
 
   # Checks whether or not the given +block+ is a valid successor for this Block.
@@ -264,11 +228,11 @@ class RSpock::AST::Parser::Block
   #
   # @return [Boolean] True if the given block is a valid successor, false otherwise.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:75
+  # pkg:gem/rspock#lib/rspock/ast/parser/block.rb:76
   def valid_successor?(block); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/parser/block.rb:7
+# pkg:gem/rspock#lib/rspock/ast/parser/block.rb:8
 class RSpock::AST::Parser::BlockError < ::StandardError; end
 
 # pkg:gem/rspock#lib/rspock/ast/parser/cleanup_block.rb:7
@@ -326,43 +290,43 @@ end
 #   [4] outcome      - nil if no >>, otherwise s(:rspock_stub_returns, value) or s(:rspock_stub_raises, *args)
 #   [5] block_pass   - nil if no &, otherwise s(:block_pass, ...)
 #
-# pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:19
+# pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:20
 class RSpock::AST::Parser::InteractionParser
   include ::ASTTransform::TransformationHelper
   include ::ASTTransform::TransformationHelper::Methods
-  include ::RSpock::AST::NodeBuilder
+  extend ::ASTTransform::TransformationHelper::Methods
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:26
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:27
   def interaction_node?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:34
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:35
   def parse(node); end
 
   private
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:64
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:71
   def parse_outcome(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:102
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:109
   def parse_rhs(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:132
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:139
   def raise_cardinality_error(node, msg_prefix: T.unsafe(nil), msg_suffix: T.unsafe(nil)); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:128
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:135
   def range(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:60
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:67
   def return_value_node?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:72
+  # pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:79
   def validate_cardinality(node); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:24
+# pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:25
 RSpock::AST::Parser::InteractionParser::ALLOWED_CARDINALITY_NODES = T.let(T.unsafe(nil), Array)
 
-# pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:22
+# pkg:gem/rspock#lib/rspock/ast/parser/interaction_parser.rb:23
 class RSpock::AST::Parser::InteractionParser::InteractionError < ::RuntimeError; end
 
 # Classifies raw Ruby AST statements into RSpock node types for Then/Expect blocks.
@@ -371,46 +335,54 @@ class RSpock::AST::Parser::InteractionParser::InteractionError < ::RuntimeError;
 # - Binary operators (==, !=, =~, etc.) become :rspock_binary_statement nodes.
 # - Everything else becomes :rspock_statement nodes with the original source text captured.
 #
-# pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:12
+# pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:13
 class RSpock::AST::Parser::StatementParser
   include ::ASTTransform::TransformationHelper
   include ::ASTTransform::TransformationHelper::Methods
-  include ::RSpock::AST::NodeBuilder
+  extend ::ASTTransform::TransformationHelper::Methods
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:18
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:19
   def parse(node); end
 
   private
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:36
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:37
   def assigned_raises?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:54
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:55
   def assignment?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:58
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:59
   def binary_statement?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:64
+  # RSpock IR nodes are anchored at the statement they classify, so the assertions they lower into are
+  # emitted at the statement's source line.
+  #
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:67
   def build_binary_statement(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:43
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:44
   def build_raises(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:68
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:71
   def build_statement(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:32
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:33
   def direct_raises?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:28
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:29
   def raises_condition?(node); end
+
+  # s_at that tolerates loc-less anchors (unit tests build synthetic ASTs).
+  #
+  # pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:77
+  def s_anchored(anchor, type, *children); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:16
+# pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:17
 RSpock::AST::Parser::StatementParser::ASSIGNMENT_TYPES = T.let(T.unsafe(nil), Array)
 
-# pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:15
+# pkg:gem/rspock#lib/rspock/ast/parser/statement_parser.rb:16
 RSpock::AST::Parser::StatementParser::BINARY_OPERATORS = T.let(T.unsafe(nil), Array)
 
 # Parses a Ruby test method AST node into a self-contained RSpock AST.
@@ -421,39 +393,39 @@ RSpock::AST::Parser::StatementParser::BINARY_OPERATORS = T.let(T.unsafe(nil), Ar
 #           s(:rspock_body, s(:rspock_given, ...), s(:rspock_when, ...), ...),
 #           s(:rspock_where, ...))   # optional
 #
-# pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:14
+# pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:15
 class RSpock::AST::Parser::TestMethodParser
   include ::ASTTransform::TransformationHelper
   include ::ASTTransform::TransformationHelper::Methods
-  include ::RSpock::AST::NodeBuilder
+  extend ::ASTTransform::TransformationHelper::Methods
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:17
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:18
   def initialize(block_registry, strict: T.unsafe(nil)); end
 
   # Parses a Ruby test method AST into an RSpock AST (TestNode).
   # Returns nil when non-strict and no RSpock blocks are found.
   #
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:24
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:25
   def parse(node); end
 
   private
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:87
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:89
   def build_rspock_ast(node, blocks); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:56
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:57
   def parse_block(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:38
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:39
   def parse_blocks(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:81
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:83
   def test_method_nodes(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:71
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:72
   def validate_blocks(blocks, node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:62
+  # pkg:gem/rspock#lib/rspock/ast/parser/test_method_parser.rb:63
   def validate_succession(blocks, new_block); end
 end
 
@@ -525,24 +497,24 @@ end
 # pkg:gem/rspock#lib/rspock/ast/parser/where_block.rb:8
 class RSpock::AST::Parser::WhereBlock::MalformedError < ::StandardError; end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:84
-class RSpock::AST::RaisesNode < ::RSpock::AST::Node
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:89
+# pkg:gem/rspock#lib/rspock/ast/node.rb:75
+class RSpock::AST::RaisesNode < ::ASTTransform::Node
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:80
   def capture_name; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:88
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:79
   def capture_var; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:87
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:78
   def exception_class; end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:112
-class RSpock::AST::StatementNode < ::RSpock::AST::Node
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:115
+# pkg:gem/rspock#lib/rspock/ast/node.rb:103
+class RSpock::AST::StatementNode < ::ASTTransform::Node
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:106
   def expression; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:116
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:107
   def source; end
 end
 
@@ -551,152 +523,242 @@ end
 # Binary statements dispatch to specialized assertions (assert_equal, assert_match, assert_operator).
 # General statements use assert_equal(true/false, expr, source_message) with negation detection.
 #
-# pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:10
+# pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:11
 class RSpock::AST::StatementToAssertionTransformation
   include ::ASTTransform::TransformationHelper
   include ::ASTTransform::TransformationHelper::Methods
-  include ::RSpock::AST::NodeBuilder
+  extend ::ASTTransform::TransformationHelper::Methods
 
-  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:22
+  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:23
   def run(node); end
 
   private
 
-  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:63
+  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:64
   def negated?(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:35
+  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:36
   def transform_binary_statement(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:49
+  # pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:50
   def transform_statement(node); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:13
+# pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:14
 RSpock::AST::StatementToAssertionTransformation::BINARY_DISPATCH = T.let(T.unsafe(nil), Hash)
 
-# pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:20
+# pkg:gem/rspock#lib/rspock/ast/statement_to_assertion_transformation.rb:21
 RSpock::AST::StatementToAssertionTransformation::OPERATOR_ASSERTIONS = T.let(T.unsafe(nil), Array)
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:80
+# pkg:gem/rspock#lib/rspock/ast/node.rb:71
 class RSpock::AST::StubRaisesNode < ::RSpock::AST::OutcomeNode; end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:76
+# pkg:gem/rspock#lib/rspock/ast/node.rb:67
 class RSpock::AST::StubReturnsNode < ::RSpock::AST::OutcomeNode; end
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:7
+# Appends the data row's index and source line to a Where-driven test's name. The values arrive through
+# internal block parameters on the row iterator (see TestMethodTransformation#build_where_args) and surface in
+# the test NAME only: the name is what makes identical data rows unique and what the -n selector matches to
+# isolate a row. They are deliberately not exposed as test-scope variables.
+#
+# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:11
 class RSpock::AST::TestMethodDefTransformation < ::ASTTransform::AbstractTransformation
-  # pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:29
+  # pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:30
   def on_dstr(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:24
+  # pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:25
   def on_str(node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:18
+  # pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:19
   def run(node); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:11
-RSpock::AST::TestMethodDefTransformation::LINE_NUMBER_AST = T.let(T.unsafe(nil), Parser::AST::Node)
-
-# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:16
+# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:17
 RSpock::AST::TestMethodDefTransformation::LINE_NUMBER_STR_AST = T.let(T.unsafe(nil), Parser::AST::Node)
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:14
-RSpock::AST::TestMethodDefTransformation::SPACE_STR_AST = T.let(T.unsafe(nil), Parser::AST::Node)
+# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:12
+RSpock::AST::TestMethodDefTransformation::ROW_INDEX_ARG = T.let(T.unsafe(nil), Symbol)
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:8
-RSpock::AST::TestMethodDefTransformation::TEST_INDEX_AST = T.let(T.unsafe(nil), Parser::AST::Node)
+# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:15
+RSpock::AST::TestMethodDefTransformation::ROW_INDEX_AST = T.let(T.unsafe(nil), Parser::AST::Node)
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:6
+# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:13
+RSpock::AST::TestMethodDefTransformation::ROW_LINE_ARG = T.let(T.unsafe(nil), Symbol)
+
+# pkg:gem/rspock#lib/rspock/ast/test_method_def_transformation.rb:16
+RSpock::AST::TestMethodDefTransformation::ROW_LINE_AST = T.let(T.unsafe(nil), Parser::AST::Node)
+
+# dstr counterpart of TestMethodDefTransformation: appends the row index and source line interpolations to an
+# already-interpolated test name.
+#
+# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:8
 class RSpock::AST::TestMethodDstrTransformation < ::ASTTransform::AbstractTransformation
-  # pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:17
+  # pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:15
   def on_dstr(node); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:10
-RSpock::AST::TestMethodDstrTransformation::LINE_NUMBER_AST = T.let(T.unsafe(nil), Parser::AST::Node)
-
-# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:15
+# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:13
 RSpock::AST::TestMethodDstrTransformation::LINE_NUMBER_STR_AST = T.let(T.unsafe(nil), Parser::AST::Node)
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:13
+# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:9
+RSpock::AST::TestMethodDstrTransformation::ROW_INDEX_AST = T.let(T.unsafe(nil), Parser::AST::Node)
+
+# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:10
+RSpock::AST::TestMethodDstrTransformation::ROW_LINE_AST = T.let(T.unsafe(nil), Parser::AST::Node)
+
+# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:12
 RSpock::AST::TestMethodDstrTransformation::SPACE_STR_AST = T.let(T.unsafe(nil), Parser::AST::Node)
 
-# pkg:gem/rspock#lib/rspock/ast/test_method_dstr_transformation.rb:7
-RSpock::AST::TestMethodDstrTransformation::TEST_INDEX_AST = T.let(T.unsafe(nil), Parser::AST::Node)
-
-# pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:14
+# pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:13
 class RSpock::AST::TestMethodTransformation < ::ASTTransform::AbstractTransformation
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:15
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:14
   def initialize(block_registry, strict: T.unsafe(nil)); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:20
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:19
   def run(node); end
 
   private
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:164
-  def build_assert_raises(when_node, raises_node); end
+  # Re-anchors +node+ at +anchor+'s source location so emission places it on the anchor's line.
+  # No-op for anchors without locations.
+  #
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:194
+  def anchored_at(anchor, node); end
+
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:146
+  def build_assert_raises(raises_node, body); end
+
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:132
+  def build_raises_body(source_order, when_statements, interaction_setups, raises_node); end
 
   # --- Build final Ruby AST ---
   #
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:95
-  def build_ruby_ast(method_call, method_args, body_node, where, hoisted_setups); end
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:202
+  def build_ruby_ast(method_call, method_args, body_node, where); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:118
-  def build_test_body(body_node, hoisted_setups); end
+  # --- Test body assembly ---
+  #
+  # Statements are assembled in SOURCE order so line-aligned emission keeps each one on its own line.
+  # Execution-order requirements that source order cannot express (interaction setups in Then must run before the
+  # When body they observe) are carried by ast-transform's thunk facility (run_after / thunk) instead of by
+  # textual hoisting.
+  #
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:42
+  def build_test_body(body_node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:198
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:248
   def build_where_args(header); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:192
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:241
   def build_where_data_row(row); end
 
   # --- Where block helpers ---
   #
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:182
+  # Each data row carries its source line as a trailing element, surfaced in the generated test NAME only
+  # (uniqueness for identical rows + the -n selector target) through internal block parameters. There is no
+  # user-facing runtime variable: isolate a row by running its generated test by name, then break normally.
+  #
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:231
   def build_where_iterator(data_rows); end
 
-  # --- Raises condition helpers ---
-  #
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:157
-  def find_raises_in_next_then(blocks, current_index); end
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:160
+  def find_raises(block_node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:28
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:183
+  def insert_after(statements, anchor, insertion); end
+
+  # @return [Array(Array, Array)] Mocha setup statements, identity assertions
+  #
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:106
+  def lower_interaction(interaction, index); end
+
+  # Reorders execution (not text) where required:
+  # - interactions without raises: run the When body after the last interaction setup (run_after — the paved
+  #   road).
+  # - raises without interactions: the When body inlines directly into assert_raises; no thunk needed.
+  # - raises with interactions: the When body is thunked into the assert_raises block inserted after the last
+  #   setup; the lowering re-emits the body at its own source lines.
+  #
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:122
+  def order_execution(source_order, when_statements, interaction_setups, raises_node); end
+
+  # --- Identity-based sequence edits (non-thunk counterparts of run_after) ---
+  #
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:174
+  def replace_run(statements, run, replacement); end
+
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:166
+  def statements_of_type(blocks, sections, type); end
+
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:27
   def transform(rspock_ast); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:79
-  def transform_expect_block(expect_node); end
+  # Then/Expect children become plain Ruby in place: interactions lower to Mocha setups anchored at the
+  # interaction's own source line (plus an identity assertion for &block forwarding), statements become
+  # assertions at their own lines.
+  #
+  # Within the section, ALL setups come before all assertions: the thunked When body executes right after the
+  # last setup, and every assertion (identity or otherwise) observes the When body's effects, so none may
+  # precede that point. Setups keep source order and their anchors, so alignment holds; assertions after them
+  # are either synthetic (identity assertions, loc-less, pack anywhere) or textually below the interactions in
+  # the common case.
+  #
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:83
+  def transform_assertion_block(block_node); end
 
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:84
-  def transform_statement_or_passthrough(child); end
-
-  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:50
-  def transform_then_block(then_node, hoisted_setups); end
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:65
+  def transform_block(block_node); end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:19
-class RSpock::AST::TestNode < ::RSpock::AST::Node
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:23
+# pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:63
+class RSpock::AST::TestMethodTransformation::Section < ::Data
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:63
+  def interaction_setups; end
+
+  # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:63
+  def statements; end
+
+  class << self
+    # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:63
+    def [](*_arg0); end
+
+    # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:63
+    def inspect; end
+
+    # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:63
+    def members; end
+
+    # pkg:gem/rspock#lib/rspock/ast/test_method_transformation.rb:63
+    def new(*_arg0); end
+  end
+end
+
+# RSpock's intermediate representation: custom node types registered on ASTTransform::Node, so
+# +s(:rspock_*, ...)+ constructs these classes with their domain accessors. They exist only between the parser
+# and TestMethodTransformation — the transformation lowers every one of them to plain Ruby nodes before
+# emission.
+#
+# pkg:gem/rspock#lib/rspock/ast/node.rb:10
+class RSpock::AST::TestNode < ::ASTTransform::Node
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:14
   def body_node; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:22
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:13
   def def_node; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:24
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:15
   def where_node; end
 end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:46
-class RSpock::AST::ThenNode < ::RSpock::AST::Node; end
+# pkg:gem/rspock#lib/rspock/ast/node.rb:37
+class RSpock::AST::ThenNode < ::ASTTransform::Node; end
 
 # pkg:gem/rspock#lib/rspock/ast/transformation.rb:13
 class RSpock::AST::Transformation < ::ASTTransform::AbstractTransformation
   # pkg:gem/rspock#lib/rspock/ast/transformation.rb:23
   def initialize(block_registry: T.unsafe(nil), strict: T.unsafe(nil)); end
 
-  # pkg:gem/rspock#lib/rspock/ast/transformation.rb:84
+  # pkg:gem/rspock#lib/rspock/ast/transformation.rb:83
   def on_block(node); end
 
   # pkg:gem/rspock#lib/rspock/ast/transformation.rb:50
@@ -710,9 +772,6 @@ class RSpock::AST::Transformation < ::ASTTransform::AbstractTransformation
 
   # pkg:gem/rspock#lib/rspock/ast/transformation.rb:78
   def process_rspock(node); end
-
-  # pkg:gem/rspock#lib/rspock/ast/transformation.rb:95
-  def source_map_rescue_wrapper(node); end
 end
 
 # pkg:gem/rspock#lib/rspock/ast/transformation.rb:14
@@ -721,52 +780,16 @@ RSpock::AST::Transformation::DEFAULT_BLOCK_REGISTRY = T.let(T.unsafe(nil), Hash)
 # pkg:gem/rspock#lib/rspock/ast/transformation.rb:32
 RSpock::AST::Transformation::EXTEND_RSPOCK_DECLARATIVE = T.let(T.unsafe(nil), Parser::AST::Node)
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:42
-class RSpock::AST::WhenNode < ::RSpock::AST::Node; end
+# pkg:gem/rspock#lib/rspock/ast/node.rb:33
+class RSpock::AST::WhenNode < ::ASTTransform::Node; end
 
-# pkg:gem/rspock#lib/rspock/ast/node.rb:58
-class RSpock::AST::WhereNode < ::RSpock::AST::Node
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:66
+# pkg:gem/rspock#lib/rspock/ast/node.rb:49
+class RSpock::AST::WhereNode < ::ASTTransform::Node
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:57
   def data_rows; end
 
-  # pkg:gem/rspock#lib/rspock/ast/node.rb:61
+  # pkg:gem/rspock#lib/rspock/ast/node.rb:52
   def header; end
-end
-
-# pkg:gem/rspock#lib/rspock/backtrace_filter.rb:5
-class RSpock::BacktraceFilter
-  # Constructs a new BacktraceFilter instance.
-  #
-  # @param source_map_provider [::ASTTransform::SourceMap] The source map provider to be used.
-  #
-  # pkg:gem/rspock#lib/rspock/backtrace_filter.rb:9
-  def initialize(source_map_provider: T.unsafe(nil)); end
-
-  # Filters the backtrace of the given +exception+ and applies the filtered backtrace to the exception.
-  #
-  # @param exception [Exception] The exception to be filtered.
-  #
-  # @return [void]
-  #
-  # pkg:gem/rspock#lib/rspock/backtrace_filter.rb:18
-  def filter_exception(exception); end
-
-  # Filters the given location.
-  #
-  # @param location [String] A location string.
-  #
-  # @return [String] The filtered location.
-  #
-  # pkg:gem/rspock#lib/rspock/backtrace_filter.rb:27
-  def filter_string(location); end
-
-  private
-
-  # pkg:gem/rspock#lib/rspock/backtrace_filter.rb:45
-  def location_builder(location); end
-
-  # pkg:gem/rspock#lib/rspock/backtrace_filter.rb:41
-  def source_mapped_backtrace(e); end
 end
 
 # pkg:gem/rspock#lib/rspock/declarative.rb:4
