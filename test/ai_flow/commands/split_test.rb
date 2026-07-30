@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -9,14 +10,14 @@ class AiFlow::Commands::SplitTest < Minitest::Test
 
   def sub_issue(number, title, state: "open", repo: REPO)
     AiFlow::GitHub::Issue.new(
-      number: number, title: title, body: "", updated_at: "2026-07-13T00:00:00Z",
+      number: number, title: title, body: "",
       html_url: "https://github.com/#{repo}/issues/#{number}", state: state, repo: repo,
     )
   end
 
   def run_split(github:, agent:, comment: "/split")
     context = ContextBuilder.issue_comment(number: 7, body: comment)
-    segment = AiFlow::CommentParser.new.parse(comment).first
+    segment = AiFlow::CommentParser.new.parse(comment).fetch(0)
     AiFlow::Commands::Split.new(
       context: context, github: github, agent: agent,
       result_writer: AiFlow::ResultWriter.new(github: github), workdir: Dir.pwd,
@@ -250,6 +251,36 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     body.include?("- d3mlabs/other#42 — Adoptable work (adopted)")
     body.include?("- d3mlabs/other#43 — Owned elsewhere (referenced)")
     github.comment_edits.fetch(55).include?("adopted 1, referenced 1")
+
+    Cleanup
+    nil
+  end
+
+  test "existing: pointing at an issue already in the sub-issue set is kept, not re-adopted" do
+    Given "a staged spec whose existing: ref is already a sub-issue of the parent"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
+      # Parent plan
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::SPEC_MARKER}
+
+      ```yaml
+      - title: "Tracked work"
+        repo: d3mlabs/demo
+        existing: d3mlabs/other#42
+      ```
+    BODY
+    github.seed_issue("d3mlabs/other", 42, title: "Tracked work", body: "")
+    github.seed_sub_issues(REPO, 7, [sub_issue(42, "Tracked work", repo: "d3mlabs/other")])
+
+    When "applying"
+    run_split(github: github, agent: FakeAgent.new([]), comment: "/split --apply")
+
+    Then "no adoption call was made and the entry lands unannotated in the linked map"
+    github.calls.none? { |kind, *| kind == :add_sub_issue }
+    github.issue(REPO, 7).body.include?("- d3mlabs/other#42 — Tracked work\n")
+    github.comment_edits.fetch(55).include?("created 0, adopted 0, referenced 0, kept 1, closed 0")
 
     Cleanup
     nil

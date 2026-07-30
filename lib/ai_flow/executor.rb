@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "open3"
@@ -15,8 +16,11 @@ module AiFlow
   # under the gh-34 long run, so the checkouts run with persist-credentials
   # off and this injection is the only git credential.
   class Executor
+    extend T::Sig
+
     # @param token_provider [AiFlow::TokenProvider, nil] nil (local runs)
     #   means ambient auth — the developer's own gh/git login
+    sig { params(token_provider: T.nilable(TokenProvider)).void }
     def initialize(token_provider: nil)
       @token_provider = token_provider
     end
@@ -26,6 +30,7 @@ module AiFlow
     # comment edits never runs on a token about to age out.
     #
     # @return [void]
+    sig { void }
     def refresh_auth!
       @token_provider&.refresh!
     end
@@ -35,11 +40,21 @@ module AiFlow
     # @param chdir [String, nil] working directory
     # @param env [Hash{String => String}] extra environment variables
     # @return [Array(String, String, Boolean)] stdout, stderr, success?
+    sig do
+      params(
+        argv: String,
+        stdin: T.nilable(String),
+        chdir: T.nilable(String),
+        env: T::Hash[String, String],
+      ).returns([String, String, T::Boolean])
+    end
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       opts = {}
       opts[:stdin_data] = stdin if stdin
       opts[:chdir] = chdir if chdir
-      out, err, status = Open3.capture3(auth_env.merge(env), *argv, **opts)
+      # T.unsafe: variadic forwarding (env hash + *argv + **opts) is beyond
+      # what Sorbet can check against Open3's sigs (srb.help/7019).
+      out, err, status = T.unsafe(Open3).capture3(auth_env.merge(env), *argv, **opts)
       [out, err, status.success?]
     rescue Errno::ENOENT => e
       ["", e.message, false]
@@ -57,10 +72,20 @@ module AiFlow
     # @param env [Hash{String => String}] extra environment variables
     # @yieldparam line [String] one stdout line, as emitted
     # @return [Array(String, Boolean)] stderr, success?
-    def stream(*argv, stdin: nil, chdir: nil, env: {})
+    sig do
+      params(
+        argv: String,
+        stdin: T.nilable(String),
+        chdir: T.nilable(String),
+        env: T::Hash[String, String],
+        on_line: T.proc.params(line: String).void,
+      ).returns([String, T::Boolean])
+    end
+    def stream(*argv, stdin: nil, chdir: nil, env: {}, &on_line)
       opts = chdir ? { chdir: chdir } : {}
-      err = ""
-      status = Open3.popen3(auth_env.merge(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
+      err = T.let("", String)
+      # T.unsafe: same variadic forwarding as capture (srb.help/7019).
+      status = T.unsafe(Open3).popen3(auth_env.merge(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
         writer = Thread.new do
           stdin_io.write(stdin) if stdin
           stdin_io.close
@@ -88,6 +113,7 @@ module AiFlow
     # shows in process listings. Empty in ambient mode.
     #
     # @return [Hash{String => String}]
+    sig { returns(T::Hash[String, String]) }
     def auth_env
       token = @token_provider&.token
       return {} unless token
@@ -102,6 +128,7 @@ module AiFlow
     end
 
     # @return [String]
+    sig { returns(String) }
     def server_url
       ENV["GITHUB_SERVER_URL"] || "https://github.com"
     end

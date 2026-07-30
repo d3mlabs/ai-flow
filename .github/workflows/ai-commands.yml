@@ -205,6 +205,16 @@ jobs:
           # should linger in its git config for the agent to read.
           persist-credentials: false
 
+      # The dispatcher's toolchain comes through dev, the org's dependency
+      # machinery: install-deps provisions the pinned Ruby (rbenv install,
+      # one-time per box) and the locked gem set from dependencies.rb —
+      # headless, so no shell hooks or credential prompts. The runner box
+      # needs dev, rbenv, and shadowenv preinstalled; Ruby and gems it does
+      # not.
+      - name: Install dispatcher dependencies
+        working-directory: .ai-flow
+        run: dev install-deps
+
       # The run must record exactly what code ran — the job log is ai-flow's
       # observability surface. Two ai-flow versions are in play and can
       # drift: this workflow YAML resolves from the caller's pin (the
@@ -219,7 +229,7 @@ jobs:
           echo "ai-flow dispatcher: $(git -C .ai-flow log -1 --format='%H (%s)')"
           echo "ai-flow workflow yaml: ${{ github.job_workflow_sha || '(empty on this runner — see referenced_workflows on the run API)' }}"
           echo "target repo: ${{ github.repository }}@$(git log -1 --format='%H')"
-          echo "ruby: $(ruby --version)"
+          echo "ruby: $(cd .ai-flow && shadowenv exec -- ruby --version)"
           echo "agent CLI: $("${AI_FLOW_AGENT_BIN:-agent}" --version 2>/dev/null || echo 'not found')"
           echo "::group::repo config (.github/ai-flow.yml)"
           [ -f .github/ai-flow.yml ] && cat .github/ai-flow.yml || echo "no .github/ai-flow.yml — code policy / CLI default"
@@ -244,4 +254,5 @@ jobs:
           # App names are globally unique, so an adopter's App may not be
           # named ai-flow — derive the bot login from the actual slug.
           AI_FLOW_BOT_LOGIN: ${{ format('{0}[bot]', steps.app-token.outputs.app-slug || 'ai-flow') }}
-        run: ruby .ai-flow/bin/dispatch.rb
+        working-directory: .ai-flow
+        run: dev dispatch

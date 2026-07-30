@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -79,7 +80,7 @@ class AiFlow::RichDiffTest < Minitest::Test
     )
 
     Expect "the backlink comes back separately from the collapsed diffs"
-    result.backlink.include?("https://github.com/o/r/issues/2#:~:text=Runtime%20carve%20operations%20stay%20on%20LOD0.")
+    T.must(result.backlink).include?("https://github.com/o/r/issues/2#:~:text=Runtime%20carve%20operations%20stay%20on%20LOD0.")
     !result.collapsed.include?("#:~:text=")
 
     Cleanup
@@ -95,7 +96,7 @@ class AiFlow::RichDiffTest < Minitest::Test
     )
 
     Expect "the fragment matches the rendered bullet text, without the marker"
-    result.backlink.include?("#:~:text=Plans%20must%20live%20remotely%20in")
+    T.must(result.backlink).include?("#:~:text=Plans%20must%20live%20remotely%20in")
 
     Cleanup
     nil

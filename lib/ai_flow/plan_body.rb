@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -5,7 +6,12 @@ module AiFlow
   # quote-anchor resolution — the remote cmd+L proxy: a reviewer's quote is
   # located by string match against the body snapshot the batch runs on.
   module PlanBody
-    module_function
+    extend T::Sig
+
+    # extend self (not module_function): module_function copies methods onto
+    # the singleton before sorbet-runtime wraps them, silently skipping every
+    # runtime sig validation. extend self keeps one wrapped method in the chain.
+    extend self
 
     # Issue bodies use CRLF line endings when edited via the GitHub web UI, so
     # normalize to LF — quote anchoring and the PATCH race check both compare
@@ -13,6 +19,7 @@ module AiFlow
     #
     # @param issue_body [String, nil]
     # @return [String] LF-normalized body with a single trailing newline
+    sig { params(issue_body: T.nilable(String)).returns(String) }
     def from_issue_body(issue_body)
       "#{(issue_body || "").gsub("\r\n", "\n").rstrip}\n"
     end
@@ -27,6 +34,7 @@ module AiFlow
     # @return [String, nil] the resolved source region, or nil when the quote
     #   is not in the body (quoted from an answer panel or discussion comment,
     #   or body text that changed between posting and execution)
+    sig { params(body: String, quote: T.nilable(String)).returns(T.nilable(String)) }
     def locate_quote(body, quote)
       return nil if quote.nil? || quote.strip.empty?
 
@@ -43,7 +51,14 @@ module AiFlow
     # quotes.
     #
     # @return [String, nil]
-    def paragraph_span(body, quote)
+    sig do
+      params(
+        body: String,
+        quote: String,
+        matcher: T.proc.params(paragraph: String, needle: String).returns(T::Boolean),
+      ).returns(T.nilable(String))
+    end
+    def paragraph_span(body, quote, &matcher)
       paragraphs = body.split(/\n{2,}/).map(&:strip).reject(&:empty?)
       needles = quote.split(/\n{2,}/).map(&:strip).reject(&:empty?)
       return nil if needles.empty?
@@ -69,6 +84,7 @@ module AiFlow
     #
     # @param text [String]
     # @return [String]
+    sig { params(text: String).returns(String) }
     def normalize(text)
       text.downcase
           .gsub(/\\(?=[[:punct:]])/, "")

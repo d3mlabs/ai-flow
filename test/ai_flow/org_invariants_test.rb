@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -27,7 +28,7 @@ class AiFlow::OrgInvariantsTest < Minitest::Test
     File.write(File.join(dir, "index.md"), INDEX)
 
     When "building the block"
-    block = AiFlow::OrgInvariants.new(cache_dir: dir).prompt_block
+    block = T.must(AiFlow::OrgInvariants.new(cache_dir: dir).prompt_block)
 
     Then "invariant lines are in, the on-demand section is cut off"
     block.include?("[design/single-responsibility]")
@@ -95,7 +96,7 @@ class AiFlow::OrgInvariantsTest < Minitest::Test
     ENV["XDG_DATA_HOME"] = data_home
 
     When "building the block without an explicit cache dir"
-    block = AiFlow::OrgInvariants.new.prompt_block
+    block = T.must(AiFlow::OrgInvariants.new.prompt_block)
 
     Then
     block.include?("[design/single-responsibility]")

@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -21,12 +22,115 @@ module AiFlow
     #   the only per-segment failure is a quote missing from that snapshot.
     # - Phase 2 is the single agent pass over the plan file.
     class Batch
+      extend T::Sig
+
+      # Where a segment's attention points, decided once by phase 1's
+      # resolution ladder (see #resolve_anchors). Sealed so prompt building
+      # dispatches exhaustively instead of re-deriving the rung from nil
+      # combinations.
+      module Anchor
+        extend T::Helpers
+        sealed!
+
+        # An unscoped segment: the whole document is the focus.
+        class WholeDocument
+          include Anchor
+        end
+
+        # The quote matched the document snapshot; span is the resolved text.
+        class DocumentSpan
+          extend T::Sig
+          include Anchor
+
+          sig { returns(String) }
+          attr_reader :span
+
+          # @param span [String]
+          sig { params(span: String).void }
+          def initialize(span:)
+            @span = span
+          end
+        end
+
+        # The quote wasn't in the document, but its source comment was found
+        # in the thread — real context the reviewer pointed at.
+        class DiscussionQuote
+          extend T::Sig
+          include Anchor
+
+          sig { returns(String) }
+          attr_reader :quote
+          sig { returns(String) }
+          attr_reader :author
+          sig { returns(String) }
+          attr_reader :url
+          sig { returns(String) }
+          attr_reader :text
+
+          # @param quote [String] the reviewer's quote
+          # @param author [String] the source comment's author login
+          # @param url [String] the source comment's URL
+          # @param text [String] the source comment's full body
+          sig { params(quote: String, author: String, url: String, text: String).void }
+          def initialize(quote:, author:, url:, text:)
+            @quote = quote
+            @author = author
+            @url = url
+            @text = text
+          end
+        end
+
+        # The quote matched neither the document nor the thread; handed to
+        # the agent verbatim, flagged as not-in-document.
+        class UnresolvedQuote
+          extend T::Sig
+          include Anchor
+
+          sig { returns(String) }
+          attr_reader :quote
+
+          # @param quote [String]
+          sig { params(quote: String).void }
+          def initialize(quote:)
+            @quote = quote
+          end
+        end
+      end
+
+      # Phase 1's output: a parsed segment plus where it points.
+      class ResolvedSegment
+        extend T::Sig
+
+        sig { returns(CommentParser::Segment) }
+        attr_reader :segment
+        sig { returns(Anchor) }
+        attr_reader :anchor
+
+        # @param segment [AiFlow::CommentParser::Segment]
+        # @param anchor [Anchor]
+        sig { params(segment: CommentParser::Segment, anchor: Anchor).void }
+        def initialize(segment:, anchor:)
+          @segment = segment
+          @anchor = anchor
+        end
+      end
+
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
       # @param agent [AiFlow::Agent]
       # @param rich_diff [AiFlow::RichDiff]
       # @param result_writer [AiFlow::ResultWriter]
       # @param workdir [String] the job's repo checkout
+      sig do
+        params(
+          context: Context,
+          github: GitHub,
+          agent: Agent,
+          rich_diff: RichDiff,
+          result_writer: ResultWriter,
+          workdir: String,
+        ).void
+      end
       def initialize(context:, github:, agent:, rich_diff:, result_writer:, workdir:)
         @context = context
         @github = github
@@ -40,20 +144,20 @@ module AiFlow
       # @return [Boolean] whether every segment succeeded (a ⚠️ result is a
       #   soft failure: it is reported on the comment, and the caller turns it
       #   into a red workflow run)
+      sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Boolean) }
       def run(segments)
         issue = @github.issue(@context.owner_repo, @context.number)
         snapshot = PlanBody.from_issue_body(issue.body)
 
         resolved = resolve_anchors(segments, snapshot)
         parsed, new_body = run_plan_file_pass(resolved, snapshot)
-        edits_applied = !new_body.nil?
-        results = segment_results(resolved, parsed, edits_applied: edits_applied)
+        results = segment_results(resolved, parsed, edits_applied: !new_body.nil?)
 
-        appendix = nil
-        if edits_applied
-          patch_body(snapshot, new_body)
-          appendix = plan_diff_appendix(snapshot, new_body)
-        end
+        appendix =
+          if new_body
+            patch_body(snapshot, new_body)
+            plan_diff_appendix(snapshot, new_body)
+          end
 
         deliver(segments, results, appendix: appendix)
       end
@@ -65,6 +169,7 @@ module AiFlow
       # deleted after the pass.
       #
       # @return [String] filename relative to the workdir
+      sig { returns(String) }
       def plan_filename
         "ai-flow-plan-#{@context.number}.md"
       end
@@ -74,6 +179,10 @@ module AiFlow
       #
       # @return [Array(AgentOutput::Parsed, String | nil)] the parsed segment
       #   results and the new body (nil when the document was not changed)
+      sig do
+        params(resolved: T::Array[ResolvedSegment], snapshot: String)
+          .returns([AgentOutput::Parsed, T.nilable(String)])
+      end
       def run_plan_file_pass(resolved, snapshot)
         path = File.join(@workdir, plan_filename)
         File.write(path, snapshot)
@@ -81,7 +190,7 @@ module AiFlow
         output = @agent.launch(
           prompt: batch_prompt(resolved),
           workdir: @workdir,
-          command: edits?(resolved) ? "edit" : "ask",
+          command: edits?(resolved) ? Command::Edit.new : Command::Ask.new,
           force: edits?(resolved),
         )
 
@@ -89,7 +198,9 @@ module AiFlow
         new_body = nil if new_body == snapshot
         [AgentOutput.parse(output), new_body]
       ensure
-        File.delete(path) if File.exist?(path)
+        # `path` is nilable here in Sorbet's flow model (an ensure can run
+        # before the first assignment), hence the extra guard.
+        File.delete(path) if path && File.exist?(path)
       end
 
       # The batch's single whole-document diff, appended once at the bottom of
@@ -97,6 +208,7 @@ module AiFlow
       # results interleave under their quotes.
       #
       # @return [String]
+      sig { params(snapshot: String, new_body: String).returns(String) }
       def plan_diff_appendix(snapshot, new_body)
         diff = @rich_diff.render(before: snapshot, after: new_body, backlink_url: @context.subject_url)
         title = @context.pull_request? ? "**Description updated**" : "**Plan updated**"
@@ -112,19 +224,26 @@ module AiFlow
       # the last rung is the quote verbatim. Unscoped segments focus the
       # whole document.
       #
-      # @return [Array<Array(Segment, String | nil, Hash | nil)>]
-      #   segment + resolved span + discussion source (see #discussion_source)
+      # @return [Array<ResolvedSegment>]
+      sig do
+        params(segments: T::Array[CommentParser::Segment], snapshot: String)
+          .returns(T::Array[ResolvedSegment])
+      end
       def resolve_anchors(segments, snapshot)
-        comments = nil
+        comments = T.let(nil, T.nilable(T::Array[GitHub::Comment]))
         segments.map do |segment|
-          span = segment.quote && PlanBody.locate_quote(snapshot, segment.quote)
-          if span || segment.quote.nil?
-            [segment, span, nil]
-          else
-            # Fetched once per batch, and only when some quote missed the body.
-            comments ||= discussion_comments
-            [segment, span, discussion_source(segment.quote, comments)]
-          end
+          quote = segment.quote
+          anchor =
+            if quote.nil?
+              Anchor::WholeDocument.new
+            elsif (span = PlanBody.locate_quote(snapshot, quote))
+              Anchor::DocumentSpan.new(span: span)
+            else
+              # Fetched once per batch, and only when some quote missed the body.
+              comments ||= discussion_comments
+              discussion_anchor(quote, comments)
+            end
+          ResolvedSegment.new(segment: segment, anchor: anchor)
         end
       end
 
@@ -134,34 +253,50 @@ module AiFlow
       # appended word/source diffs live, pure noise describing stale document
       # states.
       #
-      # @return [Array<Hash>]
+      # @return [Array<AiFlow::GitHub::Comment>]
+      sig { returns(T::Array[GitHub::Comment]) }
       def discussion_comments
         @github.issue_comments(@context.owner_repo, @context.number)
-               .reject { |comment| comment["id"] == @context.comment_id }
-               .map { |comment| comment.merge("body" => strip_details(comment["body"].to_s)) }
+               .reject { |comment| comment.id == @context.comment_id }
+               .map { |comment| comment.with_body(strip_details(comment.body)) }
       end
 
       # The earliest comment containing the quote — later matches are usually
       # re-quotes of the original.
       #
-      # @return [Hash{Symbol => String}, nil] author, url, text
-      def discussion_source(quote, comments)
-        comment = comments.find { |candidate| PlanBody.locate_quote(candidate["body"], quote) }
-        return nil unless comment
+      # @param quote [String]
+      # @param comments [Array<AiFlow::GitHub::Comment>] the thread
+      #   (see #discussion_comments)
+      # @return [Anchor] DiscussionQuote when a source comment was found,
+      #   UnresolvedQuote otherwise
+      sig { params(quote: String, comments: T::Array[GitHub::Comment]).returns(Anchor) }
+      def discussion_anchor(quote, comments)
+        comment = comments.find { |candidate| PlanBody.locate_quote(candidate.body, quote) }
+        return Anchor::UnresolvedQuote.new(quote: quote) unless comment
 
-        { author: comment.dig("user", "login"), url: comment["html_url"], text: comment["body"] }
+        Anchor::DiscussionQuote.new(
+          quote: quote,
+          author: comment.author,
+          url: comment.html_url,
+          text: comment.body,
+        )
       end
 
       # @return [String]
+      sig { params(text: String).returns(String) }
       def strip_details(text)
         text.gsub(%r{<details>.*?</details>}m, "(collapsed diff omitted)")
       end
 
+      # @param resolved [Array<ResolvedSegment>]
+      # @return [String] the single agent pass's prompt
+      sig { params(resolved: T::Array[ResolvedSegment]).returns(String) }
       def batch_prompt(resolved)
-        segment_descriptions = resolved.each_with_index.map do |(segment, span, source), index|
+        segment_descriptions = resolved.each_with_index.map do |resolved_segment, index|
+          segment = resolved_segment.segment
           <<~SEGMENT
-            <<<SEGMENT #{index + 1}: /#{segment.command}>>>
-            #{segment_focus(segment, span, source)}
+            <<<SEGMENT #{index + 1}: /#{CommentParser.word_for(segment.command)}>>>
+            #{segment_focus(resolved_segment.anchor)}
             Instruction: #{segment.instruction.empty? ? "(none — the quote itself is the subject)" : segment.instruction}
           SEGMENT
         end.join("\n")
@@ -189,6 +324,7 @@ module AiFlow
       end
 
       # @return [String] what the document is, for the agent's benefit
+      sig { returns(String) }
       def document_description
         @context.pull_request? ? "the description of a GitHub pull request" : "a GitHub issue body"
       end
@@ -198,12 +334,14 @@ module AiFlow
       # target; the hunk explains what prompted the feedback.
       #
       # @return [String] empty outside review threads
+      sig { returns(String) }
       def review_thread_anchor
-        return "" unless @context.diff_hunk
+        context = @context
+        return "" unless context.is_a?(Context::ReviewComment)
 
         <<~ANCHOR
-          The command was posted on a code review thread anchored at `#{@context.diff_path}` — this code is what prompted the feedback (the document is still the thing to edit or answer about):
-          #{@context.diff_hunk}
+          The command was posted on a code review thread anchored at `#{context.diff_path}` — this code is what prompted the feedback (the document is still the thing to edit or answer about):
+          #{context.diff_hunk}
         ANCHOR
       end
 
@@ -213,37 +351,47 @@ module AiFlow
       # that comment (author, link, text); otherwise the quote verbatim,
       # flagged as not-in-document.
       #
+      # @param anchor [Anchor]
       # @return [String]
-      def segment_focus(segment, span, source)
-        if span
-          "Focus (the quoted section this feedback concerns):\n#{span}"
-        elsif source
+      sig { params(anchor: Anchor).returns(String) }
+      def segment_focus(anchor)
+        case anchor
+        when Anchor::DocumentSpan
+          "Focus (the quoted section this feedback concerns):\n#{anchor.span}"
+        when Anchor::DiscussionQuote
           <<~FOCUS.strip
-            Context (quoted from @#{source[:author]}'s comment #{source[:url]} on this issue — this text is NOT in the document):
-            #{segment.quote}
+            Context (quoted from @#{anchor.author}'s comment #{anchor.url} on this issue — this text is NOT in the document):
+            #{anchor.quote}
 
             The full source comment, for context:
-            #{source[:text]}
+            #{anchor.text}
           FOCUS
-        elsif segment.quote
-          "Context (quoted by the reviewer from the discussion — this text is NOT in the document):\n#{segment.quote}"
-        else
+        when Anchor::UnresolvedQuote
+          "Context (quoted by the reviewer from the discussion — this text is NOT in the document):\n#{anchor.quote}"
+        when Anchor::WholeDocument
           "Focus: the whole document"
+        else
+          T.absurd(anchor)
         end
       end
 
       # @param edits_applied [Boolean] whether the document changed —
       #   an /edit whose pass left the document untouched must not render ✅
       # @return [Array<Array(Segment, String)>]
+      sig do
+        params(resolved: T::Array[ResolvedSegment], parsed: AgentOutput::Parsed, edits_applied: T::Boolean)
+          .returns(T::Array[[CommentParser::Segment, String]])
+      end
       def segment_results(resolved, parsed, edits_applied:)
-        resolved.each_with_index.map do |(segment, _span), index|
+        resolved.each_with_index.map do |resolved_segment, index|
+          segment = resolved_segment.segment
           text = parsed.segments[index + 1]
-          if segment.command == "edit" && text&.start_with?("CONFLICT:")
+          if segment.command == Command::Edit.new && text&.start_with?("CONFLICT:")
             [segment, "⚠️ **/edit** — #{text}"]
-          elsif segment.command == "edit" && !edits_applied
+          elsif segment.command == Command::Edit.new && !edits_applied
             [segment, "⚠️ **/edit** — the agent made no change to the document." \
                       "#{text ? " Its report: #{text}" : ""}"]
-          elsif segment.command == "edit"
+          elsif segment.command == Command::Edit.new
             # A missing summary is cosmetic when the edit itself landed — the
             # appended diff carries the change; don't fail the batch over it.
             [segment, "✅ **/edit** — #{text || "(the agent returned no summary — see the diff below)"}"]
@@ -257,6 +405,9 @@ module AiFlow
 
       # One guarded PATCH for the whole batch: refetch and refuse when the body
       # moved since the snapshot (the single updated_at race window).
+      #
+      # @return [void]
+      sig { params(snapshot: String, new_body: String).void }
       def patch_body(snapshot, new_body)
         current = @github.issue(@context.owner_repo, @context.number)
         if PlanBody.from_issue_body(current.body) != snapshot
@@ -267,9 +418,11 @@ module AiFlow
         @github.update_issue_body(@context.owner_repo, @context.number, body: new_body)
       end
 
-      # @param resolved [Array<Array(Segment, String | nil)>]
+      # @param resolved [Array<ResolvedSegment>]
+      # @return [Boolean] whether any segment is an /edit
+      sig { params(resolved: T::Array[ResolvedSegment]).returns(T::Boolean) }
       def edits?(resolved)
-        resolved.any? { |segment, _span| segment.command == "edit" }
+        resolved.any? { |resolved_segment| resolved_segment.segment.command == Command::Edit.new }
       end
 
       # Standalone /ask gets a reply (a question-and-answer is a legitimate
@@ -281,9 +434,16 @@ module AiFlow
       #
       # @param appendix [String, nil] batch-level block (the plan diff)
       # @return [Boolean] whether every segment result is a success
+      sig do
+        params(
+          segments: T::Array[CommentParser::Segment],
+          results: T::Array[[CommentParser::Segment, String]],
+          appendix: T.nilable(String),
+        ).returns(T::Boolean)
+      end
       def deliver(segments, results, appendix: nil)
-        if !@context.review_summary? && segments.size == 1 && segments.first.command == "ask" && appendix.nil?
-          reply(with_footer(results.first.last))
+        if !@context.review_summary? && segments.size == 1 && segments.first&.command == Command::Ask.new && appendix.nil?
+          reply(with_footer(T.must(results.first).last))
           # The reply doesn't rewrite the command comment, so the dispatcher's
           # ⏳ status line (only added inside Actions, where run_url is set)
           # must be cleared explicitly.
@@ -295,11 +455,15 @@ module AiFlow
       end
 
       # @return [String] the text with the run-link footer, when in Actions
+      sig { params(text: String).returns(String) }
       def with_footer(text)
         footer = @result_writer.footer(@context.run_url)
         footer ? "#{text}\n\n#{footer}" : text
       end
 
+      # @param text [String]
+      # @return [void]
+      sig { params(text: String).void }
       def reply(text)
         if @context.review_comment?
           @github.reply_to_review_comment(@context.owner_repo, @context.number, @context.comment_id, text)

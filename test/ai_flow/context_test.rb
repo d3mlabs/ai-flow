@@ -1,10 +1,39 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
 require "support/fakes"
+require "fileutils"
+require "json"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::ContextTest < Minitest::Test
+  test "from_event_file reads the payload file and routes to the surface leaf" do
+    Given "a pull_request_review payload written where GITHUB_EVENT_PATH would point"
+    dir = Dir.mktmpdir("ai-flow-test-")
+    path = File.join(dir, "event.json")
+    File.write(path, JSON.generate(
+                       "repository" => { "full_name" => "d3mlabs/demo" },
+                       "pull_request" => { "number" => 3, "head" => { "ref" => "feature-branch" } },
+                       "review" => {
+                         "id" => 77, "body" => "/build address my review", "author_association" => "OWNER",
+                         "html_url" => "https://github.com/d3mlabs/demo/pull/3#pullrequestreview-77",
+                       },
+                     ))
+
+    When "loading the context from the file"
+    context = AiFlow::Context.from_event_file(event_name: "pull_request_review", event_path: path)
+
+    Then "it is the review-summary leaf with the payload's fields"
+    context.is_a?(AiFlow::Context::ReviewSummary)
+    context.comment_body == "/build address my review"
+    context.subject_url == "https://github.com/d3mlabs/demo/pull/3"
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
   test "run_url points at the Actions run described by the job env" do
     Given "a context with the standard Actions env"
     context = ContextBuilder.issue_comment(

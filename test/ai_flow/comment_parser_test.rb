@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -14,7 +15,7 @@ class AiFlow::CommentParserTest < Minitest::Test
 
     Expect "one unscoped segment with the instruction"
     segments.size == 1
-    segments.first.command == "ask"
+    segments.first.command == AiFlow::Command::Ask.new
     segments.first.quote.nil?
     segments.first.instruction == "why is the carve system split into two phases?"
 
@@ -64,7 +65,7 @@ class AiFlow::CommentParserTest < Minitest::Test
     segments = parse(body)
 
     Then "three segments, each with its own quote and owned free text"
-    segments.map(&:command) == ["edit", "ask", "edit"]
+    segments.map(&:command) == [AiFlow::Command::Edit.new, AiFlow::Command::Ask.new, AiFlow::Command::Edit.new]
     segments[0].quote == "Section A text."
     segments[1].quote == "Section B text."
     segments[1].instruction == "is this still true?\nMore context for the question,\nspanning two lines."
@@ -90,7 +91,7 @@ class AiFlow::CommentParserTest < Minitest::Test
     segments = parse("/build --split focus on the server-side subtasks first")
 
     Expect
-    segments.first.command == "build"
+    segments.first.command == AiFlow::Command::Build.new
     segments.first.flags == ["--split"]
     segments.first.instruction == "focus on the server-side subtasks first"
 
@@ -105,7 +106,7 @@ class AiFlow::CommentParserTest < Minitest::Test
 
     Expect "/ai-ask matches and bare /ask does not"
     segments.size == 1
-    segments.first.command == "ask"
+    segments.first.command == AiFlow::Command::Ask.new
     unprefixed.empty?
 
     Cleanup
@@ -156,7 +157,7 @@ class AiFlow::CommentParserTest < Minitest::Test
 
     Expect "one segment carrying the flag; targets/steering stay verbatim in the instruction"
     segments.size == 1
-    segments.first.command == "learn"
+    segments.first.command == AiFlow::Command::Learn.new
     segments.first.flags == ["--scan"]
     segments.first.instruction == "the backend and its clients, focus on error handling"
 
@@ -204,6 +205,16 @@ class AiFlow::CommentParserTest < Minitest::Test
 
     Expect
     segments.empty?
+
+    Cleanup
+    nil
+  end
+
+  test "word_for inverts the vocabulary table" do
+    Expect "every command in the table maps back to its comment word"
+    AiFlow::CommentParser::COMMAND_WORDS.all? do |word, command|
+      AiFlow::CommentParser.word_for(command) == word
+    end
 
     Cleanup
     nil

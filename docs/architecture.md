@@ -31,7 +31,7 @@ flowchart LR
     end
 
     subgraph runnerZone [Self-hosted runners]
-        dispatcher["bin/dispatch.rb + lib/ai_flow<br/>(stdlib-only Ruby)"]
+        dispatcher["bin/dispatch.rb + lib/ai_flow<br/>(Ruby, provisioned via dev install-deps)"]
         agentCli["headless Cursor agent CLI<br/>(CURSOR_API_KEY)"]
     end
 
@@ -86,7 +86,7 @@ sequenceDiagram
     Note over Workflow: runs-on picks the per-command label,<br/>heaviest command wins in a batch<br/>(or dev-login when per_actor_runners)
     Workflow->>GitHub: mint App installation token (required)
     Workflow->>Workflow: checkout target repo + ai-flow (persist-credentials off)
-    Workflow->>Dispatcher: ruby dispatch.rb (App id + key in env)
+    Workflow->>Dispatcher: dev dispatch (App id + key in env)
     Dispatcher->>Dispatcher: TokenProvider reads the key, scrubs it from env;<br/>every subprocess gets an age-checked fresh token
     Dispatcher->>Dispatcher: re-parse grammar + permission gate
     Dispatcher->>GitHub: react with eyes (deduped backstop of the ack job)
@@ -112,10 +112,11 @@ a question and answer is a legitimate two-comment conversation.
 
 ## Dispatcher module map
 
-Everything under `lib/ai_flow/`, stdlib-only at runtime. The two injectable
-boundaries are `Executor` (every subprocess: `gh`, `git`, `agent`) and the
-classes built on it — tests fake exactly those and run everything else for
-real.
+Everything under `lib/ai_flow/`. The runtime gem surface is exactly
+`sorbet-runtime` (typed with Sorbet; the toolchain and gems reach the runner
+through `dev install-deps`). The two injectable boundaries are `Executor`
+(every subprocess: `gh`, `git`, `agent`) and the classes built on it — tests
+fake exactly those and run everything else for real.
 
 ```mermaid
 flowchart TD

@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -13,8 +14,9 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   # survive RSpock's block-parameter destructuring where arrays don't);
   # `dirty` controls whether the staged diff reports changes (i.e. whether
   # the agent "wrote" anything), `workflows_patch` seeds a staged diff under
-  # .github/workflows (the exclusion path).
-  class RecordingExecutor
+  # .github/workflows (the exclusion path). Subclasses the real class so
+  # sorbet-runtime's sig checks accept it at the injection seam.
+  class RecordingExecutor < AiFlow::Executor
     attr_reader :command_lines, :refreshes
 
     # `capture_patch` seeds a staged diff under the learning paths (build-time
@@ -61,7 +63,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   def run_build(github:, executor:, body: "/build", context: nil, agent: FakeAgent.new(["done"]),
     org_invariants: empty_org_invariants, workdir: Dir.pwd)
     context ||= ContextBuilder.issue_comment(number: 7, body: body)
-    segment = AiFlow::CommentParser.new.parse(body).first
+    segment = AiFlow::CommentParser.new.parse(body).fetch(0)
     AiFlow::Commands::Build.new(
       context: context,
       github: github,
@@ -106,21 +108,42 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "/build on an issue targeting another repo clones it instead of adding a worktree" do
+    Given "an org-wide issue declaring a Target repos: line for a different repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\nTarget repos: d3mlabs/other\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+    command_lines = executor.command_lines
+
+    Then "the target repo is cloned via gh and the PR opens there, not in the issue repo"
+    command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/other") }
+    command_lines.none? { |line| line.include?("worktree add") }
+    github.calls.include?([:create_pull_request, "d3mlabs/other", "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
   test "/build on a PR iterates on the head branch and replies to swept threads" do
     Given "a PR with an unresolved review thread and a /build with an instruction"
     github = FakeGitHub.new
     github.seed_review_threads(REPO, 7, [
-      {
-        "path" => "lib/thing.rb", "diff_hunk" => "@@ -1 +1 @@",
-        "first_comment_id" => 91,
-        "comments" => [{ "author" => "jpduchesne", "body" => "this walk is O(n^2)", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/thing.rb", diff_hunk: "@@ -1 +1 @@", first_comment_id: 91,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "this walk is O(n^2)", url: "u",
+        )],
+      ),
       # A thread a command started is a handled conversation, not feedback.
-      {
-        "path" => "lib/other.rb", "diff_hunk" => "@@ -2 +2 @@",
-        "first_comment_id" => 92,
-        "comments" => [{ "author" => "jpduchesne", "body" => "/ask why this?", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/other.rb", diff_hunk: "@@ -2 +2 @@", first_comment_id: 92,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "/ask why this?", url: "u",
+        )],
+      ),
     ])
     context = ContextBuilder.issue_comment(number: 7, body: "/build fix the failing CI", pull_request: true)
     executor = RecordingExecutor.new
@@ -244,7 +267,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
     github.seed_sub_issues(REPO, 7, [
       AiFlow::GitHub::Issue.new(
-        number: 12, title: "Server API", body: "", updated_at: "2026-07-13T00:00:00Z",
+        number: 12, title: "Server API", body: "",
         html_url: "https://github.com/#{REPO}/issues/12", state: "open", repo: REPO,
       ),
     ])
@@ -269,11 +292,11 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.seed_parent(REPO, 12, github.issue(REPO, 7))
     github.seed_sub_issues(REPO, 7, [
       AiFlow::GitHub::Issue.new(
-        number: 12, title: "Server API", body: "Part of #{REPO}#7.\n", updated_at: "2026-07-13T00:00:00Z",
+        number: 12, title: "Server API", body: "Part of #{REPO}#7.\n",
         html_url: "https://github.com/#{REPO}/issues/12", state: "open", repo: REPO,
       ),
       AiFlow::GitHub::Issue.new(
-        number: 13, title: "Client UI", body: "Part of #{REPO}#7.\n", updated_at: "2026-07-13T00:00:00Z",
+        number: 13, title: "Client UI", body: "Part of #{REPO}#7.\n",
         html_url: "https://github.com/#{REPO}/issues/13", state: "open", repo: REPO,
       ),
     ])
@@ -528,7 +551,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "a PR iteration with an open ai/learn-pr-7 draft and a pass that re-staged learning files"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
     executor = RecordingExecutor.new(
       capture_patch: LEARNING_PATCH,
@@ -553,7 +576,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "an open learning draft whose generalization this pass dissolved (no learning diff left)"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
@@ -574,7 +597,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "an open learning draft whose branch can't be fetched into the worktree"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "", fail_on: ["fetch origin ai/learn-pr-7"])
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
@@ -621,7 +644,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       end
     end.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])

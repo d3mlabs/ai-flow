@@ -1,8 +1,10 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
 require "json"
 require "openssl"
+require "socket"
 
 # In-memory GitHub App endpoints: installation lookup + token mint, counting
 # mints and handing out sequenced tokens so freshness is observable.
@@ -170,7 +172,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
 
   test "the mint JWT authenticates as the App and is verifiable with its key" do
     Given "an API that captures the Authorization header"
-    captured = nil
+    captured = T.let(nil, T.nilable(String))
     http = lambda do |_method, url, headers|
       captured ||= headers.fetch("Authorization")
       if url.end_with?("/orgs/d3mlabs/installation")
@@ -183,7 +185,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
 
     When "minting"
     provider.token
-    header_b64, payload_b64, signature_b64 = captured.sub("Bearer ", "").split(".")
+    header_b64, payload_b64, signature_b64 = T.must(captured).sub("Bearer ", "").split(".")
     payload = JSON.parse(pad_base64url(payload_b64).tr("-_", "+/").unpack1("m0"))
     signing_input = "#{header_b64}.#{payload_b64}"
     signature = pad_base64url(signature_b64).tr("-_", "+/").unpack1("m0")
@@ -211,6 +213,41 @@ class AiFlow::TokenProviderTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  test "the default in-process transport speaks real HTTP to the API host" do
+    Given "a local server standing in for the GitHub API (a real socket — the transport is the boundary under test)"
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.addr[1]
+    responses = [
+      JSON.generate(id: 42),
+      JSON.generate(token: "ghs_over_the_wire"),
+    ]
+    server_thread = Thread.new do
+      2.times do
+        socket = server.accept
+        # Drain request head (line-by-line up to the blank separator); the
+        # canned responses don't depend on it.
+        loop { break if socket.readline == "\r\n" }
+        body = T.must(responses.shift)
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: #{body.bytesize}\r\n\r\n#{body}")
+        socket.close
+      end
+    end
+
+    When "minting without an injected http lambda"
+    provider = AiFlow::TokenProvider.new(
+      app_id: "1234", private_key_pem: KEY.to_pem, owner: "d3mlabs",
+      api_url: "http://127.0.0.1:#{port}", clock: -> { Time.at(1_700_000_000) },
+    )
+    token = provider.token
+
+    Then "the installation lookup and the mint both traveled the wire"
+    token == "ghs_over_the_wire"
+
+    Cleanup
+    server_thread.join
+    server.close
   end
 
   # Ruby's unpack1("m0") insists on padded input; JWT segments drop padding.

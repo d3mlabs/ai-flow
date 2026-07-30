@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -6,23 +7,37 @@ module AiFlow
   # everything server-side state depends on: parseability, the permission
   # gate, and batch validity. Failures are reported on the comment itself.
   class Dispatcher
+    extend T::Sig
+
     # @param context [AiFlow::Context]
     # @param workdir [String] the job's repo checkout
     # @param prefix [String] configured command prefix ("" by default)
     # @param github [AiFlow::GitHub]
     # @param agent [AiFlow::Agent]
     # @param executor [AiFlow::Executor]
-    def initialize(context:, workdir:, prefix: "", github: nil, agent: nil, executor: Executor.new)
+    sig do
+      params(
+        context: Context,
+        workdir: String,
+        prefix: String,
+        executor: Executor,
+        github: GitHub,
+        agent: Agent,
+      ).void
+    end
+    def initialize(context:, workdir:, prefix: "", executor: Executor.new,
+                   github: GitHub.new(executor: executor), agent: Agent.new(executor: executor))
       @context = context
       @workdir = workdir
       @prefix = prefix
       @executor = executor
-      @github = github || GitHub.new(executor: executor)
-      @agent = agent || Agent.new(executor: executor)
-      @result_writer = ResultWriter.new(github: @github, agent: @agent)
+      @github = github
+      @agent = agent
+      @result_writer = T.let(ResultWriter.new(github: github, agent: agent), ResultWriter)
     end
 
     # @return [void]
+    sig { void }
     def run
       unless authorized?
         warn "ai-flow: comment author is #{@context.author_association} — not authorized, ignoring."
@@ -52,11 +67,16 @@ module AiFlow
     # review-comment payloads under-report it (an org MEMBER can arrive as
     # CONTRIBUTOR), so a miss falls back to the collaborator-permission API —
     # the authoritative answer. A failed lookup denies (fail closed).
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
     def authorized?
       return true if @context.authorized?
-      return false unless @context.commenter_login
 
-      permission = @github.collaborator_permission(@context.owner_repo, @context.commenter_login)
+      login = @context.commenter_login
+      return false unless login
+
+      permission = @github.collaborator_permission(@context.owner_repo, login)
       %w[admin write].include?(permission)
     rescue GitHub::Error
       false
@@ -65,6 +85,9 @@ module AiFlow
     # 👀 while running — acknowledgement is a reaction, never a status
     # comment. Review summaries have no reactions API at all, so their
     # acknowledgment is the review panel's ⏳ comment (announce_running).
+    #
+    # @return [void]
+    sig { void }
     def acknowledge
       return if @context.review_summary?
 
@@ -87,6 +110,8 @@ module AiFlow
     # review panel) is the writer's concern.
     #
     # @param segments [Array<CommentParser::Segment>]
+    # @return [void]
+    sig { params(segments: T::Array[CommentParser::Segment]).void }
     def announce_running(segments)
       url = @context.run_url
       return unless url
@@ -98,12 +123,13 @@ module AiFlow
     end
 
     # @param segments [Array<CommentParser::Segment>]
-    # @return [Hash{String => String}] the effective command => its model
-    #   (same shape as Agent#models_used, which will hold exactly this
-    #   entry after the pass)
+    # @return [Hash{AiFlow::Command => AiFlow::ModelSelection}] the effective
+    #   command => its selection (same shape as Agent#models_used, which will
+    #   hold exactly this entry after the pass)
+    sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Hash[Command, ModelSelection]) }
     def predicted_models(segments)
       command = effective_command(segments)
-      { command => @agent.model_for(command, @workdir) || "cursor default" }
+      { command => @agent.model_for(command, @workdir) }
     end
 
     # The command the job will actually launch under, mirroring #route: a
@@ -112,39 +138,51 @@ module AiFlow
     # comment's only command and launches under its own policy.
     #
     # @param segments [Array<CommentParser::Segment>]
-    # @return [String]
+    # @return [AiFlow::Command]
+    sig { params(segments: T::Array[CommentParser::Segment]).returns(Command) }
     def effective_command(segments)
       if segments.all? { |segment| CommentParser::BATCHABLE_COMMANDS.include?(segment.command) }
-        segments.any? { |segment| segment.command == "edit" } ? "edit" : "ask"
+        segments.any? { |segment| segment.command == Command::Edit.new } ? Command::Edit.new : Command::Ask.new
       else
-        segments.first.command
+        T.must(segments.first).command
       end
     end
 
     # @return [Boolean] whether the command(s) fully succeeded — only batches
     #   have per-segment soft failures; the other commands raise on failure.
+    sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Boolean) }
     def route(segments)
-      if segments.all? { |segment| CommentParser::BATCHABLE_COMMANDS.include?(segment.command) }
-        batch.run(segments)
-      elsif segments.first.command == "split"
-        split.run(segments.first)
-        true
-      elsif segments.first.command == "learn"
-        learn.run(segments.first)
-        true
-      elsif segments.first.flags.include?("--split")
-        if @context.pull_request?
-          raise CommentParser::ParseError, "/build --split runs on plan issues, not pull requests."
-        end
+      # The parser guarantees comment shape — batchable commands may share a
+      # comment (the whole comment batches as one pass) and lifecycle
+      # commands arrive alone — so the first segment's command routes the
+      # comment. Exhaustive over the sealed hierarchy: a new command fails
+      # srb here until routed.
+      segment = T.must(segments.first)
+      case (command = segment.command)
+      when Command::Ask, Command::Edit
+        return batch.run(segments)
+      when Command::Split
+        split.run(segment)
+      when Command::Learn
+        learn.run(segment)
+      when Command::Build
+        if segment.flags.include?("--split")
+          if @context.pull_request?
+            raise CommentParser::ParseError, "/build --split runs on plan issues, not pull requests."
+          end
 
-        build_split.run(segments.first)
-        true
+          build_split.run(segment)
+        else
+          build.run(segment)
+        end
       else
-        build.run(segments.first)
-        true
+        T.absurd(command)
       end
+      true
     end
 
+    # @return [Commands::Batch]
+    sig { returns(Commands::Batch) }
     def batch
       Commands::Batch.new(
         context: @context, github: @github, agent: @agent,
@@ -153,6 +191,8 @@ module AiFlow
       )
     end
 
+    # @return [Commands::Split]
+    sig { returns(Commands::Split) }
     def split
       Commands::Split.new(
         context: @context, github: @github, agent: @agent,
@@ -160,6 +200,8 @@ module AiFlow
       )
     end
 
+    # @return [Commands::Build]
+    sig { returns(Commands::Build) }
     def build
       Commands::Build.new(
         context: @context, github: @github, agent: @agent, executor: @executor,
@@ -167,12 +209,16 @@ module AiFlow
       )
     end
 
+    # @return [Commands::BuildSplit]
+    sig { returns(Commands::BuildSplit) }
     def build_split
       Commands::BuildSplit.new(
         context: @context, github: @github, build: build, result_writer: @result_writer,
       )
     end
 
+    # @return [Commands::Learn]
+    sig { returns(Commands::Learn) }
     def learn
       Commands::Learn.new(
         context: @context, github: @github, agent: @agent, executor: @executor,
@@ -185,6 +231,9 @@ module AiFlow
     # loop's own telemetry: seeing whether a learning actually gets consulted
     # feeds later retire decisions. Run-page only — deliberately kept off the
     # ⚙️ result footer to avoid cluttering the comment panel.
+    #
+    # @return [void]
+    sig { void }
     def append_knowledge_summary
       path = ENV["GITHUB_STEP_SUMMARY"].to_s
       return if path.empty?
@@ -201,10 +250,17 @@ module AiFlow
 
     # Failures land on the command comment too (in place when we know the
     # segments, as a note otherwise) — never silent, never a separate thread.
+    #
+    # @param segments [Array<CommentParser::Segment>, nil] nil when parsing
+    #   itself failed
+    # @param error [StandardError]
+    # @return [void]
+    sig { params(segments: T.nilable(T::Array[CommentParser::Segment]), error: StandardError).void }
     def report_failure(segments, error)
       message = "⚠️ **ai-flow failed:** #{error.message}"
-      if segments && !segments.empty?
-        @result_writer.write(@context, [[segments.first, message]])
+      first_segment = segments&.first
+      if first_segment
+        @result_writer.write(@context, [[first_segment, message]])
       else
         footer = @result_writer.footer(@context.run_url)
         message = "#{message}\n\n#{footer}" if footer

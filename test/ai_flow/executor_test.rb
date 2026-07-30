@@ -1,11 +1,13 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
 require "rbconfig"
 
 # A provider stub with a scripted token sequence — observable freshness
-# without real minting.
-class ScriptedTokenProvider
+# without real minting. Subclasses the real class so sorbet-runtime's sig
+# checks accept it at the injection seam.
+class ScriptedTokenProvider < AiFlow::TokenProvider
   attr_reader :refreshes
 
   def initialize(tokens)

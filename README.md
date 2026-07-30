@@ -125,8 +125,11 @@ requesting human, whose accountability lives on the PR (`Requested by
    register N instances for N parallel jobs. Repos using `dev` can run
    `dev runner-setup`.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
-   and make sure it — and a Ruby >= 3.0 — is on the runner service's PATH
-   (the dispatcher is a stdlib-only Ruby script).
+   and make sure it — plus `dev`, rbenv, and shadowenv — is on the runner
+   service's PATH. Ruby itself and the dispatcher's gems are not
+   prerequisites: the workflow runs `dev install-deps` in the ai-flow
+   checkout, which provisions the pinned Ruby (an rbenv install, one-time
+   per box) and the locked gem set from `dependencies.rb`.
 5. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
    model policy (`models.default`, per-command overrides — see
    [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));
@@ -170,10 +173,12 @@ or SHA would only freeze half the system and silently split the two versions.
 ## Development
 
 ```sh
-bundle install
-bundle exec rake test
+dev up         # provision the pinned Ruby + install locked gems
+dev test       # run the suite
+dev typecheck  # sorbet static typecheck
 ```
 
-The Ruby is stdlib-only at runtime (shells out to `gh`, `git`, and `agent`);
-gems are test-only. Tests fake exactly those boundaries and exercise
-everything else for real.
+The runtime dependency surface is deliberately thin: `sorbet-runtime` (the
+sigs and sealed hierarchies check at runtime too) plus shell-outs to `gh`,
+`git`, and `agent`; everything else is development- or test-only. Tests fake
+exactly those subprocess boundaries and exercise everything else for real.

@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -14,7 +15,10 @@ class AiFlow::Commands::LearnTest < Minitest::Test
   # agent "wrote" into the learning worktree. `staged_queue` (when given)
   # instead consumes one list per diff call, so a multi-phase form like
   # --promote can stage on the org side and come up empty on the removal side.
-  class RecordingExecutor
+  # Subclasses the real class so sorbet-runtime's sig checks accept it.
+  class RecordingExecutor < AiFlow::Executor
+    extend T::Sig
+
     attr_reader :command_lines, :refreshes
 
     def initialize(staged: [], staged_queue: nil)
@@ -36,6 +40,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     private
 
+    sig { returns(T::Array[String]) }
     def next_staged
       @staged_queue ? (@staged_queue.shift || []) : @staged
     end
@@ -68,7 +73,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
   def run_learn(github:, executor:, body:, context: nil, agent: FakeAgent.new(["done"]), workdir: Dir.pwd)
     context ||= ContextBuilder.issue_comment(number: 7, body: body)
-    segment = AiFlow::CommentParser.new.parse(body).first
+    segment = AiFlow::CommentParser.new.parse(body).fetch(0)
     AiFlow::Commands::Learn.new(
       context: context,
       github: github,
@@ -117,7 +122,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods", agent: agent)
 
     Then "the agent got the dictated statement, and a proposal PR opened on ai/learn-c55 — ordinary, not GitHub draft state — with the marker"
-    agent.launches.first[:command] == "learn"
+    agent.launches.first[:command] == AiFlow::Command::Learn.new
     agent.prompts.first.include?("DICTATED LESSON")
     agent.prompts.first.include?("prefer a factory over class methods")
     github.calls.include?([:create_pull_request, REPO, "ai/learn-c55", "main"])
@@ -137,11 +142,12 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_review_threads(REPO, 7, [
-      {
-        "path" => "lib/thing.rb", "diff_hunk" => "@@ -1 +1 @@",
-        "first_comment_id" => 91,
-        "comments" => [{ "author" => "jpduchesne", "body" => "this pattern keeps recurring", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/thing.rb", diff_hunk: "@@ -1 +1 @@", first_comment_id: 91,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "this pattern keeps recurring", url: "u",
+        )],
+      ),
     ])
     github.seed_issue_comment(REPO, 7, id: 70, body: "we should always do X", login: "jpduchesne")
     executor = RecordingExecutor.new(staged: [INDEX, SKILL])
@@ -163,11 +169,12 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_review_threads(REPO, 7, [
-      {
-        "path" => "lib/thing.rb", "diff_hunk" => "@@ -1 +1 @@",
-        "first_comment_id" => 91,
-        "comments" => [{ "author" => "jpduchesne", "body" => "this pattern keeps recurring", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/thing.rb", diff_hunk: "@@ -1 +1 @@", first_comment_id: 91,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "this pattern keeps recurring", url: "u",
+        )],
+      ),
     ])
     github.seed_issue_comment(REPO, 7, id: 70, body: "we should always do X", login: "jpduchesne")
     agent = FakeAgent.new(["done"])
@@ -191,7 +198,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     executor = RecordingExecutor.new(staged: [INDEX, SKILL])
     context = ContextBuilder.issue_comment(number: 7, body: "/learn", pull_request: true)
 
@@ -266,7 +273,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     Given "an open scan draft on ai/learn-scan"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-scan",
-      { "html_url" => "https://github.com/#{REPO}/pull/510", "number" => 510 })
+      AiFlow::GitHub::PullRequest.new(number: 510, html_url: "https://github.com/#{REPO}/pull/510"))
     executor = RecordingExecutor.new(staged: [INDEX])
 
     When "rescanning"
@@ -396,7 +403,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     promotable_workdir(dir)
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-promote-demo-typed-errors",
-      { "html_url" => "https://github.com/d3mlabs/knowledge/pull/12", "number" => 12 })
+      AiFlow::GitHub::PullRequest.new(number: 12, html_url: "https://github.com/d3mlabs/knowledge/pull/12"))
     executor = RecordingExecutor.new(staged: ["index.md", "skills/typed-errors/SKILL.md"])
 
     When "promoting again"

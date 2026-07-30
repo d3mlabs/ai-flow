@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -8,17 +9,29 @@ module AiFlow
   #   <<<AI-FLOW:SEGMENT 1>>>
   #   (segment 1's answer / edit summary)
   module AgentOutput
+    # Sorbet models bare modules without Object's ancestry, so Kernel methods
+    # (lambda, Integer) need the explicit include (srb.help/7003).
+    include Kernel
+    extend T::Sig
+
     SEGMENT_DELIMITER = /<<<AI-FLOW:SEGMENT (\d+)>>>/
 
-    Parsed = Struct.new(:segments, keyword_init: true)
+    # Segment-index → text map.
+    class Parsed < T::Struct
+      const :segments, T::Hash[Integer, String]
+    end
 
-    module_function
+    # extend self (not module_function): module_function copies methods onto
+    # the singleton before sorbet-runtime wraps them, silently skipping every
+    # runtime sig validation. extend self keeps one wrapped method in the chain.
+    extend self
 
     # @param output [String] raw agent output
     # @return [Parsed] segment-index → text map
+    sig { params(output: String).returns(Parsed) }
     def parse(output)
-      segments = {}
-      current = nil
+      segments = T.let({}, T::Hash[Integer, String])
+      current = T.let(nil, T.nilable(Integer))
       buffer = []
 
       flush = lambda do
@@ -45,6 +58,7 @@ module AiFlow
     #
     # @param output [String]
     # @return [String]
+    sig { params(output: String).returns(String) }
     def normalize_delimiters(output)
       output.to_s.gsub(SEGMENT_DELIMITER) { "\n#{Regexp.last_match(0)}\n" }
     end

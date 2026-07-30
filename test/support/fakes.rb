@@ -1,10 +1,13 @@
+# typed: true
 # frozen_string_literal: true
 
 # In-memory stand-ins for the network/process boundaries, so command flows are
 # exercised end to end with real parsing/diffing and only gh/agent faked.
 
 # Records every GitHub call; issues are seeded and mutated in memory.
-class FakeGitHub
+# Subclasses the real class so sorbet-runtime's sig checks accept it at the
+# injection seams; every method the tests reach is overridden here.
+class FakeGitHub < AiFlow::GitHub
   attr_reader :calls, :comments, :comment_edits, :comment_edit_history
 
   def initialize
@@ -15,11 +18,14 @@ class FakeGitHub
     @comment_edits = {}
     @comment_edit_history = []
     @next_number = 100
+    # Declared non-nil in the real class's initializer (never called here),
+    # so the fake owns the same invariant.
+    @owner_repos = {}
   end
 
   def seed_issue(owner_repo, number, title:, body:, state: "open")
     @issues[[owner_repo, number]] = AiFlow::GitHub::Issue.new(
-      number: number, title: title, body: body, updated_at: "2026-07-13T00:00:00Z",
+      number: number, title: title, body: body,
       html_url: "https://github.com/#{owner_repo}/issues/#{number}", state: state, repo: owner_repo,
     )
   end
@@ -53,15 +59,20 @@ class FakeGitHub
   def post_issue_comment(owner_repo, number, body)
     @calls << [:post_issue_comment, owner_repo, number]
     @comments << body
-    { "id" => 1, "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-1" }
+    AiFlow::GitHub::Comment.new(
+      id: 1, author: "ai-flow", body: body,
+      html_url: "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-1",
+      created_at: Time.now,
+    )
   end
 
   def seed_issue_comment(owner_repo, number, id:, body:, login: "jpduchesne")
     @issue_comments ||= {}
-    (@issue_comments[[owner_repo, number]] ||= []) << {
-      "id" => id, "body" => body, "user" => { "login" => login },
-      "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{id}",
-    }
+    (@issue_comments[[owner_repo, number]] ||= []) << AiFlow::GitHub::Comment.new(
+      id: id, author: login, body: body,
+      html_url: "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{id}",
+      created_at: Time.now,
+    )
   end
 
   def issue_comments(owner_repo, number)
@@ -87,13 +98,12 @@ class FakeGitHub
   end
 
   def seed_owner_repos(owner, names)
-    @owner_repos ||= {}
     @owner_repos[owner] = names
   end
 
   def owner_repos(owner)
     @calls << [:owner_repos, owner]
-    (@owner_repos || {})[owner] || []
+    @owner_repos[owner] || []
   end
 
   def seed_app_installed_repos(names)
@@ -106,7 +116,7 @@ class FakeGitHub
 
   def open_issues(owner_repo, limit: 50)
     @calls << [:open_issues, owner_repo]
-    @issues.values.select { |issue| issue.repo == owner_repo && issue.state == "open" }.first(limit)
+    @issues.values.select { |issue| issue.repo == owner_repo && issue.open? }.first(limit)
   end
 
   def seed_permission(login, permission)
@@ -170,7 +180,7 @@ class FakeGitHub
     @pull_request_titles << title
     @pull_request_drafts ||= []
     @pull_request_drafts << draft
-    { "html_url" => "https://github.com/#{owner_repo}/pull/900", "number" => 900, "body" => body, "draft" => draft }
+    AiFlow::GitHub::PullRequest.new(number: 900, html_url: "https://github.com/#{owner_repo}/pull/900")
   end
 
   def pull_request_bodies
@@ -242,13 +252,14 @@ end unless defined?(FakeGitHub)
 
 # Replays canned agent outputs and records prompts. The optional block runs
 # on each launch (receiving the prompt) — file-based tests use it to edit the
-# plan file exactly like the real agent would.
-class FakeAgent
+# plan file exactly like the real agent would. Subclasses the real class so
+# sorbet-runtime's sig checks accept it at the injection seams.
+class FakeAgent < AiFlow::Agent
   attr_reader :prompts, :launches, :models_used, :knowledge_applied
 
-  # @param models_by_command [Hash{String => String}, nil] per-command
-  #   models, for tests exercising which policy a pass launches under;
-  #   `model` is the flat answer otherwise
+  # @param models_by_command [Hash{AiFlow::Command => String}, nil]
+  #   per-command model handles, for tests exercising which policy a pass
+  #   launches under; `model` is the flat answer otherwise
   # @param knowledge_applied [Array<String>] canned skill/rule reads, for
   #   tests exercising the dispatcher's step-summary telemetry
   def initialize(outputs, model: "fake-model", models_by_command: nil, knowledge_applied: [], &on_launch)
@@ -265,15 +276,17 @@ class FakeAgent
   def launch(prompt:, workdir:, command:, force: false)
     @prompts << prompt
     @launches << { command: command, force: force, workdir: workdir }
-    @models_used[command] = model_for(command, workdir) || "cursor default"
+    @models_used[command] = model_for(command, workdir)
     @on_launch&.call(prompt)
     @outputs.shift or raise AiFlow::Agent::Error, "no canned output left"
   end
 
-  # Mirrors Agent#model_for's pre-launch prediction: the canned model, as
-  # nil (CLI default) when the fake was built without one.
+  # Mirrors Agent#model_for's contract: always a ModelSelection. The fake's
+  # constructor stays string-based for test ergonomics; coercion happens
+  # here, at the same seam the real resolver owns.
   def model_for(command, _workdir)
-    @models_by_command ? @models_by_command[command] : @model
+    handle = @models_by_command ? @models_by_command[command] : @model
+    handle ? AiFlow::ModelSelection::Named.new(handle) : AiFlow::ModelSelection::AccountDefault.new
   end
 end unless defined?(FakeAgent)
 
@@ -286,7 +299,7 @@ module ContextBuilder
   def issue_comment(owner_repo: "d3mlabs/demo", number: 7, comment_id: 55, body:, association: "OWNER", pull_request: false, env: {})
     issue = { "number" => number }
     issue["pull_request"] = { "url" => "x" } if pull_request
-    AiFlow::Context.new(
+    AiFlow::Context.from_event(
       event_name: "issue_comment",
       payload: {
         "repository" => { "full_name" => owner_repo },
@@ -302,7 +315,7 @@ module ContextBuilder
   end
 
   def review_summary(owner_repo: "d3mlabs/demo", number: 3, review_id: 77, body:, association: "OWNER", env: {})
-    AiFlow::Context.new(
+    AiFlow::Context.from_event(
       event_name: "pull_request_review",
       payload: {
         "repository" => { "full_name" => owner_repo },
@@ -318,7 +331,7 @@ module ContextBuilder
   end
 
   def review_comment(owner_repo: "d3mlabs/demo", number: 3, comment_id: 9, body:, association: "OWNER", env: {})
-    AiFlow::Context.new(
+    AiFlow::Context.from_event(
       event_name: "pull_request_review_comment",
       payload: {
         "repository" => { "full_name" => owner_repo },

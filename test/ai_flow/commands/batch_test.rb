@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -57,6 +58,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     Then "one forced agent pass, one body PATCH, interleaved results, one bottom diff"
     success == true
     agent.prompts.size == 1
+    agent.prompts.first.include?("<<<SEGMENT 1: /edit>>>")
     agent.launches.first[:force] == true
     github.calls.map(&:first).count(:update_issue_body) == 1
     github.issue(REPO, 7).body == new_body

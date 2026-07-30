@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -14,12 +15,18 @@ module AiFlow
   # review panel: posted once, updated thereafter, quoting the review text
   # so the panel stays self-contained. One comment either way.
   class ResultWriter
+    extend T::Sig
+
     # @param github [AiFlow::GitHub]
     # @param agent [AiFlow::Agent, nil] source of truth for the models the
     #   run actually used; nil (e.g. in tests) leaves the footer run-link-only
+    sig { params(github: GitHub, agent: T.nilable(Agent)).void }
     def initialize(github:, agent: nil)
       @github = github
       @agent = agent
+      # Set on the review-panel surface's first write (see
+      # upsert_review_panel); later writes edit that comment in place.
+      @review_panel_comment_id = T.let(nil, T.nilable(Integer))
     end
 
     # Pure body transformation. Per-segment panels insert after each
@@ -35,10 +42,20 @@ module AiFlow
     # @param appendix [String, nil] batch-level block (the plan diff)
     # @param run_url [String, nil] the Actions run that produced the results
     # @return [String] the updated comment body
+    sig do
+      params(
+        original_body: String,
+        results: T::Array[[CommentParser::Segment, String]],
+        appendix: T.nilable(String),
+        run_url: T.nilable(String),
+      ).returns(String)
+    end
     def render(original_body, results, appendix: nil, run_url: nil)
       lines = original_body.gsub("\r\n", "\n").split("\n", -1)
       results.sort_by { |segment, _result| -segment.end_line }.each do |segment, result|
-        lines.insert(segment.end_line + 1, "", *blockquote(result))
+        # Splice assignment instead of insert: Sorbet can't type a splat of
+        # a runtime-sized array into insert's rest param (srb.help/7019).
+        lines[segment.end_line + 1, 0] = ["", *blockquote(result)]
       end
 
       body = lines.join("\n").rstrip
@@ -50,6 +67,7 @@ module AiFlow
     # @param run_url [String, nil]
     # @return [String, nil] the post-hoc observability line: run link, plus
     #   the model(s) the agent actually ran on when it ran at all
+    sig { params(run_url: T.nilable(String)).returns(T.nilable(String)) }
     def footer(run_url)
       return nil unless run_url
 
@@ -60,23 +78,41 @@ module AiFlow
     # In practice this renders one name: a job launches under a single
     # command policy (a batch is one agent pass — run as /edit when any
     # edit is present — and /build --split's fan-out passes all share the
-    # "build" key), so models_used holds one entry. Distinct values (if
-    # per-segment passes ever exist) list out. nil for an empty hash (no
+    # Build key), so models_used holds one entry. Distinct values (if
+    # per-segment passes ever exist) list out — uniq works because
+    # ModelSelection carries value equality. nil for an empty hash (no
     # agent pass: failure before launch, /split --apply) so the caller's
     # line stays run-link-only. A class method so the dispatcher's ⏳
     # status line renders its pre-launch prediction with the same grammar
     # as the footer.
     #
-    # @param models [Hash{String => String}] command => model
+    # @param models [Hash{AiFlow::Command => AiFlow::ModelSelection}]
     # @return [String, nil]
+    sig { params(models: T::Hash[Command, ModelSelection]).returns(T.nilable(String)) }
     def self.models_note(models)
       return nil if models.empty?
 
-      "model: #{models.values.uniq.map { |model| "`#{model}`" }.join(", ")}"
+      "model: #{models.values.uniq.map { |selection| "`#{model_label(selection)}`" }.join(", ")}"
     end
+
+    # This boundary's rendering of a selection — the comment-footer
+    # vocabulary (deliberately distinct from Agent's run-log label).
+    #
+    # @param selection [AiFlow::ModelSelection]
+    # @return [String]
+    sig { params(selection: ModelSelection).returns(String) }
+    def self.model_label(selection)
+      case selection
+      when ModelSelection::Named then selection.handle
+      when ModelSelection::AccountDefault then "cursor default"
+      else T.absurd(selection)
+      end
+    end
+    private_class_method :model_label
 
     # @param text [String]
     # @return [Array<String>] the text's lines, each quote-prefixed
+    sig { params(text: String).returns(T::Array[String]) }
     def blockquote(text)
       text.split("\n", -1).map { |line| line.empty? ? ">" : "> #{line}" }
     end
@@ -88,6 +124,13 @@ module AiFlow
     # @param results [Array<Array(CommentParser::Segment, String)>]
     # @param appendix [String, nil]
     # @return [void]
+    sig do
+      params(
+        context: Context,
+        results: T::Array[[CommentParser::Segment, String]],
+        appendix: T.nilable(String),
+      ).void
+    end
     def write(context, results, appendix: nil)
       if context.review_summary?
         upsert_review_panel(context, render_review_panel(context, results, appendix: appendix))
@@ -104,6 +147,7 @@ module AiFlow
     # @param context [AiFlow::Context]
     # @param status [String] the ⏳ line, composed by the dispatcher
     # @return [void]
+    sig { params(context: Context, status: String).void }
     def announce(context, status)
       if context.review_summary?
         body = [review_panel_header(context), "", *blockquote(context.comment_body.gsub("\r\n", "\n")), "", status]
@@ -122,6 +166,13 @@ module AiFlow
     # @param results [Array<Array(CommentParser::Segment, String)>]
     # @param appendix [String, nil]
     # @return [String] the panel comment's body
+    sig do
+      params(
+        context: Context,
+        results: T::Array[[CommentParser::Segment, String]],
+        appendix: T.nilable(String),
+      ).returns(String)
+    end
     def render_review_panel(context, results, appendix: nil)
       lines = blockquote(context.comment_body.gsub("\r\n", "\n"))
       results.sort_by { |segment, _result| -segment.end_line }.each do |segment, result|
@@ -141,6 +192,7 @@ module AiFlow
     # @param context [AiFlow::Context]
     # @param body [String]
     # @return [void]
+    sig { params(context: Context, body: String).void }
     def write_raw(context, body)
       if context.review_comment?
         @github.update_review_comment(context.owner_repo, context.comment_id, body: body)
@@ -153,18 +205,25 @@ module AiFlow
 
     # @return [String] the panel's attribution line — the panel is a bot
     #   comment, so it must name whose review it answers
+    sig { params(context: Context).returns(String) }
     def review_panel_header(context)
       "In reply to #{context.commenter_login}'s [review](#{context.comment_url}):"
     end
 
     # First write posts the panel comment; every later write edits it, so
     # the surface keeps the one-comment protocol of the other surfaces.
+    #
+    # @param context [AiFlow::Context]
+    # @param body [String]
+    # @return [void]
+    sig { params(context: Context, body: String).void }
     def upsert_review_panel(context, body)
-      if @review_panel_comment_id
-        @github.update_issue_comment(context.owner_repo, @review_panel_comment_id, body: body)
+      panel_id = @review_panel_comment_id
+      if panel_id
+        @github.update_issue_comment(context.owner_repo, panel_id, body: body)
       else
         comment = @github.post_issue_comment(context.owner_repo, context.number, body)
-        @review_panel_comment_id = comment.fetch("id")
+        @review_panel_comment_id = comment.id
       end
     end
   end

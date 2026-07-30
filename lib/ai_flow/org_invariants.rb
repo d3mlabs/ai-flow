@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 module AiFlow
@@ -14,6 +15,8 @@ module AiFlow
   # mechanism, and a machine without the knowledge repo has no invariants
   # to carry.
   class OrgInvariants
+    extend T::Sig
+
     # Layout mirrors dev's Dev::Knowledge::Cache: the clone lives at
     # $XDG_DATA_HOME/dev/knowledge (~/.local/share/dev/knowledge) with the
     # always-on index at its root.
@@ -25,14 +28,16 @@ module AiFlow
     INVARIANTS_HEADING = /^## Invariants\b/
     SECTION_HEADING = /^## /
 
-    # @param cache_dir [String, nil] override for tests; defaults to the
-    #   machine cache dev maintains
-    def initialize(cache_dir: nil)
-      @cache_dir = cache_dir || default_cache_dir
+    # @param cache_dir [String] override for tests; defaults to the machine
+    #   cache dev maintains
+    sig { params(cache_dir: String).void }
+    def initialize(cache_dir: default_cache_dir)
+      @cache_dir = cache_dir
     end
 
     # @return [String, nil] the prompt section carrying the invariants, nil
     #   when the machine has no synced knowledge cache (or no invariants)
+    sig { returns(T.nilable(String)) }
     def prompt_block
       lines = invariant_lines
       return nil unless lines
@@ -52,12 +57,13 @@ module AiFlow
     # section doesn't exist — all normal states of the world, not errors.
     #
     # @return [String, nil]
+    sig { returns(T.nilable(String)) }
     def invariant_lines
       index = File.join(@cache_dir, INDEX_FILE)
       return nil unless File.file?(index)
 
       section = []
-      in_section = false
+      in_section = T.let(false, T::Boolean)
       File.read(index).each_line do |line|
         if line.match?(INVARIANTS_HEADING)
           in_section = true
@@ -74,6 +80,7 @@ module AiFlow
     end
 
     # @return [String]
+    sig { returns(String) }
     def default_cache_dir
       data_home = ENV.fetch("XDG_DATA_HOME", File.join(Dir.home, ".local", "share"))
       File.join(data_home, "dev", "knowledge")
