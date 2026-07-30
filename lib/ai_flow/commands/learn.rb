@@ -73,6 +73,62 @@ module AiFlow
         T::Array[String],
       )
 
+      # Where a learn-form draft comes from (dictated, sweep, or scan): the
+      # branch is the refine key, the marker records surface + form in the
+      # PR body, the title names the draft PR, and dictated? switches the
+      # evidence framing between the human's statement and a surface sweep.
+      class Source
+        extend T::Sig
+
+        sig { returns(String) }
+        attr_reader :branch
+        sig { returns(String) }
+        attr_reader :marker
+        sig { returns(String) }
+        attr_reader :title
+
+        # @param branch [String]
+        # @param marker [String]
+        # @param title [String]
+        # @param dictated [Boolean]
+        sig { params(branch: String, marker: String, title: String, dictated: T::Boolean).void }
+        def initialize(branch:, marker:, title:, dictated:)
+          @branch = branch
+          @marker = marker
+          @title = title
+          @dictated = dictated
+        end
+
+        # @return [Boolean] a statement was dictated (vs a bare sweep)
+        sig { returns(T::Boolean) }
+        def dictated? = @dictated
+      end
+
+      # The built surface /build captures learnings from: the branch is the
+      # refine key (issue-keyed, so --split sub-builds never force-push over
+      # each other's drafts), ref is "owner/repo#n" for the marker, url the
+      # PR-body link.
+      class CaptureSource
+        extend T::Sig
+
+        sig { returns(String) }
+        attr_reader :branch
+        sig { returns(String) }
+        attr_reader :ref
+        sig { returns(String) }
+        attr_reader :url
+
+        # @param branch [String]
+        # @param ref [String]
+        # @param url [String]
+        sig { params(branch: String, ref: String, url: String).void }
+        def initialize(branch:, ref:, url:)
+          @branch = branch
+          @ref = ref
+          @url = url
+        end
+      end
+
       # One build pass's capture in flight: seeded before the agent runs
       # (seed_capture), given its staged learning diff after the commit's
       # `git add -A` (extract_capture), consumed by land_capture. The three
@@ -82,8 +138,8 @@ module AiFlow
       class Capture
         extend T::Sig
 
-        # @return [Hash] the built surface — :branch, :marker, :title, :url
-        sig { returns(T::Hash[Symbol, T.untyped]) }
+        # @return [CaptureSource] the built surface
+        sig { returns(CaptureSource) }
         attr_reader :source
 
         # @return [AiFlow::GitHub::PullRequest, nil] the surface's open draft
@@ -97,11 +153,11 @@ module AiFlow
         sig { returns(T.nilable(String)) }
         attr_accessor :patch
 
-        # @param source [Hash]
+        # @param source [CaptureSource]
         # @param existing [AiFlow::GitHub::PullRequest, nil]
         sig do
           params(
-            source: T::Hash[Symbol, T.untyped],
+            source: CaptureSource,
             existing: T.nilable(GitHub::PullRequest),
           ).void
         end
@@ -181,12 +237,9 @@ module AiFlow
       # refines (or dissolves) them instead of drafting blind duplicates.
       #
       # @param dir [String] the build worktree
-      # @param source [Hash] the built surface — :branch (the refine key,
-      #   e.g. ai/learn-issue-12; keyed on the built issue so --split
-      #   sub-builds never force-push over each other's drafts), :ref
-      #   ("owner/repo#n" for the marker), :url (the PR-body link)
+      # @param source [CaptureSource] the built surface
       # @return [void]
-      sig { params(dir: String, source: T::Hash[Symbol, T.untyped]).void }
+      sig { params(dir: String, source: CaptureSource).void }
       def seed_capture(dir, source)
         @capture = Capture.new(source: source, existing: seeded_draft(dir, source))
       end
@@ -252,24 +305,25 @@ module AiFlow
       # drafting blind duplicates.
       #
       # @param dir [String] the build worktree
-      # @param source [Hash] the built surface (:branch is the refine key)
+      # @param source [CaptureSource] the built surface (branch is the
+      #   refine key)
       # @return [AiFlow::GitHub::PullRequest, nil] the draft PR, nil when
       #   there is none — or when its files couldn't be fetched: without
       #   them in the tree, "the agent deleted them" can't be inferred, so
       #   forgetting the draft keeps an empty capture a no-op instead of
       #   closing a PR the agent never saw
-      sig { params(dir: String, source: T::Hash[Symbol, T.untyped]).returns(T.nilable(GitHub::PullRequest)) }
+      sig { params(dir: String, source: CaptureSource).returns(T.nilable(GitHub::PullRequest)) }
       def seeded_draft(dir, source)
-        existing = @github.open_pull_request_for_head(@context.owner_repo, source.fetch(:branch))
+        existing = @github.open_pull_request_for_head(@context.owner_repo, source.branch)
         return nil unless existing
 
-        _out, _err, ok = @executor.capture("git", "fetch", "origin", source.fetch(:branch), chdir: dir)
+        _out, _err, ok = @executor.capture("git", "fetch", "origin", source.branch, chdir: dir)
         return nil unless ok
 
         # T.unsafe: splatting the pathspec constant into capture's rest param
         # is beyond Sorbet's static splat support (srb.help/7019).
         T.unsafe(@executor).capture(
-          "git", "checkout", "origin/#{source.fetch(:branch)}", "--", *CAPTURE_PATHSPECS, chdir: dir,
+          "git", "checkout", "origin/#{source.branch}", "--", *CAPTURE_PATHSPECS, chdir: dir,
         )
         existing
       end
@@ -287,17 +341,17 @@ module AiFlow
       # The branch + marker naming per form (the branch is the refine key;
       # the marker records the source surface and form in the PR body).
       #
-      # @return [Hash] :branch, :marker, :title, :dictated
-      sig { params(segment: CommentParser::Segment).returns(T::Hash[Symbol, T.untyped]) }
+      # @return [Source]
+      sig { params(segment: CommentParser::Segment).returns(Source) }
       def source_descriptor(segment)
         repo_ref = "#{@context.owner_repo}##{@context.number}"
         if dictated?(segment)
           # Source is the single comment, so each dictation is its own draft.
-          { branch: "ai/learn-c#{@context.comment_id}", marker: "learned-from: #{repo_ref} (dictated)",
-            title: "dictated learning", dictated: true }
+          Source.new(branch: "ai/learn-c#{@context.comment_id}", marker: "learned-from: #{repo_ref} (dictated)",
+                     title: "dictated learning", dictated: true)
         else
-          { branch: surface_branch, marker: "learned-from: #{repo_ref} (learn-sweep)",
-            title: "learnings from #{repo_ref}", dictated: false }
+          Source.new(branch: surface_branch, marker: "learned-from: #{repo_ref} (learn-sweep)",
+                     title: "learnings from #{repo_ref}", dictated: false)
         end
       end
 
@@ -323,12 +377,12 @@ module AiFlow
       # @return [void]
       sig { params(segment: CommentParser::Segment).void }
       def scan(segment)
-        source = {
+        source = Source.new(
           branch: "ai/learn-scan",
           marker: "learned-from: #{@context.owner_repo}##{@context.number} (scan)",
           title: "learnings from a codebase survey",
           dictated: false,
-        }
+        )
         draft(segment, source, scan_prompt(segment))
       end
 
@@ -583,14 +637,14 @@ module AiFlow
       sig do
         params(
           segment: CommentParser::Segment,
-          source: T::Hash[Symbol, T.untyped],
+          source: Source,
           prompt: String,
         ).void
       end
       def draft(segment, source, prompt)
-        existing = @github.open_pull_request_for_head(@context.owner_repo, source[:branch])
+        existing = @github.open_pull_request_for_head(@context.owner_repo, source.branch)
 
-        outcome = in_worktree(source[:branch], refine: !existing.nil?) do |worktree|
+        outcome = in_worktree(source.branch, refine: !existing.nil?) do |worktree|
           @agent.launch(prompt: prompt, workdir: worktree, command: Command::Learn.new, force: true)
           # The agent may have run close to the token's lifetime; the write
           # phase (commit, push, PR) starts on a fresh mint.
@@ -598,7 +652,7 @@ module AiFlow
           slugs = commit_learnings(worktree)
           next { slugs: [] } if slugs.empty?
 
-          push_branch(worktree, source[:branch])
+          push_branch(worktree, source.branch)
           pr = existing || open_learning_pr(source, segment)
           { slugs: slugs, pr: pr, refined: !existing.nil? }
         end
@@ -608,7 +662,7 @@ module AiFlow
 
       # @return [String] the capture pass's prompt
       sig do
-        params(segment: CommentParser::Segment, source: T::Hash[Symbol, T.untyped])
+        params(segment: CommentParser::Segment, source: Source)
           .returns(String)
       end
       def learn_prompt(segment, source)
@@ -670,11 +724,11 @@ module AiFlow
       #
       # @return [String]
       sig do
-        params(segment: CommentParser::Segment, source: T::Hash[Symbol, T.untyped])
+        params(segment: CommentParser::Segment, source: Source)
           .returns(String)
       end
       def evidence_section(segment, source)
-        return "DICTATED LESSON (the human already distilled it — format, dedup, and place it):\n#{dictated_evidence(segment)}\n" if source[:dictated]
+        return "DICTATED LESSON (the human already distilled it — format, dedup, and place it):\n#{dictated_evidence(segment)}\n" if source.dictated?
 
         <<~EVIDENCE
           SWEEP THIS SURFACE — distill what generalizes from the #{@context.pull_request? ? "pull request" : "issue"} below. The diff and code are in this checkout; read them for what the feedback is about.
@@ -777,7 +831,7 @@ module AiFlow
       #
       # @return [AiFlow::GitHub::PullRequest] the created proposal PR
       sig do
-        params(source: T::Hash[Symbol, T.untyped], segment: CommentParser::Segment)
+        params(source: Source, segment: CommentParser::Segment)
           .returns(GitHub::PullRequest)
       end
       def open_learning_pr(source, segment)
@@ -785,13 +839,13 @@ module AiFlow
         body = <<~BODY
           Draft learning(s) captured from #{source_link}.
 
-          #{requested_by}#{evidence_quote(segment, source)}#{source[:marker]}
+          #{requested_by}#{evidence_quote(segment, source)}#{source.marker}
         BODY
         @github.create_pull_request(
           @context.owner_repo,
-          title: "ai-flow /learn: #{source[:title]}",
+          title: "ai-flow /learn: #{source.title}",
           body: body,
-          head: source[:branch],
+          head: source.branch,
           base: @github.default_branch(@context.owner_repo),
         )
       end
@@ -802,11 +856,11 @@ module AiFlow
       #
       # @return [String]
       sig do
-        params(segment: CommentParser::Segment, source: T::Hash[Symbol, T.untyped])
+        params(segment: CommentParser::Segment, source: Source)
           .returns(String)
       end
       def evidence_quote(segment, source)
-        return "" unless source[:dictated]
+        return "" unless source.dictated?
 
         "> #{segment.instruction.gsub("\n", "\n> ")}\n\n"
       end
@@ -853,16 +907,16 @@ module AiFlow
         params(
           patch: String,
           existing: T.nilable(GitHub::PullRequest),
-          source: T::Hash[Symbol, T.untyped],
+          source: CaptureSource,
         ).returns(T.nilable(String))
       end
       def land_patch(patch, existing, source)
-        in_worktree(source.fetch(:branch), refine: false) do |worktree|
+        in_worktree(source.branch, refine: false) do |worktree|
           apply_patch(worktree, patch)
           slugs = commit_learnings(worktree, message: "ai-flow /build: capture learnings from the build pass")
           next nil if slugs.empty?
 
-          push_branch(worktree, source.fetch(:branch))
+          push_branch(worktree, source.branch)
           pr = existing || open_capture_pr(source)
           verb = existing ? "refined" : "drafted"
           lines = ["🧠 #{verb} #{learning_count(slugs)} in a draft learning PR: #{pr.html_url}"]
@@ -885,18 +939,18 @@ module AiFlow
 
       # @return [AiFlow::GitHub::PullRequest] the created proposal PR
       #   (ordinary, not GitHub draft state — see open_learning_pr)
-      sig { params(source: T::Hash[Symbol, T.untyped]).returns(GitHub::PullRequest) }
+      sig { params(source: CaptureSource).returns(GitHub::PullRequest) }
       def open_capture_pr(source)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
-          Draft learning(s) captured by the /build pass on #{source.fetch(:url)} (#{source.fetch(:ref)}).
+          Draft learning(s) captured by the /build pass on #{source.url} (#{source.ref}).
 
-          #{requested_by}learned-from: #{source.fetch(:ref)} (build-sweep)
+          #{requested_by}learned-from: #{source.ref} (build-sweep)
         BODY
         @github.create_pull_request(
           @context.owner_repo,
-          title: "ai-flow /learn: learnings from #{source.fetch(:ref)}",
-          body: body, head: source.fetch(:branch), base: @github.default_branch(@context.owner_repo),
+          title: "ai-flow /learn: learnings from #{source.ref}",
+          body: body, head: source.branch, base: @github.default_branch(@context.owner_repo),
         )
       end
 

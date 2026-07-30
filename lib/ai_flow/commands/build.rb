@@ -704,28 +704,28 @@ module AiFlow
         code_repo == @context.owner_repo && RepoConfig.load(config_dir).learn_on_build?
       end
 
-      # @return [Hash] the built issue as a capture source — keyed on the
-      #   issue (not the comment surface) so --split sub-builds each get
-      #   their own learning draft
-      sig { params(issue: GitHub::Issue, issue_repo: String).returns(T::Hash[Symbol, T.untyped]) }
+      # @return [Learn::CaptureSource] the built issue as a capture source —
+      #   keyed on the issue (not the comment surface) so --split sub-builds
+      #   each get their own learning draft
+      sig { params(issue: GitHub::Issue, issue_repo: String).returns(Learn::CaptureSource) }
       def issue_capture_source(issue, issue_repo)
-        {
+        Learn::CaptureSource.new(
           branch: "ai/learn-issue-#{issue.number}",
           ref: "#{issue_repo}##{issue.number}",
           url: issue.html_url,
-        }
+        )
       end
 
-      # @return [Hash] the iterated PR as a capture source — the same branch
-      #   a bare /learn sweep uses on this PR, so either pass refines the
-      #   other's draft (the linked-update rule)
-      sig { returns(T::Hash[Symbol, T.untyped]) }
+      # @return [Learn::CaptureSource] the iterated PR as a capture source —
+      #   the same branch a bare /learn sweep uses on this PR, so either
+      #   pass refines the other's draft (the linked-update rule)
+      sig { returns(Learn::CaptureSource) }
       def pr_capture_source
-        {
+        Learn::CaptureSource.new(
           branch: "ai/learn-pr-#{@context.number}",
           ref: "#{@context.owner_repo}##{@context.number}",
           url: pull_request_url,
-        }
+        )
       end
 
       # Sub-issues are thin tracking shards — the parent plan is the spec.
