@@ -13,16 +13,21 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
   class RecordingBuild < AiFlow::Commands::Build
     attr_reader :built
 
-    def initialize
+    def initialize(no_changes_on: [])
       @built = []
+      @no_changes_on = no_changes_on
     end
 
     def build_issue(issue, extra_instruction: "")
       @built << issue.number
-      AiFlow::Commands::Build::Outcome::PrOpened.new(
-        url: "https://github.com/d3mlabs/demo/pull/#{issue.number}",
-        capture_note: nil, workflows_patch: nil,
-      )
+      if @no_changes_on.include?(issue.number)
+        AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_note: nil, workflows_patch: nil)
+      else
+        AiFlow::Commands::Build::Outcome::PrOpened.new(
+          url: "https://github.com/d3mlabs/demo/pull/#{issue.number}",
+          capture_note: nil, workflows_patch: nil,
+        )
+      end
     end
   end
 
@@ -56,6 +61,32 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     Then "waves respect Depends on and integration is last"
     build.built == [1, 2, 3, 4]
     github.comment_edits.fetch(55).include?("✅ **/build --split**")
+    github.comment_edits.fetch(55).include?("[x] #{REPO}#4 Integration: Parent")
+
+    Cleanup
+    nil
+  end
+
+  test "a sub-issue the agent had nothing to build for is checked off as no-changes" do
+    Given "two sub-issues, one of which will produce no changes"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1\n"),
+    ])
+    build = RecordingBuild.new(no_changes_on: [1])
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+
+    Then "the checklist marks the no-changes build distinctly from a built one"
+    github.comment_edits.fetch(55).include?("[-] #{REPO}#1 Server API — no changes needed")
     github.comment_edits.fetch(55).include?("[x] #{REPO}#4 Integration: Parent")
 
     Cleanup
