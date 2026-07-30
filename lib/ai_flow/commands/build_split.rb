@@ -20,9 +20,64 @@ module AiFlow
 
       INTEGRATION_TITLE_PREFIX = "Integration:"
 
-      # A checklist entry: { state: Symbol, detail: String } (detail is
-      # optional for :no_changes).
-      ProgressEntry = T.type_alias { T::Hash[Symbol, T.untyped] }
+      # One sub-issue's orchestration state, rendered exhaustively by
+      # checklist_line. Absence from the progress map means "not built yet".
+      module Progress
+        extend T::Helpers
+        include Kernel # is_a? for srb without the experimental requires_ancestor
+        sealed!
+
+        # /build opened a PR for the sub-issue.
+        class Built
+          extend T::Sig
+          include Progress
+
+          sig { returns(String) }
+          attr_reader :url
+
+          # @param url [String]
+          sig { params(url: String).void }
+          def initialize(url:)
+            @url = url
+          end
+        end
+
+        # /build ran but the pass produced no code changes.
+        class NoChanges
+          include Progress
+        end
+
+        # The orchestrator cannot drive this node (external issue or
+        # intended-repo fallback) — never enters a wave.
+        class Skipped
+          extend T::Sig
+          include Progress
+
+          sig { returns(String) }
+          attr_reader :reason
+
+          # @param reason [String]
+          sig { params(reason: String).void }
+          def initialize(reason:)
+            @reason = reason
+          end
+        end
+
+        # A dependency is skipped, blocked, or an open external issue.
+        class Blocked
+          extend T::Sig
+          include Progress
+
+          sig { returns(String) }
+          attr_reader :reason
+
+          # @param reason [String]
+          sig { params(reason: String).void }
+          def initialize(reason:)
+            @reason = reason
+          end
+        end
+      end
 
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
@@ -53,8 +108,8 @@ module AiFlow
           wave.each do |issue|
             progress[ref_of(issue)] =
               case (outcome = @build.build_issue(issue))
-              when Build::Outcome::PrOpened then { state: :built, detail: outcome.url }
-              when Build::Outcome::NothingToBuild then { state: :no_changes }
+              when Build::Outcome::PrOpened then Progress::Built.new(url: outcome.url)
+              when Build::Outcome::NothingToBuild then Progress::NoChanges.new
               else T.absurd(outcome)
               end
             publish_checklist(segment, waves, sub_issues, progress)
@@ -81,23 +136,25 @@ module AiFlow
       # (transitively) depending on one — those enter the checklist as
       # skipped/blocked and never reach the build loop.
       #
-      # @return [Hash{String => Hash}] ref => { state:, detail: }
+      # @return [Hash{String => Progress}] ref => progress
       sig do
         params(parent: GitHub::Issue, sub_issues: T::Array[GitHub::Issue])
-          .returns(T::Hash[String, ProgressEntry])
+          .returns(T::Hash[String, Progress])
       end
       def undrivable_progress(parent, sub_issues)
         annotations = SubtasksSection.applied_annotations(parent.body)
         refs = sub_issues.map { |issue| ref_of(issue) }
-        progress = {}
+        progress = T.let({}, T::Hash[String, Progress])
 
         sub_issues.each do |issue|
           ref = ref_of(issue)
           if (intended = issue.body[/^Intended repo:\s*(.+)$/, 1])
-            progress[ref] = { state: :skipped, detail: "fallback placeholder — the work lands in #{intended.strip}, " \
-                                                       "where the ai-flow App is not installed" }
+            progress[ref] = Progress::Skipped.new(
+              reason: "fallback placeholder — the work lands in #{intended.strip}, " \
+                      "where the ai-flow App is not installed",
+            )
           elsif (annotation = annotations[ref])
-            progress[ref] = { state: :skipped, detail: "#{annotation} external issue — owned outside this plan" }
+            progress[ref] = Progress::Skipped.new(reason: "#{annotation} external issue — owned outside this plan")
           end
         end
 
@@ -114,7 +171,7 @@ module AiFlow
         params(
           sub_issues: T::Array[GitHub::Issue],
           refs: T::Array[String],
-          progress: T::Hash[String, ProgressEntry],
+          progress: T::Hash[String, Progress],
         ).void
       end
       def propagate_blocked(sub_issues, refs, progress)
@@ -127,7 +184,7 @@ module AiFlow
             blocker = dependencies_of(issue).find { |dep| blocking?(dep, refs, progress) }
             next unless blocker
 
-            progress[ref] = { state: :blocked, detail: "blocked until #{blocker} is resolved" }
+            progress[ref] = Progress::Blocked.new(reason: "blocked until #{blocker} is resolved")
             changed = true
           end
           break unless changed
@@ -136,13 +193,20 @@ module AiFlow
 
       # @return [Boolean]
       sig do
-        params(dep: String, refs: T::Array[String], progress: T::Hash[String, ProgressEntry])
+        params(dep: String, refs: T::Array[String], progress: T::Hash[String, Progress])
           .returns(T::Boolean)
       end
       def blocking?(dep, refs, progress)
-        return %i[skipped blocked].include?(progress.dig(dep, :state)) if refs.include?(dep)
+        return undrivable?(progress[dep]) if refs.include?(dep)
 
         external_issue_open?(dep)
+      end
+
+      # @return [Boolean] whether the entry marks a node the orchestration
+      #   will not build
+      sig { params(entry: T.nilable(Progress)).returns(T::Boolean) }
+      def undrivable?(entry)
+        entry.is_a?(Progress::Skipped) || entry.is_a?(Progress::Blocked)
       end
 
       # @return [Boolean] whether an out-of-set dependency is still open — a
@@ -208,7 +272,7 @@ module AiFlow
       #
       # @return [Array<Array<GitHub::Issue>>]
       sig do
-        params(sub_issues: T::Array[GitHub::Issue], progress: T::Hash[String, ProgressEntry])
+        params(sub_issues: T::Array[GitHub::Issue], progress: T::Hash[String, Progress])
           .returns(T::Array[T::Array[GitHub::Issue]])
       end
       def topological_waves(sub_issues, progress)
@@ -240,11 +304,11 @@ module AiFlow
           segment: CommentParser::Segment,
           waves: T::Array[T::Array[GitHub::Issue]],
           sub_issues: T::Array[GitHub::Issue],
-          progress: T::Hash[String, ProgressEntry],
+          progress: T::Hash[String, Progress],
         ).void
       end
       def publish_checklist(segment, waves, sub_issues, progress)
-        undrivable = sub_issues.select { |issue| %i[skipped blocked].include?(progress.dig(ref_of(issue), :state)) }
+        undrivable = sub_issues.select { |issue| undrivable?(progress[ref_of(issue)]) }
         lines = [checklist_headline(waves, undrivable, progress)]
         waves.each_with_index do |wave, index|
           lines << "\nWave #{index + 1}:"
@@ -262,7 +326,7 @@ module AiFlow
         params(
           waves: T::Array[T::Array[GitHub::Issue]],
           undrivable: T::Array[GitHub::Issue],
-          progress: T::Hash[String, ProgressEntry],
+          progress: T::Hash[String, Progress],
         ).returns(String)
       end
       def checklist_headline(waves, undrivable, progress)
@@ -278,14 +342,16 @@ module AiFlow
       end
 
       # @return [String]
-      sig { params(issue: GitHub::Issue, entry: T.nilable(ProgressEntry)).returns(String) }
+      sig { params(issue: GitHub::Issue, entry: T.nilable(Progress)).returns(String) }
       def checklist_line(issue, entry)
         status, suffix =
-          case entry && entry.fetch(:state)
+          case entry
           when nil then ["[ ]", ""]
-          when :no_changes then ["[-]", " — no changes needed"]
-          when :built then ["[x]", " — #{entry&.fetch(:detail)}"]
-          else ["[!]", " — #{entry&.fetch(:detail)}"]
+          when Progress::NoChanges then ["[-]", " — no changes needed"]
+          when Progress::Built then ["[x]", " — #{entry.url}"]
+          when Progress::Skipped then ["[!]", " — #{entry.reason}"]
+          when Progress::Blocked then ["[!]", " — #{entry.reason}"]
+          else T.absurd(entry)
           end
         "- #{status} #{ref_of(issue)} #{issue.title}#{suffix}"
       end
