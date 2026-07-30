@@ -366,7 +366,7 @@ module AiFlow
           if entry["existing"]
             adopt_or_reference(entry, existing)
           elsif (match = existing.find { |issue| issue.title == entry.fetch("title") })
-            { "repo" => match.repo || @context.owner_repo, "number" => match.number,
+            { "repo" => match.repo, "number" => match.number,
               "url" => match.html_url, "disposition" => "kept" }
           else
             create_sub_issue(entry, report)
@@ -469,11 +469,11 @@ module AiFlow
       def close_stale(entries, existing, refs, report)
         specified = refs.values.map { |ref| [ref.fetch("repo"), ref.fetch("number")] }
         stale = existing.select do |issue|
-          issue.state == "open" && !specified.include?([issue.repo || @context.owner_repo, issue.number])
+          issue.state == "open" && !specified.include?([issue.repo, issue.number])
         end
         stale.each do |issue|
           @github.close_issue(
-            issue.repo || @context.owner_repo, issue.number,
+            issue.repo, issue.number,
             comment: "Closed by /split reconciliation: no longer part of the parent plan's subtask set.",
           )
         end
@@ -509,7 +509,7 @@ module AiFlow
             lines << "- #{disposition} [#{entry.fetch("repo")}##{entry.fetch("number")} #{entry.fetch("title")}](#{entry.fetch("url")})"
           end
         end
-        report.fetch(:closed).each { |issue| lines << "- closed #{issue.repo || @context.owner_repo}##{issue.number} #{issue.title} (stale)" }
+        report.fetch(:closed).each { |issue| lines << "- closed #{issue.repo}##{issue.number} #{issue.title} (stale)" }
         report.fetch(:warnings).each { |warning| lines << "\n⚠️ #{warning}" }
         lines.join("\n")
       end

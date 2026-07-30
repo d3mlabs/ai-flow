@@ -25,7 +25,7 @@ class FakeGitHub < AiFlow::GitHub
 
   def seed_issue(owner_repo, number, title:, body:, state: "open")
     @issues[[owner_repo, number]] = AiFlow::GitHub::Issue.new(
-      number: number, title: title, body: body, updated_at: "2026-07-13T00:00:00Z",
+      number: number, title: title, body: body,
       html_url: "https://github.com/#{owner_repo}/issues/#{number}", state: state, repo: owner_repo,
     )
   end

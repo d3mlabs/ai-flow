@@ -160,7 +160,7 @@ module AiFlow
       # @return [Outcome]
       sig { params(issue: GitHub::Issue, extra_instruction: String).returns(Outcome) }
       def build_issue(issue, extra_instruction: "")
-        issue_repo = issue.repo || @context.owner_repo
+        issue_repo = issue.repo
         code_repo = target_repo_for(issue, issue_repo)
         branch = branch_name(issue)
 
@@ -224,7 +224,7 @@ module AiFlow
                            .select { |issue| issue.state == "open" }
         return nil if open_subs.empty?
 
-        listing = open_subs.map { |issue| "#{issue.repo || @context.owner_repo}##{issue.number}" }.join(", ")
+        listing = open_subs.map { |issue| "#{issue.repo}##{issue.number}" }.join(", ")
         "ℹ️ This plan has #{open_subs.size} open sub-issue(s) (#{listing}) — this /build covered the " \
           "whole plan; close or /build them individually if they were meant to scope the work."
       end
@@ -680,7 +680,7 @@ module AiFlow
         <<~PROMPT
           You are ai-flow, implementing a plan in this repository checkout.
 
-          ISSUE #{issue.repo || @context.owner_repo}##{issue.number}: #{issue.title}
+          ISSUE #{issue.repo}##{issue.number}: #{issue.title}
           <<<BODY>>>
           #{PlanBody.from_issue_body(issue.body)}
           <<<END BODY>>>
@@ -736,15 +736,15 @@ module AiFlow
       # @return [String] empty for parentless issues
       sig { params(issue: GitHub::Issue).returns(String) }
       def parent_context(issue)
-        issue_repo = issue.repo || @context.owner_repo
+        issue_repo = issue.repo
         parent = @github.parent_issue(issue_repo, issue.number)
         return "" unless parent
 
         # GraphQL always reports the parent's repository (nameWithOwner); the
         # issue's own repo is a defensive fallback, never expected to apply.
-        parent_repo = parent.repo || issue_repo
+        parent_repo = parent.repo
         siblings = @github.sub_issues(parent_repo, parent.number)
-                          .reject { |sub| sub.number == issue.number && (sub.repo || parent_repo) == issue_repo }
+                          .reject { |sub| sub.number == issue.number && sub.repo == issue_repo }
         sibling_list = siblings.map { |sub| "- #{sub.title}" }.join("\n")
         <<~CONTEXT
           This issue is one subtask of the parent plan #{parent_repo}##{parent.number}: #{parent.title}

@@ -15,15 +15,16 @@ module AiFlow
     # repository_url) — sub-issues may live in a different repo than their
     # parent, so it can't be assumed from context. `body` and `state` are
     # props: the in-memory test fake mutates them on update_issue_body and
-    # close_issue.
+    # close_issue. Every field is non-nilable: both builders (the REST
+    # to_issue and the GraphQL parent_issue) receive fully hydrated issue
+    # objects, so there is no partial shape to represent.
     class Issue < T::Struct
       const :number, Integer
       const :title, String
       prop :body, String
-      const :updated_at, T.nilable(String), default: nil
-      const :html_url, T.nilable(String), default: nil
-      prop :state, T.nilable(String), default: nil
-      const :repo, T.nilable(String), default: nil
+      const :html_url, String
+      prop :state, String
+      const :repo, String
     end
 
     # @param executor [AiFlow::Executor]
@@ -214,9 +215,9 @@ module AiFlow
         number: parent.fetch("number"),
         title: parent.fetch("title"),
         body: parent["body"] || "",
-        html_url: parent["url"],
-        state: parent["state"]&.downcase,
-        repo: parent.dig("repository", "nameWithOwner"),
+        html_url: parent.fetch("url"),
+        state: parent.fetch("state").downcase,
+        repo: parent.fetch("repository").fetch("nameWithOwner"),
       )
     end
 
@@ -382,10 +383,9 @@ module AiFlow
         number: data.fetch("number"),
         title: data.fetch("title"),
         body: data["body"] || "",
-        updated_at: data.fetch("updated_at"),
         html_url: data.fetch("html_url"),
-        state: data["state"],
-        repo: data["repository_url"]&.split("/repos/")&.last,
+        state: data.fetch("state"),
+        repo: data.fetch("repository_url").split("/repos/").fetch(-1),
       )
     end
   end

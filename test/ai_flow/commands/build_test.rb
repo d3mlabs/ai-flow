@@ -265,7 +265,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
     github.seed_sub_issues(REPO, 7, [
       AiFlow::GitHub::Issue.new(
-        number: 12, title: "Server API", body: "", updated_at: "2026-07-13T00:00:00Z",
+        number: 12, title: "Server API", body: "",
         html_url: "https://github.com/#{REPO}/issues/12", state: "open", repo: REPO,
       ),
     ])
@@ -290,11 +290,11 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.seed_parent(REPO, 12, github.issue(REPO, 7))
     github.seed_sub_issues(REPO, 7, [
       AiFlow::GitHub::Issue.new(
-        number: 12, title: "Server API", body: "Part of #{REPO}#7.\n", updated_at: "2026-07-13T00:00:00Z",
+        number: 12, title: "Server API", body: "Part of #{REPO}#7.\n",
         html_url: "https://github.com/#{REPO}/issues/12", state: "open", repo: REPO,
       ),
       AiFlow::GitHub::Issue.new(
-        number: 13, title: "Client UI", body: "Part of #{REPO}#7.\n", updated_at: "2026-07-13T00:00:00Z",
+        number: 13, title: "Client UI", body: "Part of #{REPO}#7.\n",
         html_url: "https://github.com/#{REPO}/issues/13", state: "open", repo: REPO,
       ),
     ])

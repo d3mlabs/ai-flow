@@ -72,11 +72,11 @@ module AiFlow
         parsed, new_body = run_plan_file_pass(resolved, snapshot)
         results = segment_results(resolved, parsed, edits_applied: !new_body.nil?)
 
-        appendix = T.let(nil, T.nilable(String))
-        if new_body
-          patch_body(snapshot, new_body)
-          appendix = plan_diff_appendix(snapshot, new_body)
-        end
+        appendix =
+          if new_body
+            patch_body(snapshot, new_body)
+            plan_diff_appendix(snapshot, new_body)
+          end
 
         deliver(segments, results, appendix: appendix)
       end

@@ -28,7 +28,7 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
 
   def sub_issue(number, title, body)
     AiFlow::GitHub::Issue.new(
-      number: number, title: title, body: body, updated_at: "2026-07-13T00:00:00Z",
+      number: number, title: title, body: body,
       html_url: "https://github.com/#{REPO}/issues/#{number}", state: "open", repo: REPO,
     )
   end
@@ -105,7 +105,7 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       - #{REPO}#4 — Integration: Parent
     BODY
     external = AiFlow::GitHub::Issue.new(
-      number: 42, title: "External work", body: "", updated_at: "2026-07-13T00:00:00Z",
+      number: 42, title: "External work", body: "",
       html_url: "https://github.com/d3mlabs/other/issues/42", state: "open", repo: "d3mlabs/other",
     )
     github.seed_sub_issues(REPO, 7, [

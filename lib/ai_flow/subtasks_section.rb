@@ -93,9 +93,9 @@ module AiFlow
     sig { params(body: String, section: String).returns(String) }
     def replace(body, section)
       lines = PlanBody.from_issue_body(body).split("\n", -1)
-      start, finish = section_bounds(lines)
-      if start
-        lines[start...finish] = section.split("\n", -1)
+      bounds = section_bounds(lines)
+      if bounds
+        lines[bounds] = section.split("\n", -1)
       else
         lines = [lines.join("\n").rstrip, "", section]
       end
@@ -125,21 +125,22 @@ module AiFlow
     sig { params(body: String).returns(T.nilable(String)) }
     def section_text(body)
       lines = PlanBody.from_issue_body(body).split("\n", -1)
-      start, finish = section_bounds(lines)
-      return nil unless start
+      bounds = section_bounds(lines)
+      return nil unless bounds
 
-      lines[start...finish]&.join("\n")
+      lines[bounds]&.join("\n")
     end
 
-    # @return [Array(Integer, Integer), Array(nil, nil)] the section's line
-    #   range: header line to the next H2 (or EOF)
-    sig { params(lines: T::Array[String]).returns([T.nilable(Integer), T.nilable(Integer)]) }
+    # @return [Range<Integer>, nil] the section's line range — header line
+    #   up to (exclusive) the next H2 or EOF; nil when the body has no
+    #   `## Subtasks` section (the two bounds are one fact, not two)
+    sig { params(lines: T::Array[String]).returns(T.nilable(T::Range[Integer])) }
     def section_bounds(lines)
       start = lines.index { |line| line.strip == HEADER }
-      return [nil, nil] unless start
+      return nil unless start
 
       finish = ((start + 1)...lines.size).find { |index| lines.fetch(index).start_with?("## ") } || lines.size
-      [start, finish]
+      start...finish
     end
 
     # The interface is exactly these four keys — sub-issue bodies are not

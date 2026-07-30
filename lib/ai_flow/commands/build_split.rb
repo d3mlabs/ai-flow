@@ -68,7 +68,7 @@ module AiFlow
       #   collide across repos now that sub-issues route cross-repo)
       sig { params(issue: GitHub::Issue).returns(String) }
       def ref_of(issue)
-        "#{issue.repo || @context.owner_repo}##{issue.number}"
+        "#{issue.repo}##{issue.number}"
       end
 
       # @return [Array<GitHub::Issue>]
@@ -164,7 +164,7 @@ module AiFlow
       # @return [Array<String>] "owner/repo#n" refs
       sig { params(issue: GitHub::Issue).returns(T::Array[String]) }
       def dependencies_of(issue)
-        own_repo = issue.repo || @context.owner_repo
+        own_repo = issue.repo
         # T.cast: grouped scans yield capture arrays, but the stdlib RBI
         # types them as a union the block destructuring can't see through.
         depends_lines = T.cast(issue.body.scan(/^Depends on:\s*(.+)$/), T::Array[T::Array[String]])

@@ -10,7 +10,7 @@ class AiFlow::Commands::SplitTest < Minitest::Test
 
   def sub_issue(number, title, state: "open", repo: REPO)
     AiFlow::GitHub::Issue.new(
-      number: number, title: title, body: "", updated_at: "2026-07-13T00:00:00Z",
+      number: number, title: title, body: "",
       html_url: "https://github.com/#{repo}/issues/#{number}", state: state, repo: repo,
     )
   end
