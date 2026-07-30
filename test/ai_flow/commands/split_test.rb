@@ -256,6 +256,36 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     nil
   end
 
+  test "existing: pointing at an issue already in the sub-issue set is kept, not re-adopted" do
+    Given "a staged spec whose existing: ref is already a sub-issue of the parent"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
+      # Parent plan
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::SPEC_MARKER}
+
+      ```yaml
+      - title: "Tracked work"
+        repo: d3mlabs/demo
+        existing: d3mlabs/other#42
+      ```
+    BODY
+    github.seed_issue("d3mlabs/other", 42, title: "Tracked work", body: "")
+    github.seed_sub_issues(REPO, 7, [sub_issue(42, "Tracked work", repo: "d3mlabs/other")])
+
+    When "applying"
+    run_split(github: github, agent: FakeAgent.new([]), comment: "/split --apply")
+
+    Then "no adoption call was made and the entry lands unannotated in the linked map"
+    github.calls.none? { |kind, *| kind == :add_sub_issue }
+    github.issue(REPO, 7).body.include?("- d3mlabs/other#42 — Tracked work\n")
+    github.comment_edits.fetch(55).include?("created 0, adopted 0, referenced 0, kept 1, closed 0")
+
+    Cleanup
+    nil
+  end
+
   test "discovery annotates the dry section with possible existing matches" do
     Given "an open issue in a menu repo whose title overlaps a proposed subtask"
     github = FakeGitHub.new
