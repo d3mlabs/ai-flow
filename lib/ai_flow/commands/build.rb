@@ -31,6 +31,60 @@ module AiFlow
       # commit; the diff surfaces in the result panel as a suggested patch.
       WORKFLOWS_DIR = ".github/workflows"
 
+      # What building one plan issue produced. Sealed so the issue-mode
+      # panel and the --split orchestrator dispatch exhaustively instead of
+      # interpreting a nilable PR hash; carries the per-build panel notes
+      # that used to live as instance state reset between sub-builds.
+      class Outcome
+        extend T::Sig
+        extend T::Helpers
+        abstract!
+        sealed!
+
+        # @return [String, nil] the landed learning-capture panel note —
+        #   nil when capture was off or the pass yielded nothing
+        sig { returns(T.nilable(String)) }
+        attr_reader :capture_note
+
+        # @return [String, nil] the workflow diff excluded from the commit
+        #   (the App has no workflows permission) — nil when the agent
+        #   never touched workflow files
+        sig { returns(T.nilable(String)) }
+        attr_reader :workflows_patch
+
+        # @param capture_note [String, nil]
+        # @param workflows_patch [String, nil]
+        sig { params(capture_note: T.nilable(String), workflows_patch: T.nilable(String)).void }
+        def initialize(capture_note:, workflows_patch:)
+          @capture_note = capture_note
+          @workflows_patch = workflows_patch
+        end
+
+        # The agent's changes were committed, pushed, and opened as a PR.
+        class PrOpened < Outcome
+          extend T::Sig
+
+          # @return [String] the created PR's html url
+          sig { returns(String) }
+          attr_reader :url
+
+          # @param url [String]
+          # @param capture_note [String, nil]
+          # @param workflows_patch [String, nil]
+          sig do
+            params(url: String, capture_note: T.nilable(String), workflows_patch: T.nilable(String)).void
+          end
+          def initialize(url:, capture_note:, workflows_patch:)
+            super(capture_note: capture_note, workflows_patch: workflows_patch)
+            @url = url
+          end
+        end
+
+        # The agent changed nothing committable — possibly only workflow
+        # files, which never commit (workflows_patch carries them).
+        class NothingToBuild < Outcome; end
+      end
+
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
       # @param agent [AiFlow::Agent]
@@ -72,10 +126,6 @@ module AiFlow
         @prefix = prefix
         @org_invariants = org_invariants
         @learn = learn
-        # Per-run panel notes, reset at the top of each build (a Build
-        # instance is reused across --split sub-issue builds).
-        @capture_note = T.let(nil, T.nilable(String))
-        @workflows_patch = T.let(nil, T.nilable(String))
       end
 
       # @param segment [CommentParser::Segment]
@@ -88,17 +138,18 @@ module AiFlow
         issue = @github.issue(@context.owner_repo, @context.number)
         return refuse_staged_spec(segment) if SubtasksSection.spec?(issue.body)
 
-        pr = build_issue(issue, extra_instruction: segment.instruction)
-        result =
-          if pr
-            "✅ **/build** — opened #{pr.fetch("html_url")}"
-          else
-            "⚠️ **/build** — the agent made no changes, so no PR was opened."
+        outcome = build_issue(issue, extra_instruction: segment.instruction)
+        result, pr_url =
+          case outcome
+          when Outcome::PrOpened then ["✅ **/build** — opened #{outcome.url}", outcome.url]
+          when Outcome::NothingToBuild then ["⚠️ **/build** — the agent made no changes, so no PR was opened.", nil]
+          else T.absurd(outcome)
           end
         @result_writer.write(
           @context,
           [[segment,
-            [result, @capture_note, workflows_note(pr&.fetch("html_url")), open_sub_issues_note].compact.join("\n\n")]],
+            [result, outcome.capture_note, workflows_note(outcome.workflows_patch, pr_url),
+             open_sub_issues_note].compact.join("\n\n")]],
         )
       end
 
@@ -106,16 +157,12 @@ module AiFlow
       #
       # @param issue [GitHub::Issue]
       # @param extra_instruction [String]
-      # @return [Hash, nil] the created PR, or nil when the agent changed nothing
-      sig do
-        params(issue: GitHub::Issue, extra_instruction: String)
-          .returns(T.nilable(T::Hash[String, T.untyped]))
-      end
+      # @return [Outcome]
+      sig { params(issue: GitHub::Issue, extra_instruction: String).returns(Outcome) }
       def build_issue(issue, extra_instruction: "")
         issue_repo = issue.repo || @context.owner_repo
         code_repo = target_repo_for(issue, issue_repo)
         branch = branch_name(issue)
-        @capture_note = nil
 
         in_worktree(code_repo) do |worktree|
           create_branch(worktree, branch)
@@ -128,18 +175,23 @@ module AiFlow
           # The agent may have run for close to the token's lifetime; the
           # write phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
-          committed = commit_all(worktree, issue, capture: capture)
-          unless committed
+          run!(["git", "add", "-A"], chdir: worktree)
+          @learn.extract_capture(worktree) if capture
+          workflows_patch = extract_workflows_patch(worktree)
+          unless commit_staged(worktree, issue)
             # A pass may yield learnings without code changes — land them
             # even though no code PR opens.
-            @capture_note = @learn.land_capture if capture
-            next nil
+            next Outcome::NothingToBuild.new(
+              capture_note: capture ? @learn.land_capture : nil, workflows_patch: workflows_patch,
+            )
           end
 
           push_branch(worktree, branch)
           pr = open_pull_request(code_repo, issue_repo, issue, branch)
-          @capture_note = @learn.land_capture if capture
-          pr
+          Outcome::PrOpened.new(
+            url: pr.fetch("html_url"),
+            capture_note: capture ? @learn.land_capture : nil, workflows_patch: workflows_patch,
+          )
         end
       end
 
@@ -220,10 +272,18 @@ module AiFlow
         # The agent may have run for close to the token's lifetime; the
         # write phase (push + replies + panel) starts on a fresh mint.
         @executor.refresh_auth!
-        sha = commit_and_push(segment, capture: capture)
+        # The job checks the dispatcher out into .ai-flow inside this
+        # workspace — a bare `git add -A` would commit it as a gitlink.
+        run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: @workdir)
+        @learn.extract_capture(@workdir) if capture
+        workflows_patch = extract_workflows_patch(@workdir)
+        sha = commit_and_push(segment)
         capture_note = capture ? @learn.land_capture : nil
         reply_to_threads(threads, parsed, sha)
-        @result_writer.write(@context, [[segment, iteration_result(parsed, threads, sha, capture_note)]])
+        @result_writer.write(
+          @context,
+          [[segment, iteration_result(parsed, threads, sha, capture_note, workflows_patch)]],
+        )
       end
 
       # @return [String] the PR head branch, checked out in the job checkout
@@ -396,9 +456,10 @@ module AiFlow
           threads: T::Array[T::Hash[String, T.untyped]],
           sha: T.nilable(String),
           capture_note: T.nilable(String),
+          workflows_patch: T.nilable(String),
         ).returns(String)
       end
-      def iteration_result(parsed, threads, sha, capture_note = nil)
+      def iteration_result(parsed, threads, sha, capture_note, workflows_patch)
         summary = parsed.segments[threads.size + 1]
         headline =
           if sha
@@ -406,7 +467,7 @@ module AiFlow
           else
             "⚠️ **/build** — the agent made no changes."
           end
-        [headline, summary, capture_note, workflows_note(pull_request_url)].compact.join("\n\n")
+        [headline, summary, capture_note, workflows_note(workflows_patch, pull_request_url)].compact.join("\n\n")
       end
 
       # @return [String] the PR under iteration — this mode only runs on PR
@@ -422,18 +483,15 @@ module AiFlow
       # those files so the commit never carries them. Ordered checkout-last:
       # the diff must be read before the working tree is restored.
       #
-      # @return [void]
-      sig { params(dir: String).void }
+      # @return [String, nil] the excluded patch, nil when the agent never
+      #   touched workflow files
+      sig { params(dir: String).returns(T.nilable(String)) }
       def extract_workflows_patch(dir)
-        # Reset first: a Build instance is reused across --split sub-issue
-        # builds, and one sub-issue's patch must not haunt the next panel.
-        @workflows_patch = nil
         patch, = @executor.capture(
           "git", "diff", "--cached", "--", WORKFLOWS_DIR, chdir: dir,
         )
-        return if patch.strip.empty?
+        return nil if patch.strip.empty?
 
-        @workflows_patch = patch
         # Always in the run log too — the --split orchestrator's checklist
         # panel doesn't carry per-build notes, so the log is the guaranteed
         # surface.
@@ -446,15 +504,17 @@ module AiFlow
         # workflow files (no tracked paths match), which clean covers.
         @executor.capture("git", "checkout", "-q", "--", WORKFLOWS_DIR, chdir: dir)
         @executor.capture("git", "clean", "-fdq", "--", WORKFLOWS_DIR, chdir: dir)
+        patch
       end
 
+      # @param patch [String, nil] the excluded workflow diff, nil when the
+      #   agent never touched workflow files
       # @param pr_url [String, nil] the PR the patch applies onto; nil when
       #   no PR exists (the agent changed nothing outside workflow files)
-      # @return [String, nil] the suggested-patch panel block, nil when the
-      #   agent never touched workflow files
-      sig { params(pr_url: T.nilable(String)).returns(T.nilable(String)) }
-      def workflows_note(pr_url)
-        patch = @workflows_patch
+      # @return [String, nil] the suggested-patch panel block, nil without
+      #   a patch
+      sig { params(patch: T.nilable(String), pr_url: T.nilable(String)).returns(T.nilable(String)) }
+      def workflows_note(patch, pr_url)
         return nil unless patch
 
         pr_url ? workflows_apply_note(pr_url, patch) : workflows_diff_note(patch)
@@ -524,15 +584,13 @@ module AiFlow
         block ? "#{block}\n\n" : ""
       end
 
+      # Commit the staged changes and push — the caller has already staged
+      # the tree and swept the capture and workflow files out of the index.
+      #
       # @param segment [CommentParser::Segment]
       # @return [String, nil] the pushed commit sha, nil when nothing changed
-      sig { params(segment: CommentParser::Segment, capture: T::Boolean).returns(T.nilable(String)) }
-      def commit_and_push(segment, capture: false)
-        # The job checks the dispatcher out into .ai-flow inside this
-        # workspace — a bare `git add -A` would commit it as a gitlink.
-        run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: @workdir)
-        @learn.extract_capture(@workdir) if capture
-        extract_workflows_patch(@workdir)
+      sig { params(segment: CommentParser::Segment).returns(T.nilable(String)) }
+      def commit_and_push(segment)
         status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: @workdir)
         return nil if status.strip.empty?
 
@@ -699,12 +757,12 @@ module AiFlow
         CONTEXT
       end
 
+      # Commit the staged changes — the caller has already staged the tree
+      # and swept the capture and workflow files out of the index.
+      #
       # @return [Boolean] whether there was anything to commit
-      sig { params(worktree: String, issue: GitHub::Issue, capture: T::Boolean).returns(T::Boolean) }
-      def commit_all(worktree, issue, capture: false)
-        run!(["git", "add", "-A"], chdir: worktree)
-        @learn.extract_capture(worktree) if capture
-        extract_workflows_patch(worktree)
+      sig { params(worktree: String, issue: GitHub::Issue).returns(T::Boolean) }
+      def commit_staged(worktree, issue)
         status, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: worktree)
         return false if status.strip.empty?
 

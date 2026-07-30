@@ -19,7 +19,10 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
 
     def build_issue(issue, extra_instruction: "")
       @built << issue.number
-      { "html_url" => "https://github.com/d3mlabs/demo/pull/#{issue.number}" }
+      AiFlow::Commands::Build::Outcome::PrOpened.new(
+        url: "https://github.com/d3mlabs/demo/pull/#{issue.number}",
+        capture_note: nil, workflows_patch: nil,
+      )
     end
   end
 

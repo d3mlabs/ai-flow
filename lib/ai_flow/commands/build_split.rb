@@ -51,8 +51,12 @@ module AiFlow
 
         waves.each do |wave|
           wave.each do |issue|
-            pr = @build.build_issue(issue)
-            progress[ref_of(issue)] = pr ? { state: :built, detail: pr.fetch("html_url") } : { state: :no_changes }
+            progress[ref_of(issue)] =
+              case (outcome = @build.build_issue(issue))
+              when Build::Outcome::PrOpened then { state: :built, detail: outcome.url }
+              when Build::Outcome::NothingToBuild then { state: :no_changes }
+              else T.absurd(outcome)
+              end
             publish_checklist(segment, waves, sub_issues, progress)
           end
         end
