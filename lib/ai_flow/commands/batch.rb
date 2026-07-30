@@ -205,7 +205,7 @@ module AiFlow
       def batch_prompt(resolved)
         segment_descriptions = resolved.each_with_index.map do |(segment, span, source), index|
           <<~SEGMENT
-            <<<SEGMENT #{index + 1}: /#{segment.command}>>>
+            <<<SEGMENT #{index + 1}: /#{CommentParser.word_for(segment.command)}>>>
             #{segment_focus(segment, span, source)}
             Instruction: #{segment.instruction.empty? ? "(none — the quote itself is the subject)" : segment.instruction}
           SEGMENT
