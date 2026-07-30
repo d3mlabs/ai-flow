@@ -59,15 +59,20 @@ class FakeGitHub < AiFlow::GitHub
   def post_issue_comment(owner_repo, number, body)
     @calls << [:post_issue_comment, owner_repo, number]
     @comments << body
-    { "id" => 1, "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-1" }
+    AiFlow::GitHub::Comment.new(
+      id: 1, author: "ai-flow", body: body,
+      html_url: "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-1",
+      created_at: Time.now,
+    )
   end
 
   def seed_issue_comment(owner_repo, number, id:, body:, login: "jpduchesne")
     @issue_comments ||= {}
-    (@issue_comments[[owner_repo, number]] ||= []) << {
-      "id" => id, "body" => body, "user" => { "login" => login },
-      "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{id}",
-    }
+    (@issue_comments[[owner_repo, number]] ||= []) << AiFlow::GitHub::Comment.new(
+      id: id, author: login, body: body,
+      html_url: "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{id}",
+      created_at: Time.now,
+    )
   end
 
   def issue_comments(owner_repo, number)

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "time"
 
 module AiFlow
   # GitHub API access via the `gh` CLI (authenticated with the workflow's
@@ -25,6 +26,29 @@ module AiFlow
       const :html_url, String
       prop :state, String
       const :repo, String
+    end
+
+    # One conversation comment (issues and PR conversations share the REST
+    # issues namespace). `author` is the login, "" for ghost/deleted users.
+    # `created_at` is parsed at the boundary — no consumer re-parses strings.
+    class Comment < T::Struct
+      extend T::Sig
+
+      const :id, Integer
+      const :author, String
+      const :body, String
+      const :html_url, String
+      const :created_at, Time
+
+      # A copy with the body replaced — consumers strip noise (collapsed
+      # <details> diffs) without mutating a shared collection.
+      #
+      # @param body [String]
+      # @return [Comment]
+      sig { params(body: String).returns(Comment) }
+      def with_body(body)
+        Comment.new(id: id, author: author, body: body, html_url: html_url, created_at: created_at)
+      end
     end
 
     # @param executor [AiFlow::Executor]
@@ -109,20 +133,21 @@ module AiFlow
       api("repos/#{owner_repo}/issues/#{number}", method: "PATCH", payload: { state: "closed" })
     end
 
-    # @return [Hash] the created comment (with "id", "html_url")
-    sig { params(owner_repo: String, number: Integer, body: String).returns(T::Hash[String, T.untyped]) }
+    # @return [Comment] the created comment
+    sig { params(owner_repo: String, number: Integer, body: String).returns(Comment) }
     def post_issue_comment(owner_repo, number, body)
-      api("repos/#{owner_repo}/issues/#{number}/comments", method: "POST", payload: { body: body })
+      to_comment(api("repos/#{owner_repo}/issues/#{number}/comments", method: "POST", payload: { body: body }))
     end
 
     # The issue's conversation, oldest first. One page of 100 covers our
     # review threads; quote-context resolution degrades gracefully (verbatim
     # fallback) if a source comment ever falls past the cap.
     #
-    # @return [Array<Hash>] comments with "id", "body", "html_url", "user"
-    sig { params(owner_repo: String, number: Integer).returns(T::Array[T::Hash[String, T.untyped]]) }
+    # @return [Array<Comment>]
+    sig { params(owner_repo: String, number: Integer).returns(T::Array[Comment]) }
     def issue_comments(owner_repo, number)
-      api("repos/#{owner_repo}/issues/#{number}/comments?per_page=100") || []
+      list = api("repos/#{owner_repo}/issues/#{number}/comments?per_page=100") || []
+      list.map { |data| to_comment(data) }
     end
 
     # Edit an issue/PR-conversation comment in place (the noise-minimization
@@ -373,6 +398,20 @@ module AiFlow
           { "author" => comment.dig("author", "login"), "body" => comment["body"], "url" => comment["url"] }
         end,
       }
+    end
+
+    # @param data [Hash] a REST issue-comment object
+    # @return [Comment]
+    sig { params(data: T::Hash[String, T.untyped]).returns(Comment) }
+    def to_comment(data)
+      Comment.new(
+        id: data.fetch("id"),
+        # dig: ghost/deleted users surface as a null user object.
+        author: data.dig("user", "login").to_s,
+        body: data.fetch("body").to_s,
+        html_url: data.fetch("html_url"),
+        created_at: Time.parse(data.fetch("created_at")),
+      )
     end
 
     # @param data [Hash] a REST issue object

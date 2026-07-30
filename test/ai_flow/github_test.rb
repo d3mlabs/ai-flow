@@ -88,6 +88,75 @@ class AiFlow::GitHubTest < Minitest::Test
     nil
   end
 
+  test "issue_comments coerces the REST page into Comment values at the boundary" do
+    Given "one page with a signed and a ghost-authored comment"
+    executor = CannedExecutor.new(out: JSON.generate([
+      { "id" => 42, "body" => "earlier question", "user" => { "login" => "jpduchesne" },
+        "html_url" => "https://github.com/d3mlabs/demo/issues/7#issuecomment-42",
+        "created_at" => "2026-07-30T12:00:00Z" },
+      { "id" => 43, "body" => "orphaned", "user" => nil,
+        "html_url" => "https://github.com/d3mlabs/demo/issues/7#issuecomment-43",
+        "created_at" => "2026-07-30T13:00:00Z" },
+    ]))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "listing the conversation"
+    comments = github.issue_comments("d3mlabs/demo", 7)
+
+    Then "typed comments came back, timestamp parsed and ghost author coerced to empty"
+    first = T.must(comments.first)
+    first.id == 42
+    first.author == "jpduchesne"
+    first.body == "earlier question"
+    first.html_url == "https://github.com/d3mlabs/demo/issues/7#issuecomment-42"
+    first.created_at == Time.utc(2026, 7, 30, 12)
+    T.must(comments.last).author == ""
+
+    Cleanup
+    nil
+  end
+
+  test "post_issue_comment returns the created Comment" do
+    Given "an API that answers with the created comment"
+    executor = CannedExecutor.new(out: JSON.generate(
+      { "id" => 9, "body" => "posted", "user" => { "login" => "ai-flow[bot]" },
+        "html_url" => "https://github.com/d3mlabs/demo/issues/7#issuecomment-9",
+        "created_at" => "2026-07-30T12:00:00Z" },
+    ))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "posting"
+    comment = github.post_issue_comment("d3mlabs/demo", 7, "posted")
+
+    Then "the typed comment came back"
+    comment.id == 9
+    comment.author == "ai-flow[bot]"
+    comment.body == "posted"
+
+    Cleanup
+    nil
+  end
+
+  test "Comment#with_body returns a copy, leaving the original untouched" do
+    Given "a comment whose body carries noise to strip"
+    comment = AiFlow::GitHub::Comment.new(
+      id: 1, author: "jpduchesne", body: "original <details>diff</details>",
+      html_url: "u", created_at: Time.utc(2026, 7, 30),
+    )
+
+    When "replacing the body"
+    stripped = comment.with_body("original (collapsed diff omitted)")
+
+    Then "the copy carries the new body and everything else; the original is unchanged"
+    stripped.body == "original (collapsed diff omitted)"
+    stripped.id == 1
+    stripped.author == "jpduchesne"
+    comment.body == "original <details>diff</details>"
+
+    Cleanup
+    nil
+  end
+
   test "react_to_comment posts the reaction to the surface's namespace" do
     Given "a plain issue comment to acknowledge"
     executor = CannedExecutor.new

@@ -223,7 +223,7 @@ module AiFlow
         @github.update_issue_comment(context.owner_repo, panel_id, body: body)
       else
         comment = @github.post_issue_comment(context.owner_repo, context.number, body)
-        @review_panel_comment_id = comment.fetch("id")
+        @review_panel_comment_id = comment.id
       end
     end
   end

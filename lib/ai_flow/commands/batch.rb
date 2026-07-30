@@ -230,7 +230,7 @@ module AiFlow
           .returns(T::Array[ResolvedSegment])
       end
       def resolve_anchors(segments, snapshot)
-        comments = T.let(nil, T.nilable(T::Array[T::Hash[String, T.untyped]]))
+        comments = T.let(nil, T.nilable(T::Array[GitHub::Comment]))
         segments.map do |segment|
           quote = segment.quote
           anchor =
@@ -253,31 +253,32 @@ module AiFlow
       # appended word/source diffs live, pure noise describing stale document
       # states.
       #
-      # @return [Array<Hash>]
-      sig { returns(T::Array[T::Hash[String, T.untyped]]) }
+      # @return [Array<AiFlow::GitHub::Comment>]
+      sig { returns(T::Array[GitHub::Comment]) }
       def discussion_comments
         @github.issue_comments(@context.owner_repo, @context.number)
-               .reject { |comment| comment["id"] == @context.comment_id }
-               .map { |comment| comment.merge("body" => strip_details(comment["body"].to_s)) }
+               .reject { |comment| comment.id == @context.comment_id }
+               .map { |comment| comment.with_body(strip_details(comment.body)) }
       end
 
       # The earliest comment containing the quote — later matches are usually
       # re-quotes of the original.
       #
       # @param quote [String]
-      # @param comments [Array<Hash>] the thread (see #discussion_comments)
+      # @param comments [Array<AiFlow::GitHub::Comment>] the thread
+      #   (see #discussion_comments)
       # @return [Anchor] DiscussionQuote when a source comment was found,
       #   UnresolvedQuote otherwise
-      sig { params(quote: String, comments: T::Array[T::Hash[String, T.untyped]]).returns(Anchor) }
+      sig { params(quote: String, comments: T::Array[GitHub::Comment]).returns(Anchor) }
       def discussion_anchor(quote, comments)
-        comment = comments.find { |candidate| PlanBody.locate_quote(candidate["body"], quote) }
+        comment = comments.find { |candidate| PlanBody.locate_quote(candidate.body, quote) }
         return Anchor::UnresolvedQuote.new(quote: quote) unless comment
 
         Anchor::DiscussionQuote.new(
           quote: quote,
-          author: comment.dig("user", "login").to_s,
-          url: comment.fetch("html_url"),
-          text: comment.fetch("body"),
+          author: comment.author,
+          url: comment.html_url,
+          text: comment.body,
         )
       end
 

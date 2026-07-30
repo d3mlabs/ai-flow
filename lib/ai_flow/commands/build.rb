@@ -320,15 +320,15 @@ module AiFlow
       # comment itself, the bot's own comments, and earlier command comments
       # (their own runs already handled them).
       #
-      # @return [Array<Hash>]
-      sig { params(since: T.nilable(Time)).returns(T::Array[T::Hash[String, T.untyped]]) }
+      # @return [Array<AiFlow::GitHub::Comment>]
+      sig { params(since: T.nilable(Time)).returns(T::Array[GitHub::Comment]) }
       def fresh_conversation_comments(since: last_bot_commit_time)
         @github.issue_comments(@context.owner_repo, @context.number)
-               .reject { |comment| comment["id"] == @context.comment_id }
-               .reject { |comment| comment.dig("user", "login") == CommitIdentity.bot_login }
-               .reject { |comment| since && Time.parse(comment["created_at"].to_s) <= since }
-               .reject { |comment| command_comment?(comment["body"].to_s) }
-               .map { |comment| comment.merge("body" => strip_details(comment["body"].to_s)) }
+               .reject { |comment| comment.id == @context.comment_id }
+               .reject { |comment| comment.author == CommitIdentity.bot_login }
+               .reject { |comment| since && comment.created_at <= since }
+               .reject { |comment| command_comment?(comment.body) }
+               .map { |comment| comment.with_body(strip_details(comment.body)) }
       end
 
       # @return [Time, nil] committer time of the bot's last commit on the
@@ -365,7 +365,7 @@ module AiFlow
           segment: CommentParser::Segment,
           branch: String,
           threads: T::Array[T::Hash[String, T.untyped]],
-          comments: T::Array[T::Hash[String, T.untyped]],
+          comments: T::Array[GitHub::Comment],
           capture: T::Boolean,
         ).returns(String)
       end
@@ -407,7 +407,7 @@ module AiFlow
       sig do
         params(
           threads: T::Array[T::Hash[String, T.untyped]],
-          comments: T::Array[T::Hash[String, T.untyped]],
+          comments: T::Array[GitHub::Comment],
         ).returns(String)
       end
       def feedback_descriptions(threads, comments)
@@ -416,7 +416,7 @@ module AiFlow
           "<<<THREAD #{index + 1}>>> (#{thread["path"]})\n#{thread["diff_hunk"]}\n#{conversation}"
         end
         comment_blocks = comments.map do |comment|
-          "Conversation comment from @#{comment.dig("user", "login")}:\n#{comment["body"]}"
+          "Conversation comment from @#{comment.author}:\n#{comment.body}"
         end
         blocks = thread_blocks + comment_blocks
         blocks.empty? ? "(none — the instruction is the whole scope)" : blocks.join("\n\n")

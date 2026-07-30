@@ -716,9 +716,9 @@ module AiFlow
       sig { returns(T::Array[String]) }
       def comment_blocks
         @github.issue_comments(@context.owner_repo, @context.number)
-               .reject { |comment| comment["id"] == @context.comment_id }
-               .reject { |comment| comment.dig("user", "login") == CommitIdentity.bot_login }
-               .map { |comment| "Comment from @#{comment.dig("user", "login")}:\n#{comment["body"]}" }
+               .reject { |comment| comment.id == @context.comment_id }
+               .reject { |comment| comment.author == CommitIdentity.bot_login }
+               .map { |comment| "Comment from @#{comment.author}:\n#{comment.body}" }
       end
 
       # @return [String] org invariants block with trailing blank line, empty
