@@ -129,6 +129,101 @@ module AiFlow
         end
       end
 
+      # One draft pass's outcome, rendered exhaustively by learn_result.
+      module DraftOutcome
+        extend T::Helpers
+        sealed!
+
+        # The pass generalized nothing — a valid, common outcome.
+        class Empty
+          include DraftOutcome
+        end
+
+        # Learnings landed on the surface's draft PR.
+        class Drafted
+          extend T::Sig
+          include DraftOutcome
+
+          sig { returns(T::Array[String]) }
+          attr_reader :slugs
+          sig { returns(GitHub::PullRequest) }
+          attr_reader :pr
+
+          # @param slugs [Array<String>]
+          # @param pr [AiFlow::GitHub::PullRequest]
+          # @param refined [Boolean]
+          sig { params(slugs: T::Array[String], pr: GitHub::PullRequest, refined: T::Boolean).void }
+          def initialize(slugs:, pr:, refined:)
+            @slugs = slugs
+            @pr = pr
+            @refined = refined
+          end
+
+          # @return [Boolean] the pass refined an existing draft (vs opened one)
+          sig { returns(T::Boolean) }
+          def refined? = @refined
+        end
+      end
+
+      # The org half of a promotion: the org-tier PR, and whether the pass
+      # refined an open promotion draft or opened a new one.
+      class Promotion
+        extend T::Sig
+
+        sig { returns(GitHub::PullRequest) }
+        attr_reader :pr
+
+        # @param pr [AiFlow::GitHub::PullRequest]
+        # @param refined [Boolean]
+        sig { params(pr: GitHub::PullRequest, refined: T::Boolean).void }
+        def initialize(pr:, refined:)
+          @pr = pr
+          @refined = refined
+        end
+
+        # @return [Boolean] the pass refined an existing draft (vs opened one)
+        sig { returns(T::Boolean) }
+        def refined? = @refined
+      end
+
+      # The paired repo-local removal's outcome. Best-effort by contract —
+      # a failed removal must not lose the org PR from the panel — so
+      # failure is a value the panel renders, not an exception.
+      module Removal
+        extend T::Helpers
+        sealed!
+
+        # The removal draft PR is open in the source repo.
+        class Opened
+          extend T::Sig
+          include Removal
+
+          sig { returns(GitHub::PullRequest) }
+          attr_reader :pr
+
+          # @param pr [AiFlow::GitHub::PullRequest]
+          sig { params(pr: GitHub::PullRequest).void }
+          def initialize(pr:)
+            @pr = pr
+          end
+        end
+
+        # The removal failed; the message lands on the panel as a warning.
+        class Failed
+          extend T::Sig
+          include Removal
+
+          sig { returns(String) }
+          attr_reader :error
+
+          # @param error [String]
+          sig { params(error: String).void }
+          def initialize(error:)
+            @error = error
+          end
+        end
+      end
+
       # One build pass's capture in flight: seeded before the agent runs
       # (seed_capture), given its staged learning diff after the commit's
       # `git add -A` (extract_capture), consumed by land_capture. The three
@@ -438,7 +533,7 @@ module AiFlow
         return refuse(segment, unknown_slug_message(slug)) unless File.exist?(skill_path)
 
         org = promote_into_org(slug, knowledge_repo, File.read(skill_path))
-        removal = drop_local_entry(slug, org.fetch(:pr))
+        removal = drop_local_entry(slug, org.pr)
         @result_writer.write(@context, [[segment, promote_result(slug, knowledge_repo, org, removal)]])
       end
 
@@ -480,10 +575,10 @@ module AiFlow
       # (the App installation spans the org, same mechanics as /build's
       # cross-repo path), adapting the learning to org-general wording.
       #
-      # @return [Hash] :pr, :refined
+      # @return [Promotion]
       sig do
         params(slug: String, knowledge_repo: String, skill_text: String)
-          .returns(T::Hash[Symbol, T.untyped])
+          .returns(Promotion)
       end
       def promote_into_org(slug, knowledge_repo, skill_text)
         branch = "ai/learn-promote-#{@context.owner_repo.split("/").last}-#{slug}"
@@ -498,7 +593,7 @@ module AiFlow
 
           push_branch(clone, branch)
           pr = existing || open_promotion_pr(slug, knowledge_repo, branch)
-          { pr: pr, refined: !existing.nil? }
+          Promotion.new(pr: pr, refined: !existing.nil?)
         end
       end
 
@@ -555,10 +650,10 @@ module AiFlow
       # folder, drop the index line), no agent pass. Best-effort: a failed
       # removal must not lose the org PR from the panel.
       #
-      # @return [Hash] :pr on success, :error on failure
+      # @return [Removal]
       sig do
         params(slug: String, org_pr: GitHub::PullRequest)
-          .returns(T::Hash[Symbol, T.untyped])
+          .returns(Removal)
       end
       def drop_local_entry(slug, org_pr)
         branch = "ai/learn-promote-#{slug}"
@@ -572,9 +667,9 @@ module AiFlow
           push_branch(worktree, branch)
           existing || open_removal_pr(slug, branch, org_pr)
         end
-        { pr: pr }
+        Removal::Opened.new(pr: pr)
       rescue GitHub::Error => e
-        { error: e.message }
+        Removal::Failed.new(error: e.message)
       end
 
       # @param worktree [String]
@@ -614,19 +709,22 @@ module AiFlow
         params(
           slug: String,
           knowledge_repo: String,
-          org: T::Hash[Symbol, T.untyped],
-          removal: T::Hash[Symbol, T.untyped],
+          org: Promotion,
+          removal: Removal,
         ).returns(String)
       end
       def promote_result(slug, knowledge_repo, org, removal)
-        verb = org[:refined] ? "refined the open org draft" : "opened an org draft"
-        lines = ["✅ **/learn --promote** — `#{slug}` → #{knowledge_repo}: #{verb} #{org.fetch(:pr).html_url}"]
+        verb = org.refined? ? "refined the open org draft" : "opened an org draft"
+        lines = ["✅ **/learn --promote** — `#{slug}` → #{knowledge_repo}: #{verb} #{org.pr.html_url}"]
         lines <<
-          if removal[:error]
-            "⚠️ the paired repo-local removal failed: #{removal[:error]}"
-          else
-            "🧹 paired removal draft in #{@context.owner_repo}: #{removal.fetch(:pr).html_url} — " \
+          case removal
+          when Removal::Failed
+            "⚠️ the paired repo-local removal failed: #{removal.error}"
+          when Removal::Opened
+            "🧹 paired removal draft in #{@context.owner_repo}: #{removal.pr.html_url} — " \
               "merge after the org PR lands and the knowledge sync ships it."
+          else
+            T.absurd(removal)
           end
         lines.join("\n")
       end
@@ -650,11 +748,11 @@ module AiFlow
           # phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
           slugs = commit_learnings(worktree)
-          next { slugs: [] } if slugs.empty?
+          next DraftOutcome::Empty.new if slugs.empty?
 
           push_branch(worktree, source.branch)
           pr = existing || open_learning_pr(source, segment)
-          { slugs: slugs, pr: pr, refined: !existing.nil? }
+          DraftOutcome::Drafted.new(slugs: slugs, pr: pr, refined: !existing.nil?)
         end
 
         @result_writer.write(@context, [[segment, learn_result(outcome)]])
@@ -872,15 +970,19 @@ module AiFlow
       end
 
       # @return [String]
-      sig { params(outcome: T::Hash[Symbol, T.untyped]).returns(String) }
+      sig { params(outcome: DraftOutcome).returns(String) }
       def learn_result(outcome)
-        return "ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change." if outcome[:slugs].empty?
-
-        pr = outcome.fetch(:pr)
-        verb = outcome[:refined] ? "refined" : "drafted"
-        lines = ["✅ **/learn** — #{verb} #{learning_count(outcome[:slugs])} in a draft PR: #{pr.html_url}"]
-        named_slugs(outcome[:slugs]).each { |slug| lines << "- `#{slug}`" }
-        lines.join("\n")
+        case outcome
+        when DraftOutcome::Empty
+          "ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change."
+        when DraftOutcome::Drafted
+          verb = outcome.refined? ? "refined" : "drafted"
+          lines = ["✅ **/learn** — #{verb} #{learning_count(outcome.slugs)} in a draft PR: #{outcome.pr.html_url}"]
+          named_slugs(outcome.slugs).each { |slug| lines << "- `#{slug}`" }
+          lines.join("\n")
+        else
+          T.absurd(outcome)
+        end
       end
 
       # @return [String]
