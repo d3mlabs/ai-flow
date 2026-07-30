@@ -21,11 +21,11 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     def build_issue(issue, extra_instruction: "")
       @built << issue.number
       if @no_changes_on.include?(issue.number)
-        AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_note: nil, workflows_patch: nil)
+        AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_notes: [], workflows_patch: nil)
       else
         AiFlow::Commands::Build::Outcome::PrOpened.new(
           url: "https://github.com/d3mlabs/demo/pull/#{issue.number}",
-          capture_note: nil, workflows_patch: nil,
+          capture_notes: [], workflows_patch: nil,
         )
       end
     end

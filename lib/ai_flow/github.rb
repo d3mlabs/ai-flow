@@ -20,12 +20,18 @@ module AiFlow
     # to_issue and the GraphQL parent_issue) receive fully hydrated issue
     # objects, so there is no partial shape to represent.
     class Issue < T::Struct
+      extend T::Sig
+
       const :number, Integer
       const :title, String
       prop :body, String
       const :html_url, String
       prop :state, String
       const :repo, String
+
+      # @return [Boolean] whether the issue is open
+      sig { returns(T::Boolean) }
+      def open? = state == "open"
     end
 
     # One conversation comment (issues and PR conversations share the REST

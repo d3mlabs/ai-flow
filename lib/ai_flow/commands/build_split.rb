@@ -129,7 +129,7 @@ module AiFlow
       # @return [Array<GitHub::Issue>]
       sig { returns(T::Array[GitHub::Issue]) }
       def open_sub_issues
-        @github.sub_issues(@context.owner_repo, @context.number).select { |issue| issue.state == "open" }
+        @github.sub_issues(@context.owner_repo, @context.number).select(&:open?)
       end
 
       # Pre-mark every node the orchestrator cannot drive, plus everything
@@ -217,7 +217,7 @@ module AiFlow
         # T.must: a "owner/repo#n" ref always splits into two parts (refs come
         # from dependencies_of, which builds them fully qualified).
         repo, number = ref.split("#", 2)
-        @github.issue(T.must(repo), Integer(T.must(number))).state == "open"
+        @github.issue(T.must(repo), Integer(T.must(number))).open?
       rescue GitHub::Error
         true
       end

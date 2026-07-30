@@ -573,7 +573,7 @@ module AiFlow
       def close_stale(entries, existing, refs, report)
         specified = refs.values.map { |ref| [ref.repo, ref.number] }
         stale = existing.select do |issue|
-          issue.state == "open" && !specified.include?([issue.repo, issue.number])
+          issue.open? && !specified.include?([issue.repo, issue.number])
         end
         stale.each do |issue|
           @github.close_issue(

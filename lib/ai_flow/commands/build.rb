@@ -41,10 +41,10 @@ module AiFlow
         abstract!
         sealed!
 
-        # @return [String, nil] the landed learning-capture panel note —
-        #   nil when capture was off or the pass yielded nothing
-        sig { returns(T.nilable(String)) }
-        attr_reader :capture_note
+        # @return [Array<String>] the landed learning-capture panel notes —
+        #   empty when capture was off or the pass yielded nothing
+        sig { returns(T::Array[String]) }
+        attr_reader :capture_notes
 
         # @return [String, nil] the workflow diff excluded from the commit
         #   (the App has no workflows permission) — nil when the agent
@@ -52,11 +52,11 @@ module AiFlow
         sig { returns(T.nilable(String)) }
         attr_reader :workflows_patch
 
-        # @param capture_note [String, nil]
+        # @param capture_notes [Array<String>]
         # @param workflows_patch [String, nil]
-        sig { params(capture_note: T.nilable(String), workflows_patch: T.nilable(String)).void }
-        def initialize(capture_note:, workflows_patch:)
-          @capture_note = capture_note
+        sig { params(capture_notes: T::Array[String], workflows_patch: T.nilable(String)).void }
+        def initialize(capture_notes:, workflows_patch:)
+          @capture_notes = capture_notes
           @workflows_patch = workflows_patch
         end
 
@@ -69,13 +69,13 @@ module AiFlow
           attr_reader :url
 
           # @param url [String]
-          # @param capture_note [String, nil]
+          # @param capture_notes [Array<String>]
           # @param workflows_patch [String, nil]
           sig do
-            params(url: String, capture_note: T.nilable(String), workflows_patch: T.nilable(String)).void
+            params(url: String, capture_notes: T::Array[String], workflows_patch: T.nilable(String)).void
           end
-          def initialize(url:, capture_note:, workflows_patch:)
-            super(capture_note: capture_note, workflows_patch: workflows_patch)
+          def initialize(url:, capture_notes:, workflows_patch:)
+            super(capture_notes: capture_notes, workflows_patch: workflows_patch)
             @url = url
           end
         end
@@ -139,18 +139,14 @@ module AiFlow
         return refuse_staged_spec(segment) if SubtasksSection.spec?(issue.body)
 
         outcome = build_issue(issue, extra_instruction: segment.instruction)
-        result, pr_url =
+        headline =
           case outcome
-          when Outcome::PrOpened then ["✅ **/build** — opened #{outcome.url}", outcome.url]
-          when Outcome::NothingToBuild then ["⚠️ **/build** — the agent made no changes, so no PR was opened.", nil]
+          when Outcome::PrOpened then "✅ **/build** — opened #{outcome.url}"
+          when Outcome::NothingToBuild then "⚠️ **/build** — the agent made no changes, so no PR was opened."
           else T.absurd(outcome)
           end
-        @result_writer.write(
-          @context,
-          [[segment,
-            [result, outcome.capture_note, workflows_note(outcome.workflows_patch, pr_url),
-             open_sub_issues_note].compact.join("\n\n")]],
-        )
+        blocks = [headline] + outcome.capture_notes + workflows_notes(outcome) + sub_issues_notes
+        @result_writer.write(@context, [[segment, blocks.join("\n\n")]])
       end
 
       # Build one issue end to end. Shared with the --split orchestrator.
@@ -182,7 +178,7 @@ module AiFlow
             # A pass may yield learnings without code changes — land them
             # even though no code PR opens.
             next Outcome::NothingToBuild.new(
-              capture_note: capture ? @learn.land_capture : nil, workflows_patch: workflows_patch,
+              capture_notes: landed_capture_notes(capture), workflows_patch: workflows_patch,
             )
           end
 
@@ -190,7 +186,7 @@ module AiFlow
           pr = open_pull_request(code_repo, issue_repo, issue, branch)
           Outcome::PrOpened.new(
             url: pr.html_url,
-            capture_note: capture ? @learn.land_capture : nil, workflows_patch: workflows_patch,
+            capture_notes: landed_capture_notes(capture), workflows_patch: workflows_patch,
           )
         end
       end
@@ -215,15 +211,25 @@ module AiFlow
 
       # Applied sub-issues are a committed valid state: building the whole
       # plan across them is a legitimate deliberate call, so the human is
-      # informed, never blocked.
+      # informed, never blocked. No open sub-issues contributes no blocks.
       #
-      # @return [String, nil]
-      sig { returns(T.nilable(String)) }
-      def open_sub_issues_note
-        open_subs = @github.sub_issues(@context.owner_repo, @context.number)
-                           .select { |issue| issue.state == "open" }
-        return nil if open_subs.empty?
+      # @return [Array<String>] zero or one informational panel blocks
+      sig { returns(T::Array[String]) }
+      def sub_issues_notes
+        open_subs = open_sub_issues
+        open_subs.empty? ? [] : [sub_issues_note(open_subs)]
+      end
 
+      # @return [Array<AiFlow::GitHub::Issue>] the plan's open sub-issues
+      sig { returns(T::Array[GitHub::Issue]) }
+      def open_sub_issues
+        @github.sub_issues(@context.owner_repo, @context.number).select(&:open?)
+      end
+
+      # @param open_subs [Array<AiFlow::GitHub::Issue>] non-empty
+      # @return [String]
+      sig { params(open_subs: T::Array[GitHub::Issue]).returns(String) }
+      def sub_issues_note(open_subs)
         listing = open_subs.map { |issue| "#{issue.repo}##{issue.number}" }.join(", ")
         "ℹ️ This plan has #{open_subs.size} open sub-issue(s) (#{listing}) — this /build covered the " \
           "whole plan; close or /build them individually if they were meant to scope the work."
@@ -278,11 +284,11 @@ module AiFlow
         @learn.extract_capture(@workdir) if capture
         workflows_patch = extract_workflows_patch(@workdir)
         sha = commit_and_push(segment)
-        capture_note = capture ? @learn.land_capture : nil
+        capture_notes = landed_capture_notes(capture)
         reply_to_threads(threads, parsed, sha)
         @result_writer.write(
           @context,
-          [[segment, iteration_result(parsed, threads, sha, capture_note, workflows_patch)]],
+          [[segment, iteration_result(parsed, threads, sha, capture_notes, workflows_patch)]],
         )
       end
 
@@ -403,6 +409,20 @@ module AiFlow
         capture ? "\n#{@learn.capture_prompt_section}\n" : ""
       end
 
+      # Learn's nilable land_capture contract flattens to a panel-block
+      # contribution at this single boundary — capture off and "nothing
+      # landed" both contribute no blocks.
+      #
+      # @param capture [Boolean] whether capture ran for this pass
+      # @return [Array<String>] zero or one landed-capture panel blocks
+      sig { params(capture: T::Boolean).returns(T::Array[String]) }
+      def landed_capture_notes(capture)
+        return [] unless capture
+
+        note = @learn.land_capture
+        note ? [note] : []
+      end
+
       # @return [String] numbered THREAD blocks, then the fresh conversation
       sig do
         params(
@@ -455,11 +475,13 @@ module AiFlow
           parsed: AgentOutput::Parsed,
           threads: T::Array[GitHub::ReviewThread],
           sha: T.nilable(String),
-          capture_note: T.nilable(String),
+          capture_notes: T::Array[String],
           workflows_patch: T.nilable(String),
         ).returns(String)
       end
-      def iteration_result(parsed, threads, sha, capture_note, workflows_patch)
+      def iteration_result(parsed, threads, sha, capture_notes, workflows_patch)
+        # The agent may not have emitted its summary segment — then the
+        # panel simply carries no summary block.
         summary = parsed.segments[threads.size + 1]
         headline =
           if sha
@@ -467,7 +489,10 @@ module AiFlow
           else
             "⚠️ **/build** — the agent made no changes."
           end
-        [headline, summary, capture_note, workflows_note(workflows_patch, pull_request_url)].compact.join("\n\n")
+        # This mode always iterates an existing PR, so a patch always gets
+        # the apply-command form.
+        patch_notes = workflows_patch ? [workflows_apply_note(pull_request_url, workflows_patch)] : []
+        ([headline] + (summary ? [summary] : []) + capture_notes + patch_notes).join("\n\n")
       end
 
       # @return [String] the PR under iteration — this mode only runs on PR
@@ -507,17 +532,22 @@ module AiFlow
         patch
       end
 
-      # @param patch [String, nil] the excluded workflow diff, nil when the
-      #   agent never touched workflow files
-      # @param pr_url [String, nil] the PR the patch applies onto; nil when
-      #   no PR exists (the agent changed nothing outside workflow files)
-      # @return [String, nil] the suggested-patch panel block, nil without
-      #   a patch
-      sig { params(patch: T.nilable(String), pr_url: T.nilable(String)).returns(T.nilable(String)) }
-      def workflows_note(patch, pr_url)
-        return nil unless patch
+      # The excluded patch renders against the sealed outcome: an opened PR
+      # gets the apply-command form onto its branch, no PR leaves only the
+      # bare diff. No patch contributes no blocks.
+      #
+      # @param outcome [Outcome]
+      # @return [Array<String>] zero or one suggested-patch panel blocks
+      sig { params(outcome: Outcome).returns(T::Array[String]) }
+      def workflows_notes(outcome)
+        patch = outcome.workflows_patch
+        return [] unless patch
 
-        pr_url ? workflows_apply_note(pr_url, patch) : workflows_diff_note(patch)
+        case outcome
+        when Outcome::PrOpened then [workflows_apply_note(outcome.url, patch)]
+        when Outcome::NothingToBuild then [workflows_diff_note(patch)]
+        else T.absurd(outcome)
+        end
       end
 
       # A copy-paste command that lands the patch on the PR branch under the

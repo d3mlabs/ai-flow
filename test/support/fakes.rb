@@ -116,7 +116,7 @@ class FakeGitHub < AiFlow::GitHub
 
   def open_issues(owner_repo, limit: 50)
     @calls << [:open_issues, owner_repo]
-    @issues.values.select { |issue| issue.repo == owner_repo && issue.state == "open" }.first(limit)
+    @issues.values.select { |issue| issue.repo == owner_repo && issue.open? }.first(limit)
   end
 
   def seed_permission(login, permission)
