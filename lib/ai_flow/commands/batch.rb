@@ -24,14 +24,95 @@ module AiFlow
     class Batch
       extend T::Sig
 
-      # Phase 1's output: segment + resolved document span (nil when the
-      # quote isn't in the body) + discussion source (see #discussion_source).
-      ResolvedSegment = T.type_alias do
-        [
-          CommentParser::Segment,
-          T.nilable(String),
-          T.nilable(T::Hash[Symbol, T.untyped]),
-        ]
+      # Where a segment's attention points, decided once by phase 1's
+      # resolution ladder (see #resolve_anchors). Sealed so prompt building
+      # dispatches exhaustively instead of re-deriving the rung from nil
+      # combinations.
+      module Anchor
+        extend T::Helpers
+        sealed!
+
+        # An unscoped segment: the whole document is the focus.
+        class WholeDocument
+          include Anchor
+        end
+
+        # The quote matched the document snapshot; span is the resolved text.
+        class DocumentSpan
+          extend T::Sig
+          include Anchor
+
+          sig { returns(String) }
+          attr_reader :span
+
+          # @param span [String]
+          sig { params(span: String).void }
+          def initialize(span:)
+            @span = span
+          end
+        end
+
+        # The quote wasn't in the document, but its source comment was found
+        # in the thread — real context the reviewer pointed at.
+        class DiscussionQuote
+          extend T::Sig
+          include Anchor
+
+          sig { returns(String) }
+          attr_reader :quote
+          sig { returns(String) }
+          attr_reader :author
+          sig { returns(String) }
+          attr_reader :url
+          sig { returns(String) }
+          attr_reader :text
+
+          # @param quote [String] the reviewer's quote
+          # @param author [String] the source comment's author login
+          # @param url [String] the source comment's URL
+          # @param text [String] the source comment's full body
+          sig { params(quote: String, author: String, url: String, text: String).void }
+          def initialize(quote:, author:, url:, text:)
+            @quote = quote
+            @author = author
+            @url = url
+            @text = text
+          end
+        end
+
+        # The quote matched neither the document nor the thread; handed to
+        # the agent verbatim, flagged as not-in-document.
+        class UnresolvedQuote
+          extend T::Sig
+          include Anchor
+
+          sig { returns(String) }
+          attr_reader :quote
+
+          # @param quote [String]
+          sig { params(quote: String).void }
+          def initialize(quote:)
+            @quote = quote
+          end
+        end
+      end
+
+      # Phase 1's output: a parsed segment plus where it points.
+      class ResolvedSegment
+        extend T::Sig
+
+        sig { returns(CommentParser::Segment) }
+        attr_reader :segment
+        sig { returns(Anchor) }
+        attr_reader :anchor
+
+        # @param segment [AiFlow::CommentParser::Segment]
+        # @param anchor [Anchor]
+        sig { params(segment: CommentParser::Segment, anchor: Anchor).void }
+        def initialize(segment:, anchor:)
+          @segment = segment
+          @anchor = anchor
+        end
       end
 
       # @param context [AiFlow::Context]
@@ -143,24 +224,26 @@ module AiFlow
       # the last rung is the quote verbatim. Unscoped segments focus the
       # whole document.
       #
-      # @return [Array<Array(Segment, String | nil, Hash | nil)>]
-      #   segment + resolved span + discussion source (see #discussion_source)
+      # @return [Array<ResolvedSegment>]
       sig do
         params(segments: T::Array[CommentParser::Segment], snapshot: String)
           .returns(T::Array[ResolvedSegment])
       end
       def resolve_anchors(segments, snapshot)
-        comments = T.let(nil, T.untyped)
+        comments = T.let(nil, T.nilable(T::Array[T::Hash[String, T.untyped]]))
         segments.map do |segment|
           quote = segment.quote
-          span = quote && PlanBody.locate_quote(snapshot, quote)
-          if span || quote.nil?
-            [segment, span, nil]
-          else
-            # Fetched once per batch, and only when some quote missed the body.
-            comments ||= discussion_comments
-            [segment, span, discussion_source(quote, comments)]
-          end
+          anchor =
+            if quote.nil?
+              Anchor::WholeDocument.new
+            elsif (span = PlanBody.locate_quote(snapshot, quote))
+              Anchor::DocumentSpan.new(span: span)
+            else
+              # Fetched once per batch, and only when some quote missed the body.
+              comments ||= discussion_comments
+              discussion_anchor(quote, comments)
+            end
+          ResolvedSegment.new(segment: segment, anchor: anchor)
         end
       end
 
@@ -181,16 +264,21 @@ module AiFlow
       # The earliest comment containing the quote — later matches are usually
       # re-quotes of the original.
       #
-      # @return [Hash{Symbol => String}, nil] author, url, text
-      sig do
-        params(quote: String, comments: T::Array[T::Hash[String, T.untyped]])
-          .returns(T.nilable(T::Hash[Symbol, T.untyped]))
-      end
-      def discussion_source(quote, comments)
+      # @param quote [String]
+      # @param comments [Array<Hash>] the thread (see #discussion_comments)
+      # @return [Anchor] DiscussionQuote when a source comment was found,
+      #   UnresolvedQuote otherwise
+      sig { params(quote: String, comments: T::Array[T::Hash[String, T.untyped]]).returns(Anchor) }
+      def discussion_anchor(quote, comments)
         comment = comments.find { |candidate| PlanBody.locate_quote(candidate["body"], quote) }
-        return nil unless comment
+        return Anchor::UnresolvedQuote.new(quote: quote) unless comment
 
-        { author: comment.dig("user", "login"), url: comment["html_url"], text: comment["body"] }
+        Anchor::DiscussionQuote.new(
+          quote: quote,
+          author: comment.dig("user", "login").to_s,
+          url: comment.fetch("html_url"),
+          text: comment.fetch("body"),
+        )
       end
 
       # @return [String]
@@ -199,14 +287,15 @@ module AiFlow
         text.gsub(%r{<details>.*?</details>}m, "(collapsed diff omitted)")
       end
 
-      # @param resolved [Array] phase-1 triples (see ResolvedSegment)
+      # @param resolved [Array<ResolvedSegment>]
       # @return [String] the single agent pass's prompt
       sig { params(resolved: T::Array[ResolvedSegment]).returns(String) }
       def batch_prompt(resolved)
-        segment_descriptions = resolved.each_with_index.map do |(segment, span, source), index|
+        segment_descriptions = resolved.each_with_index.map do |resolved_segment, index|
+          segment = resolved_segment.segment
           <<~SEGMENT
             <<<SEGMENT #{index + 1}: /#{CommentParser.word_for(segment.command)}>>>
-            #{segment_focus(segment, span, source)}
+            #{segment_focus(resolved_segment.anchor)}
             Instruction: #{segment.instruction.empty? ? "(none — the quote itself is the subject)" : segment.instruction}
           SEGMENT
         end.join("\n")
@@ -261,29 +350,27 @@ module AiFlow
       # that comment (author, link, text); otherwise the quote verbatim,
       # flagged as not-in-document.
       #
+      # @param anchor [Anchor]
       # @return [String]
-      sig do
-        params(
-          segment: CommentParser::Segment,
-          span: T.nilable(String),
-          source: T.nilable(T::Hash[Symbol, T.untyped]),
-        ).returns(String)
-      end
-      def segment_focus(segment, span, source)
-        if span
-          "Focus (the quoted section this feedback concerns):\n#{span}"
-        elsif source
+      sig { params(anchor: Anchor).returns(String) }
+      def segment_focus(anchor)
+        case anchor
+        when Anchor::DocumentSpan
+          "Focus (the quoted section this feedback concerns):\n#{anchor.span}"
+        when Anchor::DiscussionQuote
           <<~FOCUS.strip
-            Context (quoted from @#{source[:author]}'s comment #{source[:url]} on this issue — this text is NOT in the document):
-            #{segment.quote}
+            Context (quoted from @#{anchor.author}'s comment #{anchor.url} on this issue — this text is NOT in the document):
+            #{anchor.quote}
 
             The full source comment, for context:
-            #{source[:text]}
+            #{anchor.text}
           FOCUS
-        elsif segment.quote
-          "Context (quoted by the reviewer from the discussion — this text is NOT in the document):\n#{segment.quote}"
-        else
+        when Anchor::UnresolvedQuote
+          "Context (quoted by the reviewer from the discussion — this text is NOT in the document):\n#{anchor.quote}"
+        when Anchor::WholeDocument
           "Focus: the whole document"
+        else
+          T.absurd(anchor)
         end
       end
 
@@ -295,7 +382,8 @@ module AiFlow
           .returns(T::Array[[CommentParser::Segment, String]])
       end
       def segment_results(resolved, parsed, edits_applied:)
-        resolved.each_with_index.map do |(segment, _span), index|
+        resolved.each_with_index.map do |resolved_segment, index|
+          segment = resolved_segment.segment
           text = parsed.segments[index + 1]
           if segment.command == Command::Edit.new && text&.start_with?("CONFLICT:")
             [segment, "⚠️ **/edit** — #{text}"]
@@ -329,11 +417,11 @@ module AiFlow
         @github.update_issue_body(@context.owner_repo, @context.number, body: new_body)
       end
 
-      # @param resolved [Array] phase-1 triples (see ResolvedSegment)
+      # @param resolved [Array<ResolvedSegment>]
       # @return [Boolean] whether any segment is an /edit
       sig { params(resolved: T::Array[ResolvedSegment]).returns(T::Boolean) }
       def edits?(resolved)
-        resolved.any? { |segment, _span| segment.command == Command::Edit.new }
+        resolved.any? { |resolved_segment| resolved_segment.segment.command == Command::Edit.new }
       end
 
       # Standalone /ask gets a reply (a question-and-answer is a legitimate
