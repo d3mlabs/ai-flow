@@ -2,13 +2,14 @@
 # frozen_string_literal: true
 
 # SimpleCov must start before any application code loads so every file is
-# tracked; the JSON report is what CI uploads to Codecov. simplecov/sorbet
-# skips type-level Sorbet constructs (T.type_alias/sig blocks, T.absurd) so
-# they never read as coverage misses. sorbet-runtime is a gem (not tracked
-# code) and its T must exist before the config block runs.
+# tracked; the cobertura report is what CI uploads to Codecov (Codecov's
+# parser rejects SimpleCov's JSON once simplecov-sorbet marks lines skipped).
+# simplecov/sorbet skips type-level Sorbet constructs (T.type_alias/sig
+# blocks, T.absurd) so they never read as coverage misses. sorbet-runtime is
+# a gem (not tracked code) and its T must exist before the config block runs.
 require "sorbet-runtime"
 require "simplecov"
-require "simplecov_json_formatter"
+require "simplecov-cobertura"
 
 SimpleCov.start do
   # T.unsafe: SimpleCov instance_evals this block against its configuration
@@ -16,7 +17,7 @@ SimpleCov.start do
   T.unsafe(self).skip("/test/")
   T.unsafe(self).formatter(SimpleCov::Formatter::MultiFormatter.new([
     SimpleCov::Formatter::HTMLFormatter,
-    SimpleCov::Formatter::JSONFormatter,
+    SimpleCov::Formatter::CoberturaFormatter,
   ]))
 end
 

@@ -25,6 +25,10 @@ Dev::Deps.define do
     gem "rake"
     gem "rspock", "~> 3.0"
     gem "simplecov", "~> 1.0"
+    # Codecov's parser rejects SimpleCov's JSON once a report carries skipped
+    # lines ("ignored" entries — exactly what simplecov-sorbet produces);
+    # cobertura XML is Codecov's documented format for SimpleCov output.
+    gem "simplecov-cobertura", "~> 4.0", require: false
     # Skips type-level Sorbet constructs (T.type_alias/sig blocks, T.absurd)
     # so they never read as coverage misses.
     gem "simplecov-sorbet", "~> 0.2", require: false

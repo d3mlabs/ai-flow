@@ -48,6 +48,9 @@ GEM
     rubydex (0.3.0-x86_64-darwin)
     rubydex (0.3.0-x86_64-linux)
     simplecov (1.0.3)
+    simplecov-cobertura (4.0.0)
+      rexml
+      simplecov (~> 1.0)
     simplecov-sorbet (0.2.0)
       ast_transform (~> 3.1)
       simplecov (~> 1.0)
@@ -101,6 +104,7 @@ DEPENDENCIES
   rake
   rspock (~> 3.0)
   simplecov (~> 1.0)
+  simplecov-cobertura (~> 4.0)
   simplecov-sorbet (~> 0.2)
   sorbet
   sorbet-runtime

@@ -16,5 +16,6 @@ group :test do
   gem "rake"
   gem "rspock", "~> 3.0"
   gem "simplecov", "~> 1.0"
+  gem "simplecov-cobertura", "~> 4.0", require: false
   gem "simplecov-sorbet", "~> 0.2", require: false
 end
