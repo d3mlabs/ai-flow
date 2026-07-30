@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# typed: strict
 # frozen_string_literal: true
 
 # Origin-firing check entry point, invoked by
@@ -33,13 +34,28 @@ result = AiFlow::ProposalChecks.new(
   base_ref: pull_request.fetch("base").fetch("ref"),
 )
 
-icon = { pass: "✅", fail: "❌", skip: "ℹ️" }.fetch(result.status)
-lines = ["#{icon} origin-firing (#{result.status}): #{result.detail}"]
-lines << "changed learnings: #{result.new_slugs.join(", ")}" unless result.new_slugs.empty?
-lines << "fired on origin: #{result.fired.empty? ? "(none)" : result.fired.join(", ")}" unless result.status == :skip
+# This boundary owns the CI verdict and its rendering: a Skip is green
+# (out-of-scope PRs must not block), and only checked results carry the
+# slug listings.
+lines, green =
+  case result
+  when AiFlow::ProposalChecks::Result::Pass
+    [["✅ origin-firing (pass): #{result.detail}",
+      "changed learnings: #{result.new_slugs.join(", ")}",
+      "fired on origin: #{result.fired.empty? ? "(none)" : result.fired.join(", ")}"], true]
+  when AiFlow::ProposalChecks::Result::Fail
+    [["❌ origin-firing (fail): #{result.detail}",
+      "changed learnings: #{result.new_slugs.join(", ")}",
+      "fired on origin: #{result.fired.empty? ? "(none)" : result.fired.join(", ")}"], false]
+  when AiFlow::ProposalChecks::Result::Skip
+    [["ℹ️ origin-firing (skip): #{result.detail}"], true]
+  else
+    T.absurd(result)
+  end
+
 report = lines.join("\n")
-
 puts report
-File.write(ENV["GITHUB_STEP_SUMMARY"], "#{report}\n", mode: "a") if ENV["GITHUB_STEP_SUMMARY"]
+step_summary = ENV["GITHUB_STEP_SUMMARY"]
+File.write(step_summary, "#{report}\n", mode: "a") if step_summary
 
-exit(result.pass? ? 0 : 1)
+exit(green ? 0 : 1)

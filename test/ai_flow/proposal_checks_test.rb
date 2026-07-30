@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -47,7 +48,9 @@ class AiFlow::ProposalChecksTest < Minitest::Test
   end
 
   def git(dir, *argv)
-    _out, err, status = Open3.capture3("git", "-C", dir, *argv)
+    # T.unsafe: splatting a runtime-built argv is beyond Sorbet's static
+    # splat support (srb.help/7019).
+    _out, err, status = T.unsafe(Open3).capture3("git", "-C", dir, *argv)
     raise "git #{argv.first} failed: #{err}" unless status.success?
   end
 
@@ -82,11 +85,10 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     result = run_check(workdir: dir, github: github, agent: agent)
 
     Then "the check passes and the pass replayed the origin (index + human thread, no bot noise) in the checkout"
-    result.status == :pass
-    result.pass?
+    result.is_a?(AiFlow::ProposalChecks::Result::Pass)
     result.new_slugs == ["typed-errors"]
     result.fired.include?("typed-errors")
-    agent.launches.first[:command] == "learn"
+    agent.launches.first[:command] == AiFlow::Command::Learn.new
     agent.launches.first[:force] == false
     agent.launches.first[:workdir] == dir
     agent.prompts.first.include?("- [ruby/typed-errors] Raising an error? Use a typed class.")
@@ -130,8 +132,7 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     result = run_check(workdir: dir, agent: agent)
 
     Then "the check fails, naming the silent learning"
-    result.status == :fail
-    !result.pass?
+    result.is_a?(AiFlow::ProposalChecks::Result::Fail)
     result.fired == []
     result.detail.include?("`typed-errors`")
     result.detail.include?("reword the index cue")
@@ -149,9 +150,8 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     When "checking"
     result = run_check(workdir: dir, agent: agent)
 
-    Then "the check skips as a pass and never launched the agent"
-    result.status == :skip
-    result.pass?
+    Then "the check skips and never launched the agent"
+    result.is_a?(AiFlow::ProposalChecks::Result::Skip)
     result.detail.include?("structure-only")
     agent.launches.empty?
 
@@ -168,9 +168,8 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     When "checking"
     result = run_check(workdir: dir, agent: agent, pr_body: "Seeded by the migration pass.")
 
-    Then "the check skips as a pass and never launched the agent"
-    result.status == :skip
-    result.pass?
+    Then "the check skips and never launched the agent"
+    result.is_a?(AiFlow::ProposalChecks::Result::Skip)
     result.detail.include?("learned-from")
     agent.launches.empty?
 
@@ -188,7 +187,7 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     result = run_check(workdir: dir, agent: agent)
 
     Then "the slug is picked up from the .cursor path, backticks stripped from the declaration"
-    result.status == :pass
+    result.is_a?(AiFlow::ProposalChecks::Result::Pass)
     result.new_slugs == ["typed-errors"]
     agent.prompts.first.include?("- [design/one-seam] Existing cue.")
 
