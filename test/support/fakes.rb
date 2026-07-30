@@ -180,7 +180,7 @@ class FakeGitHub < AiFlow::GitHub
     @pull_request_titles << title
     @pull_request_drafts ||= []
     @pull_request_drafts << draft
-    { "html_url" => "https://github.com/#{owner_repo}/pull/900", "number" => 900, "body" => body, "draft" => draft }
+    AiFlow::GitHub::PullRequest.new(number: 900, html_url: "https://github.com/#{owner_repo}/pull/900")
   end
 
   def pull_request_bodies

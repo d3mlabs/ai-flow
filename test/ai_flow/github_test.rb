@@ -33,9 +33,10 @@ class AiFlow::GitHubTest < Minitest::Test
     When "looking the branch up"
     pr = github.open_pull_request_for_head("d3mlabs/demo", "ai/learn-pr-7")
 
-    Then "the query carried the owner-qualified head filter and the PR came back"
+    Then "the query carried the owner-qualified head filter and a typed PR came back"
     executor.command_lines.first == "gh api repos/d3mlabs/demo/pulls?state=open&head=d3mlabs:ai/learn-pr-7"
-    T.must(pr).fetch("number") == 12
+    T.must(pr).number == 12
+    T.must(pr).html_url == "u"
 
     Cleanup
     nil
@@ -78,11 +79,11 @@ class AiFlow::GitHubTest < Minitest::Test
       "d3mlabs/demo", title: "t", body: "b", head: "ai/7-x", base: "main",
     )
 
-    Then "the payload carried the branch pair and the PR came back"
+    Then "the payload carried the branch pair and a typed PR came back"
     executor.command_lines.first == "gh api -X POST --input - repos/d3mlabs/demo/pulls"
     executor.stdins.first ==
       JSON.generate({ title: "t", body: "b", head: "ai/7-x", base: "main", draft: false })
-    pr.fetch("number") == 7
+    pr.number == 7
 
     Cleanup
     nil

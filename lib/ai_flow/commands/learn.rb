@@ -86,9 +86,10 @@ module AiFlow
         sig { returns(T::Hash[Symbol, T.untyped]) }
         attr_reader :source
 
-        # @return [Hash, nil] the surface's open draft learning PR — nil
-        #   when there is none to refine (tier-2: a real "no draft" answer)
-        sig { returns(T.nilable(T::Hash[String, T.untyped])) }
+        # @return [AiFlow::GitHub::PullRequest, nil] the surface's open draft
+        #   learning PR — nil when there is none to refine (tier-2: a real
+        #   "no draft" answer)
+        sig { returns(T.nilable(GitHub::PullRequest)) }
         attr_reader :existing
 
         # @return [String, nil] the staged learning diff — nil until
@@ -97,11 +98,11 @@ module AiFlow
         attr_accessor :patch
 
         # @param source [Hash]
-        # @param existing [Hash, nil]
+        # @param existing [AiFlow::GitHub::PullRequest, nil]
         sig do
           params(
             source: T::Hash[Symbol, T.untyped],
-            existing: T.nilable(T::Hash[String, T.untyped]),
+            existing: T.nilable(GitHub::PullRequest),
           ).void
         end
         def initialize(source:, existing:)
@@ -252,12 +253,12 @@ module AiFlow
       #
       # @param dir [String] the build worktree
       # @param source [Hash] the built surface (:branch is the refine key)
-      # @return [Hash, nil] the draft PR, nil when there is none — or when
-      #   its files couldn't be fetched: without them in the tree, "the
-      #   agent deleted them" can't be inferred, so forgetting the draft
-      #   keeps an empty capture a no-op instead of closing a PR the agent
-      #   never saw
-      sig { params(dir: String, source: T::Hash[Symbol, T.untyped]).returns(T.nilable(T::Hash[String, T.untyped])) }
+      # @return [AiFlow::GitHub::PullRequest, nil] the draft PR, nil when
+      #   there is none — or when its files couldn't be fetched: without
+      #   them in the tree, "the agent deleted them" can't be inferred, so
+      #   forgetting the draft keeps an empty capture a no-op instead of
+      #   closing a PR the agent never saw
+      sig { params(dir: String, source: T::Hash[Symbol, T.untyped]).returns(T.nilable(GitHub::PullRequest)) }
       def seeded_draft(dir, source)
         existing = @github.open_pull_request_for_head(@context.owner_repo, source.fetch(:branch))
         return nil unless existing
@@ -476,11 +477,11 @@ module AiFlow
         File.readlines(path).find { |line| line.include?("learnings/#{slug}/") }&.strip
       end
 
-      # @return [Hash] the created proposal PR (ordinary, not GitHub draft
-      #   state — see open_learning_pr)
+      # @return [AiFlow::GitHub::PullRequest] the created proposal PR
+      #   (ordinary, not GitHub draft state — see open_learning_pr)
       sig do
         params(slug: String, knowledge_repo: String, branch: String)
-          .returns(T::Hash[String, T.untyped])
+          .returns(GitHub::PullRequest)
       end
       def open_promotion_pr(slug, knowledge_repo, branch)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
@@ -502,7 +503,7 @@ module AiFlow
       #
       # @return [Hash] :pr on success, :error on failure
       sig do
-        params(slug: String, org_pr: T::Hash[String, T.untyped])
+        params(slug: String, org_pr: GitHub::PullRequest)
           .returns(T::Hash[Symbol, T.untyped])
       end
       def drop_local_entry(slug, org_pr)
@@ -534,16 +535,16 @@ module AiFlow
         File.write(path, kept.join)
       end
 
-      # @return [Hash] the created proposal PR (ordinary, not GitHub draft
-      #   state — see open_learning_pr)
+      # @return [AiFlow::GitHub::PullRequest] the created proposal PR
+      #   (ordinary, not GitHub draft state — see open_learning_pr)
       sig do
-        params(slug: String, branch: String, org_pr: T::Hash[String, T.untyped])
-          .returns(T::Hash[String, T.untyped])
+        params(slug: String, branch: String, org_pr: GitHub::PullRequest)
+          .returns(GitHub::PullRequest)
       end
       def open_removal_pr(slug, branch, org_pr)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
-          Drops the repo-local `#{slug}` learning — promoted to the org tier by #{org_pr.fetch("html_url")}. Merge after that PR lands and the knowledge sync has shipped it machine-wide.
+          Drops the repo-local `#{slug}` learning — promoted to the org tier by #{org_pr.html_url}. Merge after that PR lands and the knowledge sync has shipped it machine-wide.
 
           #{requested_by}learned-from: #{@context.owner_repo}##{@context.number} (promote)
         BODY
@@ -565,12 +566,12 @@ module AiFlow
       end
       def promote_result(slug, knowledge_repo, org, removal)
         verb = org[:refined] ? "refined the open org draft" : "opened an org draft"
-        lines = ["✅ **/learn --promote** — `#{slug}` → #{knowledge_repo}: #{verb} #{org.fetch(:pr).fetch("html_url")}"]
+        lines = ["✅ **/learn --promote** — `#{slug}` → #{knowledge_repo}: #{verb} #{org.fetch(:pr).html_url}"]
         lines <<
           if removal[:error]
             "⚠️ the paired repo-local removal failed: #{removal[:error]}"
           else
-            "🧹 paired removal draft in #{@context.owner_repo}: #{removal.fetch(:pr).fetch("html_url")} — " \
+            "🧹 paired removal draft in #{@context.owner_repo}: #{removal.fetch(:pr).html_url} — " \
               "merge after the org PR lands and the knowledge sync ships it."
           end
         lines.join("\n")
@@ -774,10 +775,10 @@ module AiFlow
       # unsolicited proposals ever get noisy, `draft: true` on these
       # creations is the ready-made valve.
       #
-      # @return [Hash] the created proposal PR
+      # @return [AiFlow::GitHub::PullRequest] the created proposal PR
       sig do
         params(source: T::Hash[Symbol, T.untyped], segment: CommentParser::Segment)
-          .returns(T::Hash[String, T.untyped])
+          .returns(GitHub::PullRequest)
       end
       def open_learning_pr(source, segment)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
@@ -823,7 +824,7 @@ module AiFlow
 
         pr = outcome.fetch(:pr)
         verb = outcome[:refined] ? "refined" : "drafted"
-        lines = ["✅ **/learn** — #{verb} #{learning_count(outcome[:slugs])} in a draft PR: #{pr.fetch("html_url")}"]
+        lines = ["✅ **/learn** — #{verb} #{learning_count(outcome[:slugs])} in a draft PR: #{pr.html_url}"]
         named_slugs(outcome[:slugs]).each { |slug| lines << "- `#{slug}`" }
         lines.join("\n")
       end
@@ -851,7 +852,7 @@ module AiFlow
       sig do
         params(
           patch: String,
-          existing: T.nilable(T::Hash[String, T.untyped]),
+          existing: T.nilable(GitHub::PullRequest),
           source: T::Hash[Symbol, T.untyped],
         ).returns(T.nilable(String))
       end
@@ -864,7 +865,7 @@ module AiFlow
           push_branch(worktree, source.fetch(:branch))
           pr = existing || open_capture_pr(source)
           verb = existing ? "refined" : "drafted"
-          lines = ["🧠 #{verb} #{learning_count(slugs)} in a draft learning PR: #{pr.fetch("html_url")}"]
+          lines = ["🧠 #{verb} #{learning_count(slugs)} in a draft learning PR: #{pr.html_url}"]
           named_slugs(slugs).each { |slug| lines << "- `#{slug}`" }
           lines.join("\n")
         end
@@ -882,9 +883,9 @@ module AiFlow
         raise GitHub::Error, "applying the learning diff failed: #{err.strip}" unless ok
       end
 
-      # @return [Hash] the created proposal PR (ordinary, not GitHub draft
-      #   state — see open_learning_pr)
-      sig { params(source: T::Hash[Symbol, T.untyped]).returns(T::Hash[String, T.untyped]) }
+      # @return [AiFlow::GitHub::PullRequest] the created proposal PR
+      #   (ordinary, not GitHub draft state — see open_learning_pr)
+      sig { params(source: T::Hash[Symbol, T.untyped]).returns(GitHub::PullRequest) }
       def open_capture_pr(source)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
@@ -903,10 +904,10 @@ module AiFlow
       # so the draft closes instead of lingering half-refined.
       #
       # @return [String]
-      sig { params(existing: T::Hash[String, T.untyped]).returns(String) }
+      sig { params(existing: GitHub::PullRequest).returns(String) }
       def close_dissolved_draft(existing)
-        @github.close_pull_request(@context.owner_repo, existing.fetch("number"))
-        note = "🧠 closed the draft learning PR #{existing.fetch("html_url")} — this pass dissolved its generalization."
+        @github.close_pull_request(@context.owner_repo, existing.number)
+        note = "🧠 closed the draft learning PR #{existing.html_url} — this pass dissolved its generalization."
         $stdout.puts note
         note
       rescue GitHub::Error => e

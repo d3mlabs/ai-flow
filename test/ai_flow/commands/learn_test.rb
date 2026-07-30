@@ -198,7 +198,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     executor = RecordingExecutor.new(staged: [INDEX, SKILL])
     context = ContextBuilder.issue_comment(number: 7, body: "/learn", pull_request: true)
 
@@ -273,7 +273,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     Given "an open scan draft on ai/learn-scan"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-scan",
-      { "html_url" => "https://github.com/#{REPO}/pull/510", "number" => 510 })
+      AiFlow::GitHub::PullRequest.new(number: 510, html_url: "https://github.com/#{REPO}/pull/510"))
     executor = RecordingExecutor.new(staged: [INDEX])
 
     When "rescanning"
@@ -403,7 +403,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     promotable_workdir(dir)
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-promote-demo-typed-errors",
-      { "html_url" => "https://github.com/d3mlabs/knowledge/pull/12", "number" => 12 })
+      AiFlow::GitHub::PullRequest.new(number: 12, html_url: "https://github.com/d3mlabs/knowledge/pull/12"))
     executor = RecordingExecutor.new(staged: ["index.md", "skills/typed-errors/SKILL.md"])
 
     When "promoting again"

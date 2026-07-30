@@ -551,7 +551,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "a PR iteration with an open ai/learn-pr-7 draft and a pass that re-staged learning files"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
     executor = RecordingExecutor.new(
       capture_patch: LEARNING_PATCH,
@@ -576,7 +576,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "an open learning draft whose generalization this pass dissolved (no learning diff left)"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
@@ -597,7 +597,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "an open learning draft whose branch can't be fetched into the worktree"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "", fail_on: ["fetch origin ai/learn-pr-7"])
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
@@ -644,7 +644,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       end
     end.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      { "html_url" => "https://github.com/#{REPO}/pull/500", "number" => 500 })
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])

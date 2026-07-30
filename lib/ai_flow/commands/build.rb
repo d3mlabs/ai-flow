@@ -189,7 +189,7 @@ module AiFlow
           push_branch(worktree, branch)
           pr = open_pull_request(code_repo, issue_repo, issue, branch)
           Outcome::PrOpened.new(
-            url: pr.fetch("html_url"),
+            url: pr.html_url,
             capture_note: capture ? @learn.land_capture : nil, workflows_patch: workflows_patch,
           )
         end
@@ -793,10 +793,10 @@ module AiFlow
       # The PR is the bot's proposal; the accountable human is named in the
       # body and assigned to the PR (see docs/attribution.md).
       #
-      # @return [Hash] the created PR
+      # @return [AiFlow::GitHub::PullRequest] the created PR
       sig do
         params(code_repo: String, issue_repo: String, issue: GitHub::Issue, branch: String)
-          .returns(T::Hash[String, T.untyped])
+          .returns(GitHub::PullRequest)
       end
       def open_pull_request(code_repo, issue_repo, issue, branch)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
@@ -815,7 +815,7 @@ module AiFlow
           base: @github.default_branch(code_repo),
         )
         requester = @context.commenter_login
-        @github.add_assignees(code_repo, pr.fetch("number"), [requester]) if requester
+        @github.add_assignees(code_repo, pr.number, [requester]) if requester
         pr
       end
 

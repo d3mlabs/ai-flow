@@ -70,6 +70,13 @@ module AiFlow
       const :comments, T::Array[Comment]
     end
 
+    # A pull request, as the commands consume it: the number anchors API
+    # calls (close, assign), the URL lands in result comments.
+    class PullRequest < T::Struct
+      const :number, Integer
+      const :html_url, String
+    end
+
     # @param executor [AiFlow::Executor]
     sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
@@ -298,16 +305,16 @@ module AiFlow
 
     # @param draft [Boolean] open as a draft (learning PRs are drafts — the
     #   human merge is the curation gate, never an auto-merge)
-    # @return [Hash] the created PR (with "html_url", "number")
+    # @return [PullRequest] the created PR
     sig do
       params(owner_repo: String, title: String, body: String, head: String, base: String, draft: T::Boolean)
-        .returns(T::Hash[String, T.untyped])
+        .returns(PullRequest)
     end
     def create_pull_request(owner_repo, title:, body:, head:, base:, draft: false)
-      api(
+      to_pull_request(api(
         "repos/#{owner_repo}/pulls",
         method: "POST", payload: { title: title, body: body, head: head, base: base, draft: draft },
-      )
+      ))
     end
 
     # The open PR whose head is this branch, or nil — how /learn finds a
@@ -315,12 +322,15 @@ module AiFlow
     # branch convention ai/learn-<source> is the discovery key). The head
     # filter is `owner:branch`; owner is the repo's owner.
     #
-    # @return [Hash, nil] the PR (with "number", "html_url"), nil when none
-    sig { params(owner_repo: String, branch: String).returns(T.nilable(T::Hash[String, T.untyped])) }
+    # @return [PullRequest, nil] nil when no PR is open on the branch
+    sig { params(owner_repo: String, branch: String).returns(T.nilable(PullRequest)) }
     def open_pull_request_for_head(owner_repo, branch)
       owner = owner_repo.split("/", 2).first
       list = api("repos/#{owner_repo}/pulls?state=open&head=#{owner}:#{branch}") || []
-      list.first
+      first = list.first
+      return nil if first.nil?
+
+      to_pull_request(first)
     end
 
     # Close a PR without merging — how a later pass retires a dissolved
@@ -419,6 +429,13 @@ module AiFlow
           )
         end,
       )
+    end
+
+    # @param data [Hash] a REST pull-request object
+    # @return [PullRequest]
+    sig { params(data: T::Hash[String, T.untyped]).returns(PullRequest) }
+    def to_pull_request(data)
+      PullRequest.new(number: data.fetch("number"), html_url: data.fetch("html_url"))
     end
 
     # @param data [Hash] a REST issue-comment object
