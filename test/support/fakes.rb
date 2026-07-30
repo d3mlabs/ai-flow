@@ -294,7 +294,7 @@ module ContextBuilder
   def issue_comment(owner_repo: "d3mlabs/demo", number: 7, comment_id: 55, body:, association: "OWNER", pull_request: false, env: {})
     issue = { "number" => number }
     issue["pull_request"] = { "url" => "x" } if pull_request
-    AiFlow::Context.new(
+    AiFlow::Context.from_event(
       event_name: "issue_comment",
       payload: {
         "repository" => { "full_name" => owner_repo },
@@ -310,7 +310,7 @@ module ContextBuilder
   end
 
   def review_summary(owner_repo: "d3mlabs/demo", number: 3, review_id: 77, body:, association: "OWNER", env: {})
-    AiFlow::Context.new(
+    AiFlow::Context.from_event(
       event_name: "pull_request_review",
       payload: {
         "repository" => { "full_name" => owner_repo },
@@ -326,7 +326,7 @@ module ContextBuilder
   end
 
   def review_comment(owner_repo: "d3mlabs/demo", number: 3, comment_id: 9, body:, association: "OWNER", env: {})
-    AiFlow::Context.new(
+    AiFlow::Context.from_event(
       event_name: "pull_request_review_comment",
       payload: {
         "repository" => { "full_name" => owner_repo },

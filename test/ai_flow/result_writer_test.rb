@@ -144,7 +144,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
   test "review comments are edited through the pulls namespace" do
     Given "a review-comment context"
     github = FakeGitHub.new
-    context = AiFlow::Context.new(
+    context = AiFlow::Context.from_event(
       event_name: "pull_request_review_comment",
       payload: {
         "repository" => { "full_name" => "d3mlabs/demo" },

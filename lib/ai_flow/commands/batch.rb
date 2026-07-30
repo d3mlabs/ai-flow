@@ -246,11 +246,12 @@ module AiFlow
       # @return [String] empty outside review threads
       sig { returns(String) }
       def review_thread_anchor
-        return "" unless @context.diff_hunk
+        context = @context
+        return "" unless context.is_a?(Context::ReviewComment)
 
         <<~ANCHOR
-          The command was posted on a code review thread anchored at `#{@context.diff_path}` — this code is what prompted the feedback (the document is still the thing to edit or answer about):
-          #{@context.diff_hunk}
+          The command was posted on a code review thread anchored at `#{context.diff_path}` — this code is what prompted the feedback (the document is still the thing to edit or answer about):
+          #{context.diff_hunk}
         ANCHOR
       end
 

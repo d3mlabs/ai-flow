@@ -229,8 +229,15 @@ module AiFlow
       # @return [String] the PR head branch, checked out in the job checkout
       sig { returns(String) }
       def checkout_head_branch
-        branch = @context.pr_head_ref ||
-                 @github.api("repos/#{@context.owner_repo}/pulls/#{@context.number}").fetch("head").fetch("ref")
+        branch =
+          case (context = @context)
+          when Context::ReviewComment, Context::ReviewSummary then context.pr_head_ref
+          when Context::IssueComment
+            # A PR conversation comment arrives as issue_comment: the payload
+            # carries no head ref, so ask the API which branch the PR is on.
+            @github.api("repos/#{context.owner_repo}/pulls/#{context.number}").fetch("head").fetch("ref")
+          else T.absurd(context)
+          end
         run!(["git", "fetch", "origin", branch], chdir: @workdir)
         run!(["git", "checkout", branch], chdir: @workdir)
         branch
