@@ -52,8 +52,10 @@ module AiFlow
 
     # The derive(PartialEq) analog: opt in explicitly, enumerate the
     # members, and == and hash both generate from that one list — so they
-    # cannot drift apart. equality_members is real method calls (not
-    # symbols), so a typo'd member is a static srb error.
+    # cannot drift apart. equality_members is member VALUES (ivar reads or
+    # method calls, never symbols): under typed: strict either form makes a
+    # typo'd member a static srb error, where a symbol list fetched
+    # reflectively would silently compare nil == nil.
     #
     # A memoization ivar or other irrelevant internal simply stays off the
     # list; when equality is not memberwise at all, implement ==/hash by
@@ -85,10 +87,15 @@ module AiFlow
       def hash = [self.class, *equality_members].hash
 
       # The members that constitute identity — effectively the struct
-      # declaration a compile-time derive would read.
+      # declaration a compile-time derive would read. Elements are Object
+      # (not BasicObject or T.anything) because the derive delegates == and
+      # hash to every member, and Object is where both are guaranteed —
+      # BasicObject lacks hash. That members implement them value-
+      # semantically (Rust's recursive PartialEq bound) is not typeable;
+      # assert_value_semantics covers that residue at test time.
       #
-      # @return [Array] the member values, in a stable order
-      sig { abstract.returns(T::Array[T.untyped]) }
+      # @return [Array<Object>] the member values, in a stable order
+      sig { abstract.returns(T::Array[Object]) }
       def equality_members; end
     end
   end
