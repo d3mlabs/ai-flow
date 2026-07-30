@@ -1,5 +1,5 @@
 #!/usr/bin/env ruby
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 # ai-flow dispatch entry point, invoked by .github/workflows/ai-commands.yml
