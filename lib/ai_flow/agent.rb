@@ -24,9 +24,8 @@ module AiFlow
     # launches the same command repeatedly records one entry. Feeds the
     # ResultWriter footer's model note.
     #
-    # @return [Hash{AiFlow::Command => String}] command => model ("cursor
-    #   default" when no policy resolved and the CLI's account default applied)
-    sig { returns(T::Hash[Command, String]) }
+    # @return [Hash{AiFlow::Command => AiFlow::ModelSelection}]
+    sig { returns(T::Hash[Command, ModelSelection]) }
     attr_reader :models_used
 
     # Skill and rule reads observed in the event stream — the loop's own
@@ -52,7 +51,7 @@ module AiFlow
     sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
       @executor = executor
-      @models_used = T.let({}, T::Hash[Command, String])
+      @models_used = T.let({}, T::Hash[Command, ModelSelection])
       @knowledge_applied = T.let([], T::Array[String])
     end
 
@@ -78,15 +77,22 @@ module AiFlow
       # --trust: headless runs can't answer the workspace-trust prompt, and the
       # workdir is always a CI checkout of a repo we dispatched for.
       argv = [binary, "-p", "--output-format", "stream-json", "--trust"]
-      model = model_for(command, workdir)
-      @models_used[command] = model || "cursor default"
+      selection = model_for(command, workdir)
+      @models_used[command] = selection
       # Display names speak the comment vocabulary, so they come from the
       # parser's table.
       word = CommentParser.word_for(command)
       # Ungrouped so the effective model is scannable on the run page next
       # to the config + --list-models printout from the Log versions step.
-      $stdout.puts "ai-flow model (/#{word}): #{model || "(CLI account default)"}"
-      argv += ["--model", model] if model
+      $stdout.puts "ai-flow model (/#{word}): #{log_label(selection)}"
+      case selection
+      when ModelSelection::Named
+        argv += ["--model", selection.handle]
+      when ModelSelection::AccountDefault
+        nil # no --model flag; the CLI applies its account default
+      else
+        T.absurd(selection)
+      end
       argv << "--force" if force
 
       log_group("ai-flow agent prompt (/#{word})", prompt)
@@ -117,23 +123,45 @@ module AiFlow
 
     # Model precedence: AI_FLOW_MODEL env (ops escape hatch on the runner
     # box) > models.<command> > models.default (both from the repo's
-    # .github/ai-flow.yml) > nil, meaning the CLI's account default.
-    # RepoConfig coerces its section at load (blank links are already
-    # unset), so only the env link needs blank-stripping here. Public and
-    # pure: the dispatcher calls it pre-launch to predict the model for
-    # the ⏳ status line.
+    # .github/ai-flow.yml) > AccountDefault. Absence exists inside the
+    # chain (config keys are optional) but dies at this return: callers
+    # always receive a ModelSelection, never nil. Public and pure: the
+    # dispatcher calls it pre-launch to predict the model for the ⏳
+    # status line.
     #
     # @param command [AiFlow::Command]
     # @param workdir [String]
-    # @return [String, nil]
-    sig { params(command: Command, workdir: String).returns(T.nilable(String)) }
+    # @return [AiFlow::ModelSelection]
+    sig { params(command: Command, workdir: String).returns(ModelSelection) }
     def model_for(command, workdir)
       config = RepoConfig.load(workdir)
-      env_override = ENV["AI_FLOW_MODEL"].to_s.strip
-      [env_override.empty? ? nil : env_override, config.models[command], config.default_model].compact.first
+      [env_selection, config.models[command], config.default_model].compact.first ||
+        ModelSelection::AccountDefault.new
     end
 
     private
+
+    # The AI_FLOW_MODEL override coerced at its boundary: blank is unset.
+    #
+    # @return [AiFlow::ModelSelection::Named, nil]
+    sig { returns(T.nilable(ModelSelection::Named)) }
+    def env_selection
+      handle = ENV["AI_FLOW_MODEL"].to_s.strip
+      handle.empty? ? nil : ModelSelection::Named.new(handle)
+    end
+
+    # This boundary's rendering of a selection — the run-log vocabulary.
+    #
+    # @param selection [AiFlow::ModelSelection]
+    # @return [String]
+    sig { params(selection: ModelSelection).returns(String) }
+    def log_label(selection)
+      case selection
+      when ModelSelection::Named then selection.handle
+      when ModelSelection::AccountDefault then "(CLI account default)"
+      else T.absurd(selection)
+      end
+    end
 
     # @param line [String] one NDJSON line from the stream
     # @return [Hash, nil] nil when the line isn't a JSON event (format drift)

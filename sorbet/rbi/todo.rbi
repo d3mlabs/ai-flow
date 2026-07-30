@@ -31,6 +31,7 @@ module AiFlow::ExecutorTest::Cleanup; end
 module AiFlow::ExecutorTest::Then; end
 module AiFlow::GitHubTest::Cleanup; end
 module AiFlow::GitHubTest::Expect; end
+module AiFlow::ModelSelectionTest::Where; end
 module AiFlow::OrgInvariantsTest::Cleanup; end
 module AiFlow::OrgInvariantsTest::Then; end
 module AiFlow::PlanBodyTest::Cleanup; end

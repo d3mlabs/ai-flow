@@ -191,13 +191,16 @@ class AiFlow::AgentTest < Minitest::Test
     agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then
-    agent.models_used == { AiFlow::Command::Ask.new => "gpt-5", AiFlow::Command::Build.new => "gpt-5" }
+    agent.models_used == {
+      AiFlow::Command::Ask.new => AiFlow::ModelSelection::Named.new("gpt-5"),
+      AiFlow::Command::Build.new => AiFlow::ModelSelection::Named.new("gpt-5"),
+    }
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "models_used records 'cursor default' when no policy resolved" do
+  test "models_used records AccountDefault when no policy resolved" do
     Given "a workdir without a config file"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     executor = RecordingExecutor.new
@@ -207,7 +210,7 @@ class AiFlow::AgentTest < Minitest::Test
     agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
-    agent.models_used == { AiFlow::Command::Ask.new => "cursor default" }
+    agent.models_used == { AiFlow::Command::Ask.new => AiFlow::ModelSelection::AccountDefault.new }
 
     Cleanup
     FileUtils.rm_rf(dir)

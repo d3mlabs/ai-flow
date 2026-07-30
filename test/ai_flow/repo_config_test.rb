@@ -56,9 +56,9 @@ class AiFlow::RepoConfigTest < Minitest::Test
     Given "a models section mixing valid links with every kind of junk"
     config = load_config("models:\n  default: gpt-5\n  build: opus\n  ask: \"\"\n  split: 3\n  potato: nope\n")
 
-    Expect "only the recognized non-blank string links survive, keyed by value object"
-    config.models == { AiFlow::Command::Build.new => "opus" }
-    config.default_model == "gpt-5"
+    Expect "only the recognized non-blank string links survive, as value objects"
+    config.models == { AiFlow::Command::Build.new => AiFlow::ModelSelection::Named.new("opus") }
+    config.default_model == AiFlow::ModelSelection::Named.new("gpt-5")
 
     Cleanup
     nil

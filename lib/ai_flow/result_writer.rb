@@ -78,21 +78,37 @@ module AiFlow
     # In practice this renders one name: a job launches under a single
     # command policy (a batch is one agent pass — run as /edit when any
     # edit is present — and /build --split's fan-out passes all share the
-    # "build" key), so models_used holds one entry. Distinct values (if
-    # per-segment passes ever exist) list out. nil for an empty hash (no
+    # Build key), so models_used holds one entry. Distinct values (if
+    # per-segment passes ever exist) list out — uniq works because
+    # ModelSelection carries value equality. nil for an empty hash (no
     # agent pass: failure before launch, /split --apply) so the caller's
     # line stays run-link-only. A class method so the dispatcher's ⏳
     # status line renders its pre-launch prediction with the same grammar
     # as the footer.
     #
-    # @param models [Hash{AiFlow::Command => String}] command => model
+    # @param models [Hash{AiFlow::Command => AiFlow::ModelSelection}]
     # @return [String, nil]
-    sig { params(models: T::Hash[Command, String]).returns(T.nilable(String)) }
+    sig { params(models: T::Hash[Command, ModelSelection]).returns(T.nilable(String)) }
     def self.models_note(models)
       return nil if models.empty?
 
-      "model: #{models.values.uniq.map { |model| "`#{model}`" }.join(", ")}"
+      "model: #{models.values.uniq.map { |selection| "`#{model_label(selection)}`" }.join(", ")}"
     end
+
+    # This boundary's rendering of a selection — the comment-footer
+    # vocabulary (deliberately distinct from Agent's run-log label).
+    #
+    # @param selection [AiFlow::ModelSelection]
+    # @return [String]
+    sig { params(selection: ModelSelection).returns(String) }
+    def self.model_label(selection)
+      case selection
+      when ModelSelection::Named then selection.handle
+      when ModelSelection::AccountDefault then "cursor default"
+      else T.absurd(selection)
+      end
+    end
+    private_class_method :model_label
 
     # @param text [String]
     # @return [Array<String>] the text's lines, each quote-prefixed

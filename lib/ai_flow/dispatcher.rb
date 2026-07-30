@@ -123,13 +123,13 @@ module AiFlow
     end
 
     # @param segments [Array<CommentParser::Segment>]
-    # @return [Hash{AiFlow::Command => String}] the effective command => its
-    #   model (same shape as Agent#models_used, which will hold exactly this
-    #   entry after the pass)
-    sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Hash[Command, String]) }
+    # @return [Hash{AiFlow::Command => AiFlow::ModelSelection}] the effective
+    #   command => its selection (same shape as Agent#models_used, which will
+    #   hold exactly this entry after the pass)
+    sig { params(segments: T::Array[CommentParser::Segment]).returns(T::Hash[Command, ModelSelection]) }
     def predicted_models(segments)
       command = effective_command(segments)
-      { command => @agent.model_for(command, @workdir) || "cursor default" }
+      { command => @agent.model_for(command, @workdir) }
     end
 
     # The command the job will actually launch under, mirroring #route: a

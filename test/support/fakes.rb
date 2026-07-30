@@ -252,9 +252,9 @@ end unless defined?(FakeGitHub)
 class FakeAgent < AiFlow::Agent
   attr_reader :prompts, :launches, :models_used, :knowledge_applied
 
-  # @param models_by_command [Hash{String => String}, nil] per-command
-  #   models, for tests exercising which policy a pass launches under;
-  #   `model` is the flat answer otherwise
+  # @param models_by_command [Hash{AiFlow::Command => String}, nil]
+  #   per-command model handles, for tests exercising which policy a pass
+  #   launches under; `model` is the flat answer otherwise
   # @param knowledge_applied [Array<String>] canned skill/rule reads, for
   #   tests exercising the dispatcher's step-summary telemetry
   def initialize(outputs, model: "fake-model", models_by_command: nil, knowledge_applied: [], &on_launch)
@@ -271,15 +271,17 @@ class FakeAgent < AiFlow::Agent
   def launch(prompt:, workdir:, command:, force: false)
     @prompts << prompt
     @launches << { command: command, force: force, workdir: workdir }
-    @models_used[command] = model_for(command, workdir) || "cursor default"
+    @models_used[command] = model_for(command, workdir)
     @on_launch&.call(prompt)
     @outputs.shift or raise AiFlow::Agent::Error, "no canned output left"
   end
 
-  # Mirrors Agent#model_for's pre-launch prediction: the canned model, as
-  # nil (CLI default) when the fake was built without one.
+  # Mirrors Agent#model_for's contract: always a ModelSelection. The fake's
+  # constructor stays string-based for test ergonomics; coercion happens
+  # here, at the same seam the real resolver owns.
   def model_for(command, _workdir)
-    @models_by_command ? @models_by_command[command] : @model
+    handle = @models_by_command ? @models_by_command[command] : @model
+    handle ? AiFlow::ModelSelection::Named.new(handle) : AiFlow::ModelSelection::AccountDefault.new
   end
 end unless defined?(FakeAgent)
 

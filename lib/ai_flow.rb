@@ -8,6 +8,7 @@ require "sorbet-runtime"
 
 require "ai_flow/value_equality"
 require "ai_flow/command"
+require "ai_flow/model_selection"
 require "ai_flow/token_provider"
 require "ai_flow/executor"
 require "ai_flow/github"

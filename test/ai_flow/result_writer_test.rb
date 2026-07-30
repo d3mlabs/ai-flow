@@ -111,8 +111,8 @@ class AiFlow::ResultWriterTest < Minitest::Test
   test "distinct model values list out (defensive — a job launches under one policy)" do
     Given "an agent seeded with two distinct models"
     agent = FakeAgent.new([], model: nil)
-    agent.models_used[AiFlow::Command::Ask.new] = "claude-fable-5-high"
-    agent.models_used[AiFlow::Command::Edit.new] = "gpt-5.3-codex"
+    agent.models_used[AiFlow::Command::Ask.new] = AiFlow::ModelSelection::Named.new("claude-fable-5-high")
+    agent.models_used[AiFlow::Command::Edit.new] = AiFlow::ModelSelection::Named.new("gpt-5.3-codex")
     writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
 
     When "rendering the footer"

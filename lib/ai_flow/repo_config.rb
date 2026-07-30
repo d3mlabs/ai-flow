@@ -57,27 +57,29 @@ module AiFlow
     # Model policy, coerced at this boundary: only recognized command keys
     # with non-blank string values survive (unknown keys are ignored — it's
     # the adopter's file, same posture as the /split spec; blanks are unset
-    # per link so `build: ""` falls through to the default).
+    # per link so `build: ""` falls through to the default). Values leave
+    # as ModelSelection::Named — raw YAML strings don't outlive this class.
     #
-    # @return [Hash{AiFlow::Command => String}]
-    sig { returns(T::Hash[Command, String]) }
+    # @return [Hash{AiFlow::Command => AiFlow::ModelSelection::Named}]
+    sig { returns(T::Hash[Command, ModelSelection::Named]) }
     def models
       models_section.each_with_object({}) do |(key, value), coerced|
         command = MODEL_KEYS[key.to_s]
         next unless command && value.is_a?(String) && !value.strip.empty?
 
-        coerced[command] = value.strip
+        coerced[command] = ModelSelection::Named.new(value.strip)
       end
     end
 
     # The optional "default" blanket under models: — a config-schema
     # keyword, not a command, so it gets its own accessor.
     #
-    # @return [String, nil]
-    sig { returns(T.nilable(String)) }
+    # @return [AiFlow::ModelSelection::Named, nil] nil when unset (the
+    #   resolver's chain then ends at AccountDefault)
+    sig { returns(T.nilable(ModelSelection::Named)) }
     def default_model
       value = models_section["default"]
-      value.is_a?(String) && !value.strip.empty? ? value.strip : nil
+      value.is_a?(String) && !value.strip.empty? ? ModelSelection::Named.new(value.strip) : nil
     end
 
     # The org knowledge repo ("owner/repo") learnings promote into — where
