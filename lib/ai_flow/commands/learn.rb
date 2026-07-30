@@ -707,8 +707,8 @@ module AiFlow
       sig { returns(T::Array[String]) }
       def thread_blocks
         @github.unresolved_review_threads(@context.owner_repo, @context.number).map do |thread|
-          conversation = thread["comments"].map { |comment| "@#{comment["author"]}: #{comment["body"]}" }.join("\n")
-          "REVIEW THREAD (#{thread["path"]})\n#{thread["diff_hunk"]}\n#{conversation}"
+          conversation = thread.comments.map { |comment| "@#{comment.author}: #{comment.body}" }.join("\n")
+          "REVIEW THREAD (#{thread.path})\n#{thread.diff_hunk}\n#{conversation}"
         end
       end
 

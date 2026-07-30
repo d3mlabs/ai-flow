@@ -307,11 +307,11 @@ module AiFlow
       # /ask and its answer are a handled conversation, not outstanding
       # feedback).
       #
-      # @return [Array<Hash>]
-      sig { returns(T::Array[T::Hash[String, T.untyped]]) }
+      # @return [Array<AiFlow::GitHub::ReviewThread>]
+      sig { returns(T::Array[GitHub::ReviewThread]) }
       def sweepable_threads
         @github.unresolved_review_threads(@context.owner_repo, @context.number)
-               .reject { |thread| command_comment?(thread["comments"].first&.fetch("body", nil).to_s) }
+               .reject { |thread| command_comment?(thread.comments.first&.body.to_s) }
       end
 
       # Conversation comments have no resolved state, so "unaddressed" is a
@@ -364,7 +364,7 @@ module AiFlow
         params(
           segment: CommentParser::Segment,
           branch: String,
-          threads: T::Array[T::Hash[String, T.untyped]],
+          threads: T::Array[GitHub::ReviewThread],
           comments: T::Array[GitHub::Comment],
           capture: T::Boolean,
         ).returns(String)
@@ -406,14 +406,14 @@ module AiFlow
       # @return [String] numbered THREAD blocks, then the fresh conversation
       sig do
         params(
-          threads: T::Array[T::Hash[String, T.untyped]],
+          threads: T::Array[GitHub::ReviewThread],
           comments: T::Array[GitHub::Comment],
         ).returns(String)
       end
       def feedback_descriptions(threads, comments)
         thread_blocks = threads.each_with_index.map do |thread, index|
-          conversation = thread["comments"].map { |comment| "@#{comment["author"]}: #{comment["body"]}" }.join("\n")
-          "<<<THREAD #{index + 1}>>> (#{thread["path"]})\n#{thread["diff_hunk"]}\n#{conversation}"
+          conversation = thread.comments.map { |comment| "@#{comment.author}: #{comment.body}" }.join("\n")
+          "<<<THREAD #{index + 1}>>> (#{thread.path})\n#{thread.diff_hunk}\n#{conversation}"
         end
         comment_blocks = comments.map do |comment|
           "Conversation comment from @#{comment.author}:\n#{comment.body}"
@@ -429,14 +429,14 @@ module AiFlow
       # @return [void]
       sig do
         params(
-          threads: T::Array[T::Hash[String, T.untyped]],
+          threads: T::Array[GitHub::ReviewThread],
           parsed: AgentOutput::Parsed,
           sha: T.nilable(String),
         ).void
       end
       def reply_to_threads(threads, parsed, sha)
         threads.each_with_index do |thread, index|
-          anchor = thread["first_comment_id"]
+          anchor = thread.first_comment_id
           next unless anchor
 
           disposition = parsed.segments[index + 1] || "Considered in this iteration."
@@ -453,7 +453,7 @@ module AiFlow
       sig do
         params(
           parsed: AgentOutput::Parsed,
-          threads: T::Array[T::Hash[String, T.untyped]],
+          threads: T::Array[GitHub::ReviewThread],
           sha: T.nilable(String),
           capture_note: T.nilable(String),
           workflows_patch: T.nilable(String),

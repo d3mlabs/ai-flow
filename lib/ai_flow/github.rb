@@ -51,6 +51,25 @@ module AiFlow
       end
     end
 
+    # One unresolved PR review thread — /build's feedback sweep unit. The
+    # GraphQL node is flattened at the boundary: the hunk and the REST id of
+    # the first comment (the replies API anchors on it) are hoisted off the
+    # comment page, which can be empty — hence the nilable id and "" hunk.
+    class ReviewThread < T::Struct
+      # One comment in the thread's conversation. `author` is the login,
+      # "" for ghost/deleted users.
+      class Comment < T::Struct
+        const :author, String
+        const :body, String
+        const :url, String
+      end
+
+      const :path, String
+      const :diff_hunk, String
+      const :first_comment_id, T.nilable(Integer)
+      const :comments, T::Array[Comment]
+    end
+
     # @param executor [AiFlow::Executor]
     sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
@@ -197,13 +216,10 @@ module AiFlow
       }
     GRAPHQL
 
-    # The PR's unresolved review threads — /build's feedback sweep. Each
-    # thread carries its line anchor and conversation, plus the first
-    # comment's REST id (the replies API anchors on it).
+    # The PR's unresolved review threads — /build's feedback sweep.
     #
-    # @return [Array<Hash>] threads with "path", "diff_hunk",
-    #   "first_comment_id", and "comments" ("author"/"body"/"url")
-    sig { params(owner_repo: String, number: Integer).returns(T::Array[T::Hash[String, T.untyped]]) }
+    # @return [Array<ReviewThread>]
+    sig { params(owner_repo: String, number: Integer).returns(T::Array[ReviewThread]) }
     def unresolved_review_threads(owner_repo, number)
       owner, name = owner_repo.split("/", 2)
       data = graphql(UNRESOLVED_THREADS_QUERY, owner: owner, name: name, number: number)
@@ -386,18 +402,23 @@ module AiFlow
     private
 
     # @param thread [Hash] a GraphQL reviewThreads node
-    # @return [Hash] the REST-shaped thread the commands consume
-    sig { params(thread: T::Hash[String, T.untyped]).returns(T::Hash[String, T.untyped]) }
+    # @return [ReviewThread]
+    sig { params(thread: T::Hash[String, T.untyped]).returns(ReviewThread) }
     def to_review_thread(thread)
       comments = thread.dig("comments", "nodes") || []
-      {
-        "path" => thread["path"],
-        "diff_hunk" => comments.first&.dig("diffHunk"),
-        "first_comment_id" => comments.first&.dig("databaseId"),
-        "comments" => comments.map do |comment|
-          { "author" => comment.dig("author", "login"), "body" => comment["body"], "url" => comment["url"] }
+      ReviewThread.new(
+        path: thread.fetch("path"),
+        diff_hunk: comments.first&.dig("diffHunk").to_s,
+        first_comment_id: comments.first&.dig("databaseId"),
+        comments: comments.map do |comment|
+          ReviewThread::Comment.new(
+            # dig: ghost/deleted users surface as a null author object.
+            author: comment.dig("author", "login").to_s,
+            body: comment.fetch("body"),
+            url: comment.fetch("url"),
+          )
         end,
-      }
+      )
     end
 
     # @param data [Hash] a REST issue-comment object

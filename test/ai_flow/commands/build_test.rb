@@ -131,17 +131,19 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "a PR with an unresolved review thread and a /build with an instruction"
     github = FakeGitHub.new
     github.seed_review_threads(REPO, 7, [
-      {
-        "path" => "lib/thing.rb", "diff_hunk" => "@@ -1 +1 @@",
-        "first_comment_id" => 91,
-        "comments" => [{ "author" => "jpduchesne", "body" => "this walk is O(n^2)", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/thing.rb", diff_hunk: "@@ -1 +1 @@", first_comment_id: 91,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "this walk is O(n^2)", url: "u",
+        )],
+      ),
       # A thread a command started is a handled conversation, not feedback.
-      {
-        "path" => "lib/other.rb", "diff_hunk" => "@@ -2 +2 @@",
-        "first_comment_id" => 92,
-        "comments" => [{ "author" => "jpduchesne", "body" => "/ask why this?", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/other.rb", diff_hunk: "@@ -2 +2 @@", first_comment_id: 92,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "/ask why this?", url: "u",
+        )],
+      ),
     ])
     context = ContextBuilder.issue_comment(number: 7, body: "/build fix the failing CI", pull_request: true)
     executor = RecordingExecutor.new

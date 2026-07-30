@@ -142,11 +142,12 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_review_threads(REPO, 7, [
-      {
-        "path" => "lib/thing.rb", "diff_hunk" => "@@ -1 +1 @@",
-        "first_comment_id" => 91,
-        "comments" => [{ "author" => "jpduchesne", "body" => "this pattern keeps recurring", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/thing.rb", diff_hunk: "@@ -1 +1 @@", first_comment_id: 91,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "this pattern keeps recurring", url: "u",
+        )],
+      ),
     ])
     github.seed_issue_comment(REPO, 7, id: 70, body: "we should always do X", login: "jpduchesne")
     executor = RecordingExecutor.new(staged: [INDEX, SKILL])
@@ -168,11 +169,12 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_review_threads(REPO, 7, [
-      {
-        "path" => "lib/thing.rb", "diff_hunk" => "@@ -1 +1 @@",
-        "first_comment_id" => 91,
-        "comments" => [{ "author" => "jpduchesne", "body" => "this pattern keeps recurring", "url" => "u" }],
-      },
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/thing.rb", diff_hunk: "@@ -1 +1 @@", first_comment_id: 91,
+        comments: [AiFlow::GitHub::ReviewThread::Comment.new(
+          author: "jpduchesne", body: "this pattern keeps recurring", url: "u",
+        )],
+      ),
     ])
     github.seed_issue_comment(REPO, 7, id: 70, body: "we should always do X", login: "jpduchesne")
     agent = FakeAgent.new(["done"])

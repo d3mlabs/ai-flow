@@ -157,6 +157,44 @@ class AiFlow::GitHubTest < Minitest::Test
     nil
   end
 
+  test "unresolved_review_threads flattens GraphQL nodes into ReviewThread values" do
+    Given "one resolved and one unresolved thread, the latter with a ghost-authored reply"
+    executor = CannedExecutor.new(out: JSON.generate(
+      { "data" => { "repository" => { "pullRequest" => { "reviewThreads" => { "nodes" => [
+        { "isResolved" => true, "path" => "done.rb",
+          "comments" => { "nodes" => [
+            { "databaseId" => 1, "body" => "old", "diffHunk" => "@@", "url" => "u",
+              "author" => { "login" => "a" } },
+          ] } },
+        { "isResolved" => false, "path" => "lib/thing.rb",
+          "comments" => { "nodes" => [
+            { "databaseId" => 91, "body" => "this walk is O(n^2)", "diffHunk" => "@@ -1 +1 @@",
+              "url" => "https://github.com/d3mlabs/demo/pull/7#discussion_r91",
+              "author" => { "login" => "jpduchesne" } },
+            { "databaseId" => 92, "body" => "agreed", "diffHunk" => "@@ -1 +1 @@", "url" => "u2",
+              "author" => nil },
+          ] } },
+      ] } } } } },
+    ))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "sweeping the PR"
+    threads = github.unresolved_review_threads("d3mlabs/demo", 7)
+
+    Then "only the unresolved thread came back, flattened into typed values"
+    threads.size == 1
+    thread = T.must(threads.first)
+    thread.path == "lib/thing.rb"
+    thread.diff_hunk == "@@ -1 +1 @@"
+    thread.first_comment_id == 91
+    thread.comments.map(&:author) == ["jpduchesne", ""]
+    T.must(thread.comments.first).body == "this walk is O(n^2)"
+    T.must(thread.comments.first).url == "https://github.com/d3mlabs/demo/pull/7#discussion_r91"
+
+    Cleanup
+    nil
+  end
+
   test "react_to_comment posts the reaction to the surface's namespace" do
     Given "a plain issue comment to acknowledge"
     executor = CannedExecutor.new
