@@ -26,4 +26,8 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/coverage.xml
+          # Upload only the cobertura report: auto-search also picks up
+          # SimpleCov's native coverage.json, whose "ignored" line entries
+          # (simplecov-sorbet's skipped ranges) error Codecov's processing.
+          disable_search: true
           fail_ci_if_error: false
