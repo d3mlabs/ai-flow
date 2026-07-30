@@ -28,13 +28,102 @@ module AiFlow
     class Split
       extend T::Sig
 
-      # A staged spec entry (SubtasksSection.validate_entry's shape).
-      Entry = T.type_alias { T::Hash[String, T.untyped] }
-      # A resolved issue ref: "repo", "number", "url", "disposition", and
-      # (for created issues) the final "body".
-      IssueRef = T.type_alias { T::Hash[String, T.untyped] }
-      # The reconciliation report: per-disposition lists plus warnings.
-      Report = T.type_alias { T::Hash[Symbol, T::Array[T.untyped]] }
+      # How a staged entry resolved against reality at apply time.
+      module Disposition
+        extend T::Helpers
+        include Kernel # is_a? for srb without the experimental requires_ancestor
+        sealed!
+
+        # The entry matched an existing sub-issue (by title or `existing:`).
+        class Kept
+          include Disposition
+        end
+
+        # A parentless `existing:` issue became a native sub-issue.
+        class Adopted
+          include Disposition
+        end
+
+        # An `existing:` issue already owned by another parent — linked in
+        # the map without adoption.
+        class Referenced
+          include Disposition
+        end
+
+        # A sub-issue was created this run; only these carry the templated
+        # body (the annotate_dependencies rewrite builds on it).
+        class Created
+          extend T::Sig
+          include Disposition
+
+          sig { returns(String) }
+          attr_reader :body
+
+          # @param body [String]
+          sig { params(body: String).void }
+          def initialize(body:)
+            @body = body
+          end
+        end
+      end
+
+      # Where a staged entry resolved to: an issue plus its disposition.
+      class IssueRef < T::Struct
+        const :repo, String
+        const :number, Integer
+        const :url, String
+        const :disposition, Disposition
+      end
+
+      # The reconciliation report /split renders as its panel: rows grouped
+      # by disposition, plus the stale closures and routing warnings.
+      class Report
+        extend T::Sig
+
+        # One reconciled entry: the staged subtask and where it resolved.
+        class Row < T::Struct
+          const :entry, SubtasksSection::Entry
+          const :ref, IssueRef
+        end
+
+        sig { returns(T::Array[Row]) }
+        attr_reader :created
+        sig { returns(T::Array[Row]) }
+        attr_reader :adopted
+        sig { returns(T::Array[Row]) }
+        attr_reader :referenced
+        sig { returns(T::Array[Row]) }
+        attr_reader :kept
+        sig { returns(T::Array[GitHub::Issue]) }
+        attr_reader :closed
+        sig { returns(T::Array[String]) }
+        attr_reader :warnings
+
+        sig { void }
+        def initialize
+          @created = T.let([], T::Array[Row])
+          @adopted = T.let([], T::Array[Row])
+          @referenced = T.let([], T::Array[Row])
+          @kept = T.let([], T::Array[Row])
+          @closed = T.let([], T::Array[GitHub::Issue])
+          @warnings = T.let([], T::Array[String])
+        end
+
+        # @param row [Row]
+        # @return [void]
+        sig { params(row: Row).void }
+        def record(row)
+          disposition = row.ref.disposition
+          case disposition
+          when Disposition::Created then @created << row
+          when Disposition::Adopted then @adopted << row
+          when Disposition::Referenced then @referenced << row
+          when Disposition::Kept then @kept << row
+          else T.absurd(disposition)
+          end
+        end
+      end
+
       # Per-entry-index possible-match suggestion lines.
       Matches = T.type_alias { T::Hash[Integer, T::Array[String]] }
 
@@ -120,11 +209,11 @@ module AiFlow
 
       # ---- Propose phase (the only agent call) ----
 
-      # @return [Array(Array<Hash>, Hash)] normalized entries and per-index
-      #   possible-match suggestion lines
+      # @return [Array(Array<SubtasksSection::Entry>, Hash)] normalized
+      #   entries and per-index possible-match suggestion lines
       sig do
         params(parent: GitHub::Issue, existing: T::Array[GitHub::Issue], segment: CommentParser::Segment)
-          .returns([T::Array[Entry], Matches])
+          .returns([T::Array[SubtasksSection::Entry], Matches])
       end
       def propose(parent, existing, segment)
         menu = repo_menu(parent)
@@ -269,17 +358,17 @@ module AiFlow
         ).uniq
       end
 
-      # @return [Array<Hash>] entries normalized through the section schema
-      #   (same shape a hand-edited spec parses to), repo defaulted to the
-      #   parent's
-      sig { params(output: String).returns(T::Array[Entry]) }
+      # @return [Array<SubtasksSection::Entry>] entries normalized through
+      #   the section schema (same shape a hand-edited spec parses to), repo
+      #   defaulted to the parent's
+      sig { params(output: String).returns(T::Array[SubtasksSection::Entry]) }
       def parse_proposal(output)
         json = output[/\[.*\]/m]
         raise Agent::Error, "the agent returned no subtask JSON:\n#{output}" unless json
 
         JSON.parse(json).map do |raw|
           entry = SubtasksSection.validate_entry(raw)
-          entry["repo"] = @context.owner_repo if entry["repo"].empty?
+          entry.repo = @context.owner_repo if entry.repo.empty?
           entry
         end
       end
@@ -288,12 +377,14 @@ module AiFlow
       # human resolves during the body review — annotations, never decisions.
       #
       # @return [Hash{Integer => Array<String>}]
-      sig { params(entries: T::Array[Entry], pool: T::Array[GitHub::Issue]).returns(Matches) }
+      sig do
+        params(entries: T::Array[SubtasksSection::Entry], pool: T::Array[GitHub::Issue]).returns(Matches)
+      end
       def possible_matches(entries, pool)
         entries.each_with_index.with_object({}) do |(entry, index), matches|
-          next if entry["existing"]
+          next if entry.existing
 
-          similar = pool.select { |issue| similar_title?(entry.fetch("title"), issue.title) }
+          similar = pool.select { |issue| similar_title?(entry.title, issue.title) }
           next if similar.empty?
 
           matches[index] = similar.first(3).map { |issue| "#{issue.repo}##{issue.number} #{issue.title.to_json}" }
@@ -312,7 +403,9 @@ module AiFlow
       # ---- Staging (the --dry write) ----
 
       # @return [void]
-      sig { params(parent: GitHub::Issue, entries: T::Array[Entry], matches: Matches).void }
+      sig do
+        params(parent: GitHub::Issue, entries: T::Array[SubtasksSection::Entry], matches: Matches).void
+      end
       def stage_spec(parent, entries, matches)
         snapshot = PlanBody.from_issue_body(parent.body)
         section = SubtasksSection.render_spec(entries, possible_matches: matches)
@@ -336,15 +429,17 @@ module AiFlow
 
       # ---- Apply phase (no agent — pure Ruby over the frozen spec) ----
 
-      # @return [Hash] the reconciliation report (per-disposition lists plus
-      #   warnings)
+      # @return [Report] the reconciliation report
       sig do
-        params(parent: GitHub::Issue, entries: T::Array[Entry], existing: T::Array[GitHub::Issue])
-          .returns(Report)
+        params(
+          parent: GitHub::Issue,
+          entries: T::Array[SubtasksSection::Entry],
+          existing: T::Array[GitHub::Issue],
+        ).returns(Report)
       end
       def apply(parent, entries, existing)
         snapshot = PlanBody.from_issue_body(parent.body)
-        report = { created: [], adopted: [], referenced: [], kept: [], closed: [], warnings: [] }
+        report = Report.new
         refs = entries.each_with_index.to_h do |entry, index|
           [index, resolve_entry(entry, existing, report)]
         end
@@ -355,23 +450,22 @@ module AiFlow
         report
       end
 
-      # @return [Hash] the entry's issue ref: "repo", "number", "url",
-      #   "disposition", and (for created issues) the final "body"
+      # @return [IssueRef] where the entry resolved to
       sig do
-        params(entry: Entry, existing: T::Array[GitHub::Issue], report: Report)
+        params(entry: SubtasksSection::Entry, existing: T::Array[GitHub::Issue], report: Report)
           .returns(IssueRef)
       end
       def resolve_entry(entry, existing, report)
         ref =
-          if entry["existing"]
+          if entry.existing
             adopt_or_reference(entry, existing)
-          elsif (match = existing.find { |issue| issue.title == entry.fetch("title") })
-            { "repo" => match.repo, "number" => match.number,
-              "url" => match.html_url, "disposition" => "kept" }
+          elsif (match = existing.find { |issue| issue.title == entry.title })
+            IssueRef.new(repo: match.repo, number: match.number,
+                         url: match.html_url, disposition: Disposition::Kept.new)
           else
             create_sub_issue(entry, report)
           end
-        report.fetch(ref.fetch("disposition").to_sym) << entry.merge(ref)
+        report.record(Report::Row.new(entry: entry, ref: ref))
         ref
       end
 
@@ -379,22 +473,27 @@ module AiFlow
       # already owned by another parent (GitHub allows one parent per issue)
       # is referenced in the linked map without adoption.
       #
-      # @return [Hash] the ref with its disposition
-      sig { params(entry: Entry, existing: T::Array[GitHub::Issue]).returns(IssueRef) }
+      # @return [IssueRef] the ref with its disposition
+      sig { params(entry: SubtasksSection::Entry, existing: T::Array[GitHub::Issue]).returns(IssueRef) }
       def adopt_or_reference(entry, existing)
-        repo, number = parse_issue_ref(entry.fetch("existing"))
-        ref = { "repo" => repo, "number" => number, "url" => "https://github.com/#{repo}/issues/#{number}" }
-        if existing.any? { |issue| issue.repo == repo && issue.number == number }
-          return ref.merge("disposition" => "kept")
-        end
-
-        begin
-          rest_id = @github.api("repos/#{repo}/issues/#{number}").fetch("id")
-          @github.add_sub_issue(@context.owner_repo, @context.number, rest_id)
-          ref.merge("disposition" => "adopted")
-        rescue GitHub::Error
-          ref.merge("disposition" => "referenced")
-        end
+        # T.must: resolve_entry only routes here when `existing:` is present.
+        repo, number = parse_issue_ref(T.must(entry.existing))
+        disposition =
+          if existing.any? { |issue| issue.repo == repo && issue.number == number }
+            Disposition::Kept.new
+          else
+            begin
+              rest_id = @github.api("repos/#{repo}/issues/#{number}").fetch("id")
+              @github.add_sub_issue(@context.owner_repo, @context.number, rest_id)
+              Disposition::Adopted.new
+            rescue GitHub::Error
+              Disposition::Referenced.new
+            end
+          end
+        IssueRef.new(
+          repo: repo, number: number,
+          url: "https://github.com/#{repo}/issues/#{number}", disposition: disposition,
+        )
       end
 
       # Reality enforcement, never judgment: a repo without the App cannot
@@ -405,28 +504,30 @@ module AiFlow
       # parent relationship, not prose. Bespoke context belongs on the
       # created sub-issue, added after apply.
       #
-      # @return [Hash] the created issue's ref
-      sig { params(entry: Entry, report: Report).returns(IssueRef) }
+      # @return [IssueRef] the created issue's ref
+      sig { params(entry: SubtasksSection::Entry, report: Report).returns(IssueRef) }
       def create_sub_issue(entry, report)
-        target = entry.fetch("repo")
+        target = entry.repo
         body = "Part of #{@context.owner_repo}##{@context.number}.\n"
         unless installed_repos.include?(target)
-          report.fetch(:warnings) << "#{target} has no ai-flow App installation — created #{entry.fetch("title").inspect} " \
-                                     "on #{@context.owner_repo} instead (`Intended repo: #{target}`); " \
-                                     "install the App there and re-run /split to move it."
+          report.warnings << "#{target} has no ai-flow App installation — created #{entry.title.inspect} " \
+                             "on #{@context.owner_repo} instead (`Intended repo: #{target}`); " \
+                             "install the App there and re-run /split to move it."
           body = "#{body.rstrip}\n\nIntended repo: #{target}\n"
           target = @context.owner_repo
         end
 
         data = @github.graphql(CREATE_SUB_ISSUE_MUTATION, {
           repositoryId: repository_node_id(target),
-          title: entry.fetch("title"),
+          title: entry.title,
           body: body,
           parentIssueId: parent_node_id,
         })
         issue = data.fetch("createIssue").fetch("issue")
-        { "repo" => target, "number" => issue.fetch("number"), "url" => issue.fetch("url"),
-          "disposition" => "created", "body" => body }
+        IssueRef.new(
+          repo: target, number: issue.fetch("number"), url: issue.fetch("url"),
+          disposition: Disposition::Created.new(body: body),
+        )
       end
 
       # Second pass, once every index has a number: dependencies always
@@ -436,19 +537,22 @@ module AiFlow
       # are annotated; adopted/kept bodies are not ours to rewrite.
       #
       # @return [void]
-      sig { params(entries: T::Array[Entry], refs: T::Hash[Integer, IssueRef]).void }
+      sig do
+        params(entries: T::Array[SubtasksSection::Entry], refs: T::Hash[Integer, IssueRef]).void
+      end
       def annotate_dependencies(entries, refs)
         entries.each_with_index do |entry, index|
           ref = refs.fetch(index)
-          next unless ref["disposition"] == "created"
+          disposition = ref.disposition
+          next unless disposition.is_a?(Disposition::Created)
 
-          numbers = entry.fetch("depends_on", []).filter_map { |dep_index| refs[dep_index] }
-          next if numbers.empty?
+          dependencies = entry.depends_on.filter_map { |dep_index| refs[dep_index] }
+          next if dependencies.empty?
 
-          depends_line = "Depends on: #{numbers.map { |dep| "#{dep.fetch("repo")}##{dep.fetch("number")}" }.join(", ")}"
+          depends_line = "Depends on: #{dependencies.map { |dep| "#{dep.repo}##{dep.number}" }.join(", ")}"
           @github.update_issue_body(
-            ref.fetch("repo"), ref.fetch("number"),
-            body: "#{ref.fetch("body").rstrip}\n\n#{depends_line}\n",
+            ref.repo, ref.number,
+            body: "#{disposition.body.rstrip}\n\n#{depends_line}\n",
           )
         end
       end
@@ -460,14 +564,14 @@ module AiFlow
       # @return [void]
       sig do
         params(
-          entries: T::Array[Entry],
+          entries: T::Array[SubtasksSection::Entry],
           existing: T::Array[GitHub::Issue],
           refs: T::Hash[Integer, IssueRef],
           report: Report,
         ).void
       end
       def close_stale(entries, existing, refs, report)
-        specified = refs.values.map { |ref| [ref.fetch("repo"), ref.fetch("number")] }
+        specified = refs.values.map { |ref| [ref.repo, ref.number] }
         stale = existing.select do |issue|
           issue.state == "open" && !specified.include?([issue.repo, issue.number])
         end
@@ -477,7 +581,7 @@ module AiFlow
             comment: "Closed by /split reconciliation: no longer part of the parent plan's subtask set.",
           )
         end
-        report.fetch(:closed).concat(stale)
+        report.closed.concat(stale)
       end
 
       # Canonicity transfer: the spec section becomes the linked map, so the
@@ -485,15 +589,32 @@ module AiFlow
       #
       # @return [void]
       sig do
-        params(snapshot: String, entries: T::Array[Entry], refs: T::Hash[Integer, IssueRef]).void
+        params(
+          snapshot: String,
+          entries: T::Array[SubtasksSection::Entry],
+          refs: T::Hash[Integer, IssueRef],
+        ).void
       end
       def rewrite_section(snapshot, entries, refs)
         lines = entries.each_with_index.map do |entry, index|
           ref = refs.fetch(index)
-          annotation = %w[adopted referenced].include?(ref["disposition"]) ? " (#{ref["disposition"]})" : ""
-          "#{ref.fetch("repo")}##{ref.fetch("number")} — #{entry.fetch("title")}#{annotation}"
+          "#{ref.repo}##{ref.number} — #{entry.title}#{map_annotation(ref.disposition)}"
         end
         guarded_patch(snapshot, SubtasksSection.replace(snapshot, SubtasksSection.render_applied(lines)))
+      end
+
+      # Only external-issue dispositions are annotated in the linked map —
+      # /build --split reads them to know which nodes it cannot drive.
+      #
+      # @return [String]
+      sig { params(disposition: Disposition).returns(String) }
+      def map_annotation(disposition)
+        case disposition
+        when Disposition::Adopted then " (adopted)"
+        when Disposition::Referenced then " (referenced)"
+        when Disposition::Kept, Disposition::Created then ""
+        else T.absurd(disposition)
+        end
       end
 
       # ---- Result panels ----
@@ -501,24 +622,28 @@ module AiFlow
       # @return [String]
       sig { params(report: Report).returns(String) }
       def apply_summary(report)
-        counts = %i[created adopted referenced kept closed]
-                 .map { |disposition| "#{disposition} #{report.fetch(disposition).size}" }.join(", ")
+        sections = [
+          ["created", report.created], ["adopted", report.adopted],
+          ["referenced", report.referenced], ["kept", report.kept]
+        ]
+        counts = (sections.map { |label, rows| "#{label} #{rows.size}" } +
+                  ["closed #{report.closed.size}"]).join(", ")
         lines = ["✅ **/split** — applied the subtask spec (#{counts})"]
-        %i[created adopted referenced kept].each do |disposition|
-          report.fetch(disposition).each do |entry|
-            lines << "- #{disposition} [#{entry.fetch("repo")}##{entry.fetch("number")} #{entry.fetch("title")}](#{entry.fetch("url")})"
+        sections.each do |label, rows|
+          rows.each do |row|
+            lines << "- #{label} [#{row.ref.repo}##{row.ref.number} #{row.entry.title}](#{row.ref.url})"
           end
         end
-        report.fetch(:closed).each { |issue| lines << "- closed #{issue.repo}##{issue.number} #{issue.title} (stale)" }
-        report.fetch(:warnings).each { |warning| lines << "\n⚠️ #{warning}" }
+        report.closed.each { |issue| lines << "- closed #{issue.repo}##{issue.number} #{issue.title} (stale)" }
+        report.warnings.each { |warning| lines << "\n⚠️ #{warning}" }
         lines.join("\n")
       end
 
       # @return [String]
-      sig { params(entries: T::Array[Entry], matches: Matches).returns(String) }
+      sig { params(entries: T::Array[SubtasksSection::Entry], matches: Matches).returns(String) }
       def dry_summary(entries, matches)
         lines = ["📋 **/split --dry** — staged #{entries.size} subtasks in the `#{SubtasksSection::HEADER}` section"]
-        entries.each { |entry| lines << "- #{entry.fetch("repo")} — #{entry.fetch("title")}" }
+        entries.each { |entry| lines << "- #{entry.repo} — #{entry.title}" }
         unless matches.empty?
           lines << "\n#{matches.values.sum(&:size)} possible existing match(es) annotated in the section — promote them into `existing:` or delete the comments."
         end

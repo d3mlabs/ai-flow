@@ -22,6 +22,16 @@ module AiFlow
     # reports it on the command comment like any other command failure.
     class Error < StandardError; end
 
+    # One staged subtask — the spec interface is exactly these fields (see
+    # validate_entry). `repo` is a prop: Split defaults an empty routing to
+    # the parent's repo after parsing.
+    class Entry < T::Struct
+      const :title, String
+      prop :repo, String
+      const :depends_on, T::Array[Integer]
+      const :existing, T.nilable(String)
+    end
+
     HEADER = "## Subtasks"
     SPEC_MARKER = "<!-- ai-flow:subtasks v1 — edit freely, then comment `/split --apply` -->"
     APPLIED_MARKER = "<!-- ai-flow:subtasks v1 — applied; a fresh `/split --dry` restages -->"
@@ -41,10 +51,9 @@ module AiFlow
     end
 
     # @param body [String]
-    # @return [Array<Hash>] entries with "title", "repo", "depends_on"
-    #   (indices), and optional "existing" ("owner/repo#n")
+    # @return [Array<Entry>]
     # @raise [Error] when the section is missing or hand-edits broke it
-    sig { params(body: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+    sig { params(body: String).returns(T::Array[Entry]) }
     def parse_spec(body)
       section = section_text(body)
       yaml = section && section[/```yaml\n(.*?)```/m, 1]
@@ -58,14 +67,14 @@ module AiFlow
       raise Error, "the `#{HEADER}` spec is not valid yaml (#{e.message}) — fix it or re-run `/split --dry`."
     end
 
-    # @param entries [Array<Hash>] proposal entries
+    # @param entries [Array<Entry>] proposal entries
     # @param possible_matches [Hash{Integer => Array<String>}] per-entry-index
     #   suggestion lines ('owner/repo#n "title"') for the human to promote
     #   into `existing:` or delete
     # @return [String] the staged spec section
     sig do
       params(
-        entries: T::Array[T::Hash[String, T.untyped]],
+        entries: T::Array[Entry],
         possible_matches: T::Hash[Integer, T::Array[String]],
       ).returns(String)
     end
@@ -147,8 +156,8 @@ module AiFlow
     # part of the spec (the parent plan is the spec; created sub-issues get
     # a thin templated body). Unknown keys are ignored.
     #
-    # @return [Hash] the entry, shape-checked with defaults filled in
-    sig { params(entry: T.untyped).returns(T::Hash[String, T.untyped]) }
+    # @return [Entry] the entry, shape-checked with defaults filled in
+    sig { params(entry: T.untyped).returns(Entry) }
     def validate_entry(entry)
       raise Error, "each subtask must be a yaml mapping, got: #{entry.inspect}" unless entry.is_a?(Hash)
 
@@ -165,27 +174,26 @@ module AiFlow
         raise Error, "`depends_on` must be a list of entry indices, got: #{depends_on.inspect}"
       end
 
-      {
-        "title" => title,
-        "repo" => entry["repo"].to_s.strip,
-        "depends_on" => depends_on,
-        "existing" => existing&.to_s,
-      }.compact
+      Entry.new(
+        title: title,
+        repo: entry["repo"].to_s.strip,
+        depends_on: depends_on,
+        existing: existing&.to_s,
+      )
     end
 
     # Manual yaml emission — Psych can't attach the possible-match comments,
     # and the hand-edited artifact reads better with a stable key order.
     #
-    # @param entry [Hash] a validated entry
+    # @param entry [Entry] a validated entry
     # @param match_lines [Array<String>] possible-match suggestion lines
     # @return [String]
-    sig { params(entry: T::Hash[String, T.untyped], match_lines: T::Array[String]).returns(String) }
+    sig { params(entry: Entry, match_lines: T::Array[String]).returns(String) }
     def render_entry(entry, match_lines)
-      lines = ["- title: #{entry.fetch("title").to_json}"]
-      lines << "  repo: #{entry.fetch("repo")}" unless entry["repo"].to_s.empty?
-      lines << "  existing: #{entry["existing"]}" if entry["existing"]
-      depends_on = entry["depends_on"] || []
-      lines << "  depends_on: [#{depends_on.join(", ")}]" unless depends_on.empty?
+      lines = ["- title: #{entry.title.to_json}"]
+      lines << "  repo: #{entry.repo}" unless entry.repo.empty?
+      lines << "  existing: #{entry.existing}" if entry.existing
+      lines << "  depends_on: [#{entry.depends_on.join(", ")}]" unless entry.depends_on.empty?
       match_lines.each { |line| lines << "  # possible match: #{line}" }
       "#{lines.join("\n")}\n"
     end
