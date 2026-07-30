@@ -135,8 +135,7 @@ module AiFlow
     sig { params(command: Command, workdir: String).returns(ModelSelection) }
     def model_for(command, workdir)
       config = RepoConfig.load(workdir)
-      [env_selection, config.models[command], config.default_model].compact.first ||
-        ModelSelection::AccountDefault.new
+      env_selection || config.models[command] || config.default_model || ModelSelection::AccountDefault.new
     end
 
     private
