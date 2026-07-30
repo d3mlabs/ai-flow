@@ -15,10 +15,12 @@ module AiFlow
   # stale means mint-then-answer. Lazy-at-call-time is inherently gap-proof:
   # a 3-hour silence just means the next call mints fresh.
   #
-  # Without App credentials (local runs, allow_token_fallback) the provider
-  # degrades to the static GH_TOKEN: never refreshed, same lifetime rules as
-  # before. With neither, #token is nil and callers fall back to ambient
-  # auth (a developer's own gh login).
+  # Which credentials the process holds is decided once, at construction,
+  # as a sealed AuthMode: App (minting), Static (a plain GH_TOKEN, never
+  # refreshed), or Ambient (no auth at all — callers fall back to a
+  # developer's own gh login). #token still answers nil in Ambient mode,
+  # but that nil now has one named source instead of being the residue of
+  # four unset fields.
   #
   # Key isolation: .from_env deletes the private key from the process
   # environment after reading it, so no subprocess — in particular the agent,
@@ -29,15 +31,6 @@ module AiFlow
     extend T::Sig
 
     class Error < StandardError; end
-
-    # Re-mint when the token is older than this. GitHub caps installation
-    # tokens at 60 minutes; 50 leaves headroom for the call the check guards.
-    MAX_AGE_SECONDS = T.let(50 * 60, Integer)
-
-    # App JWTs may live 10 minutes; mint short and backdate against clock
-    # skew, per GitHub's own guidance.
-    JWT_BACKDATE_SECONDS = 60
-    JWT_TTL_SECONDS = 540
 
     # Read credentials from the environment — and remove the private key
     # from it, so subprocesses (which inherit the dispatcher's environment)
@@ -56,6 +49,10 @@ module AiFlow
       )
     end
 
+    # The credential params stay nilable — this constructor is the boundary
+    # where the environment's "maybe set" strings are resolved, once, into
+    # one of the three modes.
+    #
     # @param app_id [String, nil] GitHub App id
     # @param private_key_pem [String, nil] the App's private key (PEM)
     # @param owner [String, nil] the org/user the App is installed on
@@ -77,49 +74,56 @@ module AiFlow
     end
     def initialize(app_id:, private_key_pem:, owner:, static_token: nil,
                    api_url: "https://api.github.com", http: nil, clock: -> { Time.now })
-      @app_id = T.let(presence(app_id), T.nilable(String))
+      id = presence(app_id)
       pem = presence(private_key_pem)
-      @private_key = T.let(pem && OpenSSL::PKey::RSA.new(pem), T.nilable(OpenSSL::PKey::RSA))
-      @owner = T.let(presence(owner), T.nilable(String))
-      @static_token = T.let(presence(static_token), T.nilable(String))
-      @api_url = T.let(api_url.chomp("/"), String)
-      @http = T.let(http || method(:default_http), T.untyped)
-      @clock = clock
-      @minted_token = T.let(nil, T.nilable(String))
-      @minted_at = T.let(nil, T.nilable(Time))
-      @installation_id = T.let(nil, T.nilable(Integer))
+      token = presence(static_token)
+      @mode = T.let(
+        if id && pem
+          AuthMode::App.new(
+            app_id: id, private_key: OpenSSL::PKey::RSA.new(pem), owner: presence(owner),
+            api_url: api_url.chomp("/"), http: http || method(:default_http), clock: clock,
+          )
+        elsif token
+          AuthMode::Static.new(token: token)
+        else
+          AuthMode::Ambient.new
+        end,
+        AuthMode,
+      )
     end
 
     # @return [Boolean] whether App credentials are present (minting mode)
     sig { returns(T::Boolean) }
     def app?
-      !(@app_id.nil? || @private_key.nil?)
+      @mode.is_a?(AuthMode::App)
     end
 
-    # A token fresh enough for the call about to be made: the age check runs
-    # here, on every call.
+    # A token fresh enough for the call about to be made: in App mode the
+    # age check runs here, on every call.
     #
-    # @return [String, nil] nil when there is no auth at all (ambient mode)
+    # @return [String, nil] nil in Ambient mode (no auth at all)
     sig { returns(T.nilable(String)) }
     def token
-      return @static_token unless app?
-
-      minted_at = @minted_at
-      refresh! if minted_at.nil? || @clock.call - minted_at > MAX_AGE_SECONDS
-      @minted_token
+      case (mode = @mode)
+      when AuthMode::App then mode.fresh_token
+      when AuthMode::Static then mode.token
+      when AuthMode::Ambient then nil
+      else T.absurd(mode)
+      end
     end
 
     # Unconditional re-mint — the write phase calls this so its final burst
-    # (push + comments) never runs on a 49-minute-old token. No-op without
-    # App credentials (a static token can't be refreshed).
+    # (push + comments) never runs on a 49-minute-old token. No-op outside
+    # App mode (a static token can't be refreshed; ambient has nothing to).
     #
     # @return [void]
     sig { void }
     def refresh!
-      return unless app?
-
-      @minted_token = mint
-      @minted_at = @clock.call
+      case (mode = @mode)
+      when AuthMode::App then mode.refresh!
+      when AuthMode::Static, AuthMode::Ambient then nil
+      else T.absurd(mode)
+      end
     end
 
     private
@@ -129,74 +133,6 @@ module AiFlow
     sig { params(value: T.nilable(String)).returns(T.nilable(String)) }
     def presence(value)
       value.to_s.strip.empty? ? nil : value
-    end
-
-    # @return [String] a fresh installation token
-    sig { returns(String) }
-    def mint
-      jwt = app_jwt
-      response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt)
-      response.fetch("token")
-    end
-
-    # The installation on the owner org (or user account — personal-account
-    # adopters like JPDuchesne/** live under /users). Memoized: it never
-    # changes within a job.
-    #
-    # @param jwt [String]
-    # @return [Integer]
-    sig { params(jwt: String).returns(Integer) }
-    def installation_id(jwt)
-      @installation_id ||= begin
-        response = begin
-          request("GET", "orgs/#{@owner}/installation", jwt)
-        rescue Error
-          request("GET", "users/#{@owner}/installation", jwt)
-        end
-        response.fetch("id")
-      end
-    end
-
-    # A short-lived RS256 JWT authenticating as the App itself (stdlib only —
-    # no jwt gem; pack("m0") because base64 left the default gems).
-    #
-    # @return [String]
-    # @raise [Error] when called without the App private key (mint paths are
-    #   app?-guarded, so this indicates a caller bug)
-    sig { returns(String) }
-    def app_jwt
-      private_key = @private_key
-      raise Error, "cannot mint an App JWT without the App private key" if private_key.nil?
-
-      now = @clock.call.to_i
-      header = base64url(JSON.generate(alg: "RS256", typ: "JWT"))
-      payload = base64url(JSON.generate(
-                            iat: now - JWT_BACKDATE_SECONDS, exp: now + JWT_TTL_SECONDS, iss: @app_id,
-                          ))
-      signing_input = "#{header}.#{payload}"
-      "#{signing_input}.#{base64url(private_key.sign(OpenSSL::Digest.new("SHA256"), signing_input))}"
-    end
-
-    # @param data [String]
-    # @return [String]
-    sig { params(data: String).returns(String) }
-    def base64url(data)
-      [data].pack("m0").tr("+/", "-_").delete("=")
-    end
-
-    # @param method [String]
-    # @param path [String]
-    # @param jwt [String]
-    # @return [Hash] the parsed response body
-    sig { params(method: String, path: String, jwt: String).returns(T::Hash[String, T.untyped]) }
-    def request(method, path, jwt)
-      status, body = @http.call(
-        method, "#{@api_url}/#{path}",
-        { "Authorization" => "Bearer #{jwt}", "Accept" => "application/vnd.github+json" },
-      )
-      raise Error, "GitHub App auth: #{method} #{path} returned #{status}: #{body.to_s[0, 200]}" unless (200..299).cover?(status)
-
-      JSON.parse(body)
     end
 
     # In-process transport (never a subprocess: the JWT and the minted token
@@ -217,6 +153,175 @@ module AiFlow
         http.request(request)
       end
       [response.code.to_i, response.body]
+    end
+
+    # The three shapes auth can take, chosen once at construction. Sealed so
+    # token/refresh! dispatch exhaustively — a fourth mode fails to compile,
+    # not to run.
+    module AuthMode
+      extend T::Helpers
+      include Kernel # is_a? for srb without the experimental requires_ancestor
+      sealed!
+
+      # GitHub App credentials: mints short-lived installation tokens on
+      # demand and owns the mint state (token, age, installation id) — state
+      # that only exists in this mode lives only in this mode.
+      class App
+        extend T::Sig
+        include AuthMode
+
+        # Re-mint when the token is older than this. GitHub caps
+        # installation tokens at 60 minutes; 50 leaves headroom for the call
+        # the check guards.
+        MAX_AGE_SECONDS = T.let(50 * 60, Integer)
+
+        # App JWTs may live 10 minutes; mint short and backdate against
+        # clock skew, per GitHub's own guidance.
+        JWT_BACKDATE_SECONDS = 60
+        JWT_TTL_SECONDS = 540
+
+        # @param app_id [String] GitHub App id
+        # @param private_key [OpenSSL::PKey::RSA] the App's private key
+        # @param owner [String, nil] the org/user the App is installed on —
+        #   nilable env truth (unset outside Actions); a nil owner surfaces
+        #   as an installation-lookup Error at mint time
+        # @param api_url [String] GitHub API root, no trailing slash
+        # @param http [#call] transport `(method, url, headers) ->
+        #   [status, body]`
+        # @param clock [#call] returns the current Time
+        sig do
+          params(
+            app_id: String,
+            private_key: OpenSSL::PKey::RSA,
+            owner: T.nilable(String),
+            api_url: String,
+            http: T.untyped,
+            clock: T.proc.returns(Time),
+          ).void
+        end
+        def initialize(app_id:, private_key:, owner:, api_url:, http:, clock:)
+          @app_id = app_id
+          @private_key = private_key
+          @owner = owner
+          @api_url = api_url
+          @http = T.let(http, T.untyped)
+          @clock = clock
+          @minted_token = T.let(nil, T.nilable(String))
+          @minted_at = T.let(nil, T.nilable(Time))
+          @installation_id = T.let(nil, T.nilable(Integer))
+        end
+
+        # A token fresh enough for the call about to be made: the age check
+        # runs here, on every call.
+        #
+        # @return [String] a minted installation token
+        sig { returns(String) }
+        def fresh_token
+          minted_at = @minted_at
+          refresh! if minted_at.nil? || @clock.call - minted_at > MAX_AGE_SECONDS
+          T.must(@minted_token)
+        end
+
+        # Unconditional re-mint.
+        #
+        # @return [void]
+        sig { void }
+        def refresh!
+          @minted_token = mint
+          @minted_at = @clock.call
+        end
+
+        private
+
+        # @return [String] a fresh installation token
+        sig { returns(String) }
+        def mint
+          jwt = app_jwt
+          response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt)
+          response.fetch("token")
+        end
+
+        # The installation on the owner org (or user account —
+        # personal-account adopters like JPDuchesne/** live under /users).
+        # Memoized: it never changes within a job.
+        #
+        # @param jwt [String]
+        # @return [Integer]
+        sig { params(jwt: String).returns(Integer) }
+        def installation_id(jwt)
+          @installation_id ||= begin
+            response = begin
+              request("GET", "orgs/#{@owner}/installation", jwt)
+            rescue Error
+              request("GET", "users/#{@owner}/installation", jwt)
+            end
+            response.fetch("id")
+          end
+        end
+
+        # A short-lived RS256 JWT authenticating as the App itself (stdlib
+        # only — no jwt gem; pack("m0") because base64 left the default
+        # gems).
+        #
+        # @return [String]
+        sig { returns(String) }
+        def app_jwt
+          now = @clock.call.to_i
+          header = base64url(JSON.generate(alg: "RS256", typ: "JWT"))
+          payload = base64url(JSON.generate(
+                                iat: now - JWT_BACKDATE_SECONDS, exp: now + JWT_TTL_SECONDS, iss: @app_id,
+                              ))
+          signing_input = "#{header}.#{payload}"
+          "#{signing_input}.#{base64url(@private_key.sign(OpenSSL::Digest.new("SHA256"), signing_input))}"
+        end
+
+        # @param data [String]
+        # @return [String]
+        sig { params(data: String).returns(String) }
+        def base64url(data)
+          [data].pack("m0").tr("+/", "-_").delete("=")
+        end
+
+        # @param method [String]
+        # @param path [String]
+        # @param jwt [String]
+        # @return [Hash] the parsed response body
+        # @raise [Error] on any non-2xx answer
+        sig { params(method: String, path: String, jwt: String).returns(T::Hash[String, T.untyped]) }
+        def request(method, path, jwt)
+          status, body = @http.call(
+            method, "#{@api_url}/#{path}",
+            { "Authorization" => "Bearer #{jwt}", "Accept" => "application/vnd.github+json" },
+          )
+          raise Error, "GitHub App auth: #{method} #{path} returned #{status}: #{body.to_s[0, 200]}" unless (200..299).cover?(status)
+
+          JSON.parse(body)
+        end
+      end
+
+      # A plain pre-issued token (GH_TOKEN): served as-is, never refreshed,
+      # same lifetime rules as the pre-minted design.
+      class Static
+        extend T::Sig
+        include AuthMode
+
+        # @return [String] the token, verbatim
+        sig { returns(String) }
+        attr_reader :token
+
+        # @param token [String]
+        sig { params(token: String).void }
+        def initialize(token:)
+          @token = token
+        end
+      end
+
+      # No credentials at all (local runs): the provider answers nil and
+      # callers ride the developer's own gh login.
+      class Ambient
+        extend T::Sig
+        include AuthMode
+      end
     end
   end
 end
