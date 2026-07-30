@@ -73,6 +73,44 @@ module AiFlow
         T::Array[String],
       )
 
+      # One build pass's capture in flight: seeded before the agent runs
+      # (seed_capture), given its staged learning diff after the commit's
+      # `git add -A` (extract_capture), consumed by land_capture. The three
+      # fields always travel together — a single nilable Capture replaces
+      # three ivars whose independent nils could express states that can't
+      # happen.
+      class Capture
+        extend T::Sig
+
+        # @return [Hash] the built surface — :branch, :marker, :title, :url
+        sig { returns(T::Hash[Symbol, T.untyped]) }
+        attr_reader :source
+
+        # @return [Hash, nil] the surface's open draft learning PR — nil
+        #   when there is none to refine (tier-2: a real "no draft" answer)
+        sig { returns(T.nilable(T::Hash[String, T.untyped])) }
+        attr_reader :existing
+
+        # @return [String, nil] the staged learning diff — nil until
+        #   extract_capture runs, and when the pass wrote no learning files
+        sig { returns(T.nilable(String)) }
+        attr_accessor :patch
+
+        # @param source [Hash]
+        # @param existing [Hash, nil]
+        sig do
+          params(
+            source: T::Hash[Symbol, T.untyped],
+            existing: T.nilable(T::Hash[String, T.untyped]),
+          ).void
+        end
+        def initialize(source:, existing:)
+          @source = source
+          @existing = existing
+          @patch = T.let(nil, T.nilable(String))
+        end
+      end
+
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
       # @param agent [AiFlow::Agent]
@@ -105,10 +143,8 @@ module AiFlow
         @workdir = workdir
         @prefix = prefix
         @org_invariants = org_invariants
-        # Build-capture state, seeded/extracted/consumed per build pass.
-        @capture_source = T.let(nil, T.nilable(T::Hash[Symbol, T.untyped]))
-        @capture_existing = T.let(nil, T.nilable(T::Hash[String, T.untyped]))
-        @capture_patch = T.let(nil, T.nilable(String))
+        # Build-capture in flight; nil between build passes.
+        @capture = T.let(nil, T.nilable(Capture))
       end
 
       # @param segment [CommentParser::Segment]
@@ -151,24 +187,7 @@ module AiFlow
       # @return [void]
       sig { params(dir: String, source: T::Hash[Symbol, T.untyped]).void }
       def seed_capture(dir, source)
-        @capture_source = source
-        @capture_existing = @github.open_pull_request_for_head(@context.owner_repo, source.fetch(:branch))
-        return unless @capture_existing
-
-        _out, _err, ok = @executor.capture("git", "fetch", "origin", source.fetch(:branch), chdir: dir)
-        unless ok
-          # Without the draft's files in the tree, "the agent deleted them"
-          # can't be inferred — forget the draft so an empty capture stays a
-          # no-op instead of closing a PR the agent never saw.
-          @capture_existing = nil
-          return
-        end
-
-        # T.unsafe: splatting the pathspec constant into capture's rest param
-        # is beyond Sorbet's static splat support (srb.help/7019).
-        T.unsafe(@executor).capture(
-          "git", "checkout", "origin/#{source.fetch(:branch)}", "--", *CAPTURE_PATHSPECS, chdir: dir,
-        )
+        @capture = Capture.new(source: source, existing: seeded_draft(dir, source))
       end
 
       # Pull the staged learning diff out of the pending code commit — the
@@ -178,7 +197,10 @@ module AiFlow
       # @return [void]
       sig { params(dir: String).void }
       def extract_capture(dir)
-        @capture_patch = nil
+        # T.must: extraction without a seeded capture is a caller bug —
+        # Build guards seed/extract/land with the same capture flag.
+        capture = T.must(@capture)
+        capture.patch = nil
         # T.unsafe: splatting the pathspec constant into capture's rest param
         # is beyond Sorbet's static splat support (srb.help/7019).
         patch, = T.unsafe(@executor).capture(
@@ -186,7 +208,7 @@ module AiFlow
         )
         return if patch.strip.empty?
 
-        @capture_patch = patch
+        capture.patch = patch
         run!(["git", "reset", "-q", "HEAD", "--", *CAPTURE_PATHSPECS], chdir: dir)
         # Working-tree restore is hygiene and best-effort: checkout errors
         # when the agent only *added* learning files, which clean covers.
@@ -202,20 +224,18 @@ module AiFlow
       # @return [String, nil] a panel note, nil when there was nothing to land
       sig { returns(T.nilable(String)) }
       def land_capture
-        # Consume the extraction state: a Build instance is reused across
-        # --split sub-builds, and one build's capture must not haunt the next.
-        patch = @capture_patch
-        existing = @capture_existing
-        source = @capture_source
-        @capture_patch = nil
-        @capture_existing = nil
-        @capture_source = nil
-        return close_dissolved_draft(existing) if patch.nil? && existing
-        # A patch only exists after seed_capture set the source; the nil
-        # check doubles as the narrowing Sorbet needs.
-        return nil if patch.nil? || source.nil?
+        # Consume the capture: a Build instance is reused across --split
+        # sub-builds, and one build's capture must not haunt the next.
+        capture = @capture
+        @capture = nil
+        return nil if capture.nil?
 
-        note = land_patch(patch, existing, source)
+        patch = capture.patch
+        existing = capture.existing
+        return close_dissolved_draft(existing) if patch.nil? && existing
+        return nil if patch.nil?
+
+        note = land_patch(patch, existing, capture.source)
         $stdout.puts note if note
         note
       rescue GitHub::Error => e
@@ -225,6 +245,33 @@ module AiFlow
       end
 
       private
+
+      # The open draft learning PR whose files were brought into the build
+      # worktree — the hot pass refines (or dissolves) them instead of
+      # drafting blind duplicates.
+      #
+      # @param dir [String] the build worktree
+      # @param source [Hash] the built surface (:branch is the refine key)
+      # @return [Hash, nil] the draft PR, nil when there is none — or when
+      #   its files couldn't be fetched: without them in the tree, "the
+      #   agent deleted them" can't be inferred, so forgetting the draft
+      #   keeps an empty capture a no-op instead of closing a PR the agent
+      #   never saw
+      sig { params(dir: String, source: T::Hash[Symbol, T.untyped]).returns(T.nilable(T::Hash[String, T.untyped])) }
+      def seeded_draft(dir, source)
+        existing = @github.open_pull_request_for_head(@context.owner_repo, source.fetch(:branch))
+        return nil unless existing
+
+        _out, _err, ok = @executor.capture("git", "fetch", "origin", source.fetch(:branch), chdir: dir)
+        return nil unless ok
+
+        # T.unsafe: splatting the pathspec constant into capture's rest param
+        # is beyond Sorbet's static splat support (srb.help/7019).
+        T.unsafe(@executor).capture(
+          "git", "checkout", "origin/#{source.fetch(:branch)}", "--", *CAPTURE_PATHSPECS, chdir: dir,
+        )
+        existing
+      end
 
       # ---- Dictated + bare sweep ----
 
