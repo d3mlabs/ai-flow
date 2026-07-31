@@ -19,7 +19,7 @@ class OriginFiringWorkflowTest < Minitest::Test
 
     When "finding the step that runs the check entry point"
     step = workflow.fetch("jobs").fetch("origin-firing").fetch("steps")
-                   .find { |candidate| candidate["run"].to_s.include?("origin_firing_check.rb") }
+                   .find { |candidate| candidate["run"].to_s.include?("dev origin-firing-check") }
 
     Then "the bot-comment filter downstream receives the deployment's actual login"
     step.fetch("env", {})["AI_FLOW_BOT_LOGIN"] == BOT_LOGIN_EXPRESSION
