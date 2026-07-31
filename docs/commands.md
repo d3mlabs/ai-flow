@@ -382,6 +382,22 @@ goes quiet, the draft PR is itself an ordinary ai-flow surface — `/build`
 iterates the wording, review threads sweep it, `/ask` challenges a
 generalization — so nothing is orphaned.
 
+### Proposal verification (the origin-firing check)
+
+Learning repos can verify proposals with the **origin-firing check**
+(`.github/workflows/origin-firing.yml`, reusable — copy
+`templates/proposal-checks.yml` into the repo): on every PR, a single agent
+pass gets the PR's own learnings index plus the origin thread (recovered from
+the `learned-from:` marker) replayed as a fresh task, and must declare which
+learnings it would consult. The status fails when a changed learning is not
+in that set — a cue that does not fire on the very situation that produced it
+needs rewording before the human gate spends attention on it. Verification
+informs admission, never performs it: the proposal stays open. Structure-only
+diffs and PRs without a marker (migrations, manual edits) skip green. Cue
+firing is stochastic, so a marginal cue can flake; re-run the job for a
+second opinion. Rationale and the follow-up statistical form:
+`docs/paper.md` §6.2 and §15.
+
 ## Cross-cutting behavior
 
 - **Permission gate**: only users with effective write access run commands

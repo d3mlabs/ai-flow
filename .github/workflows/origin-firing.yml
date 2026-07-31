@@ -1,0 +1,82 @@
+# ai-flow: the origin-firing check as a reusable PR-status workflow
+# (docs/paper.md §6.2/§15.6). On a learning repo's pull requests, one agent
+# pass replays the proposal's origin thread against the PR's own index and the
+# job fails when a changed learning's cue does not fire on the very context
+# that produced it. Structure-only diffs and PRs without a `learned-from:`
+# marker (migrations, manual edits) skip green.
+#
+# Adopting repos (the org knowledge repo first) reference this via a small
+# caller workflow — see templates/proposal-checks.yml.
+name: origin-firing
+
+on:
+  workflow_call:
+    secrets:
+      CURSOR_API_KEY:
+        description: Authenticates the headless Cursor agent CLI on the runner.
+        required: true
+      AI_FLOW_APP_ID:
+        description: >-
+          GitHub App ID for the ai-flow App — needed to read origin threads
+          in other private repos of the org. Without it the job's github.token
+          covers same-repo and public origins only.
+        required: false
+      AI_FLOW_APP_PRIVATE_KEY:
+        description: Private key for the ai-flow GitHub App.
+        required: false
+
+jobs:
+  origin-firing:
+    # The retrieval re-run is a /learn-class agent pass, so it rides the
+    # same runner pool.
+    runs-on: [self-hosted, ai-learn]
+    # A new push to the PR supersedes the in-flight verdict.
+    concurrency:
+      group: origin-firing-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    timeout-minutes: 30
+    env:
+      AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
+    steps:
+      # Cross-repo origin reads (a knowledge-repo proposal's origin lives in a
+      # code repo) need the App's org-wide reach; absent the App, github.token
+      # still covers same-repo origins.
+      - name: Mint the ai-flow App token
+        id: app-token
+        if: ${{ env.AI_FLOW_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AI_FLOW_APP_ID }}
+          private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      # Full history: the check diffs against origin/<base> to name the
+      # changed learnings. persist-credentials off for the same reason as
+      # ai-commands.yml — the agent subprocess must never find a baked token.
+      - name: Check out the pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || github.token }}
+          persist-credentials: false
+
+      - name: Check out ai-flow (the checker)
+        uses: actions/checkout@v4
+        with:
+          repository: d3mlabs/ai-flow
+          path: .ai-flow
+          token: ${{ steps.app-token.outputs.token || github.token }}
+          persist-credentials: false
+
+      - name: Origin-firing check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
+          AI_FLOW_APP_PRIVATE_KEY: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          AI_FLOW_WORKDIR: ${{ github.workspace }}
+          # App names are globally unique, so an adopter's App may not be
+          # named ai-flow — derive the bot login from the actual slug, or the
+          # origin-evidence bot filter misses this deployment's own panels.
+          AI_FLOW_BOT_LOGIN: ${{ format('{0}[bot]', steps.app-token.outputs.app-slug || 'ai-flow') }}
+        run: ruby .ai-flow/bin/origin_firing_check.rb
