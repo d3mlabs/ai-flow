@@ -134,8 +134,7 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     Then "the check fails, naming the silent learning"
     result.is_a?(AiFlow::ProposalChecks::Result::Fail)
     result.fired == []
-    result.detail.include?("`typed-errors`")
-    result.detail.include?("reword the index cue")
+    result.missing == ["typed-errors"]
 
     Cleanup
     FileUtils.remove_entry(dir)
@@ -150,9 +149,8 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     When "checking"
     result = run_check(workdir: dir, agent: agent)
 
-    Then "the check skips and never launched the agent"
-    result.is_a?(AiFlow::ProposalChecks::Result::Skip)
-    result.detail.include?("structure-only")
+    Then "the check concludes out-of-scope and never launched the agent"
+    result.is_a?(AiFlow::ProposalChecks::Result::StructureOnly)
     agent.launches.empty?
 
     Cleanup
@@ -168,9 +166,8 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     When "checking"
     result = run_check(workdir: dir, agent: agent, pr_body: "Seeded by the migration pass.")
 
-    Then "the check skips and never launched the agent"
-    result.is_a?(AiFlow::ProposalChecks::Result::Skip)
-    result.detail.include?("learned-from")
+    Then "the check concludes unmarked and never launched the agent"
+    result.is_a?(AiFlow::ProposalChecks::Result::Unmarked)
     agent.launches.empty?
 
     Cleanup

@@ -58,24 +58,14 @@ module AiFlow
       const :number, Integer
     end
 
-    # What one check concluded, sealed so the CI entry point dispatches
-    # exhaustively — the exit-code policy (a Skip is green) lives at that
-    # boundary, not in the type.
+    # What one check concluded — facts only, sealed so the CI entry point
+    # dispatches exhaustively. All human-facing wording (and the exit-code
+    # policy: out-of-scope results are green) belongs to that boundary,
+    # never to the type.
     class Result
-      extend T::Sig
       extend T::Helpers
       abstract!
       sealed!
-
-      # @return [String] the human-facing explanation of the conclusion
-      sig { returns(String) }
-      attr_reader :detail
-
-      # @param detail [String]
-      sig { params(detail: String).void }
-      def initialize(detail:)
-        @detail = detail
-      end
 
       # Every changed learning fired on its origin context.
       class Pass < Result
@@ -89,12 +79,10 @@ module AiFlow
         sig { returns(T::Array[String]) }
         attr_reader :fired
 
-        # @param detail [String]
         # @param new_slugs [Array<String>]
         # @param fired [Array<String>]
-        sig { params(detail: String, new_slugs: T::Array[String], fired: T::Array[String]).void }
-        def initialize(detail:, new_slugs:, fired:)
-          super(detail: detail)
+        sig { params(new_slugs: T::Array[String], fired: T::Array[String]).void }
+        def initialize(new_slugs:, fired:)
           @new_slugs = new_slugs
           @fired = fired
         end
@@ -112,20 +100,29 @@ module AiFlow
         sig { returns(T::Array[String]) }
         attr_reader :fired
 
-        # @param detail [String]
         # @param new_slugs [Array<String>]
         # @param fired [Array<String>]
-        sig { params(detail: String, new_slugs: T::Array[String], fired: T::Array[String]).void }
-        def initialize(detail:, new_slugs:, fired:)
-          super(detail: detail)
+        sig { params(new_slugs: T::Array[String], fired: T::Array[String]).void }
+        def initialize(new_slugs:, fired:)
           @new_slugs = new_slugs
           @fired = fired
         end
+
+        # Derived here, not at the boundary, so the check's one piece of
+        # verdict arithmetic has one home.
+        #
+        # @return [Array<String>] the changed slugs that stayed silent
+        sig { returns(T::Array[String]) }
+        def missing = new_slugs - fired
       end
 
-      # Legitimately outside the check's scope: structure-only diffs and
-      # unmarked (migration/manual) PRs.
-      class Skip < Result; end
+      # No skill files changed — a structure-only diff, outside the
+      # origin-firing check's scope.
+      class StructureOnly < Result; end
+
+      # No learned-from: marker in the PR body — a migration/manual PR,
+      # not a captured proposal.
+      class Unmarked < Result; end
     end
 
     # @param github [AiFlow::GitHub] origin-thread reads (cross-repo capable)
@@ -147,25 +144,16 @@ module AiFlow
     sig { params(workdir: String, pr_body: String, base_ref: String).returns(Result) }
     def origin_firing(workdir:, pr_body:, base_ref:)
       slugs = changed_skill_slugs(workdir, base_ref)
-      if slugs.empty?
-        return Result::Skip.new(detail: "no skill files changed — structure-only diff, origin-firing not applicable")
-      end
+      return Result::StructureOnly.new if slugs.empty?
 
       origin = origin_ref(pr_body)
-      unless origin
-        return Result::Skip.new(detail: "no `learned-from:` marker in the PR body — not a captured proposal " \
-                                        "(migration or manual PR), origin-firing not applicable")
-      end
+      return Result::Unmarked.new unless origin
 
       fired = rerun_retrieval(workdir, origin)
-      missing = slugs - fired
-      if missing.empty?
-        Result::Pass.new(new_slugs: slugs, fired: fired,
-                         detail: "every changed learning fired on its origin context")
+      if (slugs - fired).empty?
+        Result::Pass.new(new_slugs: slugs, fired: fired)
       else
-        Result::Fail.new(new_slugs: slugs, fired: fired,
-                         detail: "did not fire on the origin context: #{missing.map { |slug| "`#{slug}`" }.join(", ")} — " \
-                                 "reword the index cue so the situation that produced the learning triggers it")
+        Result::Fail.new(new_slugs: slugs, fired: fired)
       end
     end
 

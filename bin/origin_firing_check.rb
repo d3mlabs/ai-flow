@@ -34,21 +34,28 @@ result = AiFlow::ProposalChecks.new(
   base_ref: pull_request.fetch("base").fetch("ref"),
 )
 
-# This boundary owns the CI verdict and its rendering: a Skip is green
+# This boundary owns the CI verdict and every human-facing sentence: the
+# result type carries only facts. Out-of-scope results are green
 # (out-of-scope PRs must not block), and only checked results carry the
 # slug listings.
 lines, green =
   case result
   when AiFlow::ProposalChecks::Result::Pass
-    [["✅ origin-firing (pass): #{result.detail}",
+    [["✅ origin-firing (pass): every changed learning fired on its origin context",
       "changed learnings: #{result.new_slugs.join(", ")}",
-      "fired on origin: #{result.fired.empty? ? "(none)" : result.fired.join(", ")}"], true]
+      "fired on origin: #{result.fired.join(", ")}"], true]
   when AiFlow::ProposalChecks::Result::Fail
-    [["❌ origin-firing (fail): #{result.detail}",
+    [["❌ origin-firing (fail): did not fire on the origin context: " \
+      "#{result.missing.map { |slug| "`#{slug}`" }.join(", ")} — " \
+      "reword the index cue so the situation that produced the learning triggers it",
       "changed learnings: #{result.new_slugs.join(", ")}",
       "fired on origin: #{result.fired.empty? ? "(none)" : result.fired.join(", ")}"], false]
-  when AiFlow::ProposalChecks::Result::Skip
-    [["ℹ️ origin-firing (skip): #{result.detail}"], true]
+  when AiFlow::ProposalChecks::Result::StructureOnly
+    [["ℹ️ origin-firing (skip): no skill files changed — structure-only diff, " \
+      "origin-firing not applicable"], true]
+  when AiFlow::ProposalChecks::Result::Unmarked
+    [["ℹ️ origin-firing (skip): no `learned-from:` marker in the PR body — not a captured " \
+      "proposal (migration or manual PR), origin-firing not applicable"], true]
   else
     T.absurd(result)
   end
