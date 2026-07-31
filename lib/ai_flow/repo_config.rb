@@ -32,20 +32,24 @@ module AiFlow
       T::Hash[String, Command],
     )
 
-    # @param workdir [String] repo checkout root
-    # @return [RepoConfig]
-    # @raise [Error] when the file exists but is not a YAML mapping
-    sig { params(workdir: String).returns(RepoConfig) }
-    def self.load(workdir)
-      path = File.join(workdir, PATH)
-      return new({}) unless File.exist?(path)
+    class << self
+      extend T::Sig
 
-      parsed = YAML.safe_load(File.read(path))
-      raise Error, "#{PATH} must be a YAML mapping" unless parsed.is_a?(Hash)
+      # @param workdir [String] repo checkout root
+      # @return [RepoConfig]
+      # @raise [Error] when the file exists but is not a YAML mapping
+      sig { params(workdir: String).returns(RepoConfig) }
+      def load(workdir)
+        path = File.join(workdir, PATH)
+        return new({}) unless File.exist?(path)
 
-      new(parsed)
-    rescue Psych::Exception => e
-      raise Error, "#{PATH} is not valid YAML: #{e.message}"
+        parsed = YAML.safe_load(File.read(path))
+        raise Error, "#{PATH} must be a YAML mapping" unless parsed.is_a?(Hash)
+
+        new(parsed)
+      rescue Psych::Exception => e
+        raise Error, "#{PATH} is not valid YAML: #{e.message}"
+      end
     end
 
     # @param config [Hash]

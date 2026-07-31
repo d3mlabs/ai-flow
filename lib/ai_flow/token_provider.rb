@@ -32,21 +32,25 @@ module AiFlow
 
     class Error < StandardError; end
 
-    # Read credentials from the environment — and remove the private key
-    # from it, so subprocesses (which inherit the dispatcher's environment)
-    # never see it.
-    #
-    # @param env [Hash-like] injectable for tests; the Actions job env
-    # @return [TokenProvider]
-    sig { params(env: T.untyped).returns(TokenProvider) }
-    def self.from_env(env: ENV)
-      new(
-        app_id: env["AI_FLOW_APP_ID"],
-        private_key_pem: env.delete("AI_FLOW_APP_PRIVATE_KEY"),
-        owner: env["GITHUB_REPOSITORY_OWNER"] || env["GITHUB_REPOSITORY"].to_s.split("/").first,
-        static_token: env["GH_TOKEN"],
-        api_url: env["GITHUB_API_URL"] || "https://api.github.com",
-      )
+    class << self
+      extend T::Sig
+
+      # Read credentials from the environment — and remove the private key
+      # from it, so subprocesses (which inherit the dispatcher's environment)
+      # never see it.
+      #
+      # @param env [Hash-like] injectable for tests; the Actions job env
+      # @return [TokenProvider]
+      sig { params(env: T.untyped).returns(TokenProvider) }
+      def from_env(env: ENV)
+        new(
+          app_id: env["AI_FLOW_APP_ID"],
+          private_key_pem: env.delete("AI_FLOW_APP_PRIVATE_KEY"),
+          owner: env["GITHUB_REPOSITORY_OWNER"] || env["GITHUB_REPOSITORY"].to_s.split("/").first,
+          static_token: env["GH_TOKEN"],
+          api_url: env["GITHUB_API_URL"] || "https://api.github.com",
+        )
+      end
     end
 
     # The credential params stay nilable — this constructor is the boundary
@@ -204,7 +208,7 @@ module AiFlow
           @private_key = private_key
           @owner = owner
           @api_url = api_url
-          @http = T.let(http, T.untyped)
+          @http = http
           @clock = clock
           @minted_token = T.let(nil, T.nilable(String))
           @minted_at = T.let(nil, T.nilable(Time))
@@ -269,8 +273,8 @@ module AiFlow
           now = @clock.call.to_i
           header = base64url(JSON.generate(alg: "RS256", typ: "JWT"))
           payload = base64url(JSON.generate(
-                                iat: now - JWT_BACKDATE_SECONDS, exp: now + JWT_TTL_SECONDS, iss: @app_id,
-                              ))
+            iat: now - JWT_BACKDATE_SECONDS, exp: now + JWT_TTL_SECONDS, iss: @app_id,
+          ))
           signing_input = "#{header}.#{payload}"
           "#{signing_input}.#{base64url(@private_key.sign(OpenSSL::Digest.new("SHA256"), signing_input))}"
         end

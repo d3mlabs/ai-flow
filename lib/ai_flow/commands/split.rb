@@ -88,14 +88,19 @@ module AiFlow
 
         sig { returns(T::Array[Row]) }
         attr_reader :created
+
         sig { returns(T::Array[Row]) }
         attr_reader :adopted
+
         sig { returns(T::Array[Row]) }
         attr_reader :referenced
+
         sig { returns(T::Array[Row]) }
         attr_reader :kept
+
         sig { returns(T::Array[GitHub::Issue]) }
         attr_reader :closed
+
         sig { returns(T::Array[String]) }
         attr_reader :warnings
 
@@ -421,7 +426,7 @@ module AiFlow
         current = @github.issue(@context.owner_repo, @context.number)
         if PlanBody.from_issue_body(current.body) != snapshot
           raise GitHub::Error,
-                "the plan body changed while /split was running — nothing was written; retry"
+            "the plan body changed while /split was running — nothing was written; retry"
         end
 
         @github.update_issue_body(@context.owner_repo, @context.number, body: new_body)
@@ -461,7 +466,7 @@ module AiFlow
             adopt_or_reference(entry, existing)
           elsif (match = existing.find { |issue| issue.title == entry.title })
             IssueRef.new(repo: match.repo, number: match.number,
-                         url: match.html_url, disposition: Disposition::Kept.new)
+              url: match.html_url, disposition: Disposition::Kept.new)
           else
             create_sub_issue(entry, report)
           end

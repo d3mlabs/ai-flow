@@ -58,29 +58,33 @@ module AiFlow
     sig { returns(T.nilable(Integer)) }
     attr_reader :commenter_id
 
-    # The surface router: review-summary payloads carry the command under
-    # "review", both comment surfaces under "comment"; anything that is not
-    # a review event is the issue_comment surface (the only other event the
-    # dispatch workflow subscribes to).
-    #
-    # @param event_name [String] GITHUB_EVENT_NAME
-    # @param payload [Hash] parsed event JSON
-    # @param env [Hash-like] injectable for tests; the Actions job env
-    sig { params(event_name: String, payload: T::Hash[String, T.untyped], env: T.untyped).returns(Context) }
-    def self.from_event(event_name:, payload:, env: ENV)
-      case event_name
-      when "pull_request_review_comment" then ReviewComment.new(payload: payload, env: env)
-      when "pull_request_review" then ReviewSummary.new(payload: payload, env: env)
-      else IssueComment.new(payload: payload, env: env)
-      end
-    end
+    class << self
+      extend T::Sig
 
-    # @param event_name [String] GITHUB_EVENT_NAME
-    # @param event_path [String] GITHUB_EVENT_PATH
-    # @return [Context]
-    sig { params(event_name: String, event_path: String).returns(Context) }
-    def self.from_event_file(event_name:, event_path:)
-      from_event(event_name: event_name, payload: JSON.parse(File.read(event_path)))
+      # The surface router: review-summary payloads carry the command under
+      # "review", both comment surfaces under "comment"; anything that is not
+      # a review event is the issue_comment surface (the only other event the
+      # dispatch workflow subscribes to).
+      #
+      # @param event_name [String] GITHUB_EVENT_NAME
+      # @param payload [Hash] parsed event JSON
+      # @param env [Hash-like] injectable for tests; the Actions job env
+      sig { params(event_name: String, payload: T::Hash[String, T.untyped], env: T.untyped).returns(Context) }
+      def from_event(event_name:, payload:, env: ENV)
+        case event_name
+        when "pull_request_review_comment" then ReviewComment.new(payload: payload, env: env)
+        when "pull_request_review" then ReviewSummary.new(payload: payload, env: env)
+        else IssueComment.new(payload: payload, env: env)
+        end
+      end
+
+      # @param event_name [String] GITHUB_EVENT_NAME
+      # @param event_path [String] GITHUB_EVENT_PATH
+      # @return [Context]
+      sig { params(event_name: String, event_path: String).returns(Context) }
+      def from_event_file(event_name:, event_path:)
+        from_event(event_name: event_name, payload: JSON.parse(File.read(event_path)))
+      end
     end
 
     # Shared coercion of the fields every surface carries. The T.lets coerce
@@ -103,7 +107,7 @@ module AiFlow
     end
     def initialize(source:, payload:, number:, env:)
       @env = env
-      @number = T.let(number, Integer)
+      @number = number
       @owner_repo = T.let(payload.fetch("repository").fetch("full_name"), String)
       @comment_id = T.let(source.fetch("id"), Integer)
       @comment_body = T.let(source["body"] || "", String)

@@ -14,13 +14,13 @@ class AiFlow::ContextTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-test-")
     path = File.join(dir, "event.json")
     File.write(path, JSON.generate(
-                       "repository" => { "full_name" => "d3mlabs/demo" },
-                       "pull_request" => { "number" => 3, "head" => { "ref" => "feature-branch" } },
-                       "review" => {
-                         "id" => 77, "body" => "/build address my review", "author_association" => "OWNER",
-                         "html_url" => "https://github.com/d3mlabs/demo/pull/3#pullrequestreview-77",
-                       },
-                     ))
+      "repository" => { "full_name" => "d3mlabs/demo" },
+      "pull_request" => { "number" => 3, "head" => { "ref" => "feature-branch" } },
+      "review" => {
+        "id" => 77, "body" => "/build address my review", "author_association" => "OWNER",
+        "html_url" => "https://github.com/d3mlabs/demo/pull/3#pullrequestreview-77",
+      },
+    ))
 
     When "loading the context from the file"
     context = AiFlow::Context.from_event_file(event_name: "pull_request_review", event_path: path)

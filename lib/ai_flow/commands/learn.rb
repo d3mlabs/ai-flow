@@ -82,8 +82,10 @@ module AiFlow
 
         sig { returns(String) }
         attr_reader :branch
+
         sig { returns(String) }
         attr_reader :marker
+
         sig { returns(String) }
         attr_reader :title
 
@@ -113,8 +115,10 @@ module AiFlow
 
         sig { returns(String) }
         attr_reader :branch
+
         sig { returns(String) }
         attr_reader :ref
+
         sig { returns(String) }
         attr_reader :url
 
@@ -146,6 +150,7 @@ module AiFlow
 
           sig { returns(T::Array[String]) }
           attr_reader :slugs
+
           sig { returns(GitHub::PullRequest) }
           attr_reader :pr
 
@@ -443,10 +448,10 @@ module AiFlow
         if dictated?(segment)
           # Source is the single comment, so each dictation is its own draft.
           Source.new(branch: "ai/learn-c#{@context.comment_id}", marker: "learned-from: #{repo_ref} (dictated)",
-                     title: "dictated learning", dictated: true)
+            title: "dictated learning", dictated: true)
         else
           Source.new(branch: surface_branch, marker: "learned-from: #{repo_ref} (learn-sweep)",
-                     title: "learnings from #{repo_ref}", dictated: false)
+            title: "learnings from #{repo_ref}", dictated: false)
         end
       end
 
@@ -1139,8 +1144,8 @@ module AiFlow
         return if ok
 
         raise GitHub::Error,
-              "git push failed: #{err.strip} — if this repo enforces signed commits, " \
-              "see d3mlabs/ai-flow docs/attribution.md (createCommitOnBranch upgrade path)"
+          "git push failed: #{err.strip} — if this repo enforces signed commits, " \
+          "see d3mlabs/ai-flow docs/attribution.md (createCommitOnBranch upgrade path)"
       end
 
       # @return [void]

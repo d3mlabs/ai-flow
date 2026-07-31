@@ -60,10 +60,13 @@ module AiFlow
 
           sig { returns(String) }
           attr_reader :quote
+
           sig { returns(String) }
           attr_reader :author
+
           sig { returns(String) }
           attr_reader :url
+
           sig { returns(String) }
           attr_reader :text
 
@@ -103,6 +106,7 @@ module AiFlow
 
         sig { returns(CommentParser::Segment) }
         attr_reader :segment
+
         sig { returns(Anchor) }
         attr_reader :anchor
 
@@ -412,7 +416,7 @@ module AiFlow
         current = @github.issue(@context.owner_repo, @context.number)
         if PlanBody.from_issue_body(current.body) != snapshot
           raise GitHub::Error,
-                "the document changed while the batch was running — no edits were applied; retry"
+            "the document changed while the batch was running — no edits were applied; retry"
         end
 
         @github.update_issue_body(@context.owner_repo, @context.number, body: new_body)
