@@ -283,6 +283,12 @@ note on the ⚙️ footer of every result comment. A job launches under one
 command policy (a batch is a single agent pass, run as /edit when any edit
 is present), so the note is one name.
 
+Recommended policy: set `models.default` and leave per-command overrides
+unset unless cost forces the issue. Learning capture phrases index cues
+for the model that will read them, so splitting models across commands
+creates a writer/reader mismatch — and turns a model upgrade into several
+partial transitions instead of one deliberate, verifiable event.
+
 The run page is live, not just post-hoc: the agent CLI runs in stream-json
 mode and every event prints as it happens (`[/build] → shell: rake test`,
 `[/build] assistant: …`), so "follow the run" shows the agent working in
