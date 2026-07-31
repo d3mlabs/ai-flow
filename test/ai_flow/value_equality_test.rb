@@ -60,8 +60,8 @@ class AiFlow::ValueEqualityTest < Minitest::Test
   test "Derived equality is memberwise over the declared members" do
     Expect "a single changed member — or a different class — breaks equality"
     assert_value_semantics Coordinate.new(row: 1, column: 2),
-                           equal_to: Coordinate.new(row: 1, column: 2),
-                           unequal_to: [variant]
+      equal_to: Coordinate.new(row: 1, column: 2),
+      unequal_to: [variant]
 
     Where
     variant

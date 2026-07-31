@@ -41,7 +41,7 @@ module ValueSemanticsAssertions
     # instances interchange as keys instead of trusting the methods alone.
     equal.drop(1).each do |other|
       assert_equal :hit, { subject => :hit }[other],
-                   "Hash lookup miss: #{other.inspect} does not find the entry keyed by #{subject.inspect}"
+        "Hash lookup miss: #{other.inspect} does not find the entry keyed by #{subject.inspect}"
     end
 
     # Foreign types prove instance_of? strictness; nil the nil-safety.

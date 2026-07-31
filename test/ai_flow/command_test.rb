@@ -11,8 +11,8 @@ class AiFlow::CommandTest < Minitest::Test
   test "leaves are value objects: equal within a class, unequal across" do
     Expect "the full value-equality contract holds"
     assert_value_semantics command_class.new,
-                           equal_to: command_class.new,
-                           unequal_to: [other_class.new]
+      equal_to: command_class.new,
+      unequal_to: [other_class.new]
 
     Where
     command_class          | other_class

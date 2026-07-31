@@ -814,8 +814,8 @@ module AiFlow
         return if ok
 
         raise GitHub::Error,
-              "git push failed: #{err.strip} — if this repo enforces signed commits, " \
-              "see d3mlabs/ai-flow docs/attribution.md (createCommitOnBranch upgrade path)"
+          "git push failed: #{err.strip} — if this repo enforces signed commits, " \
+          "see d3mlabs/ai-flow docs/attribution.md (createCommitOnBranch upgrade path)"
       end
 
       # Back-references always use the full `Closes owner/repo#n` form (valid

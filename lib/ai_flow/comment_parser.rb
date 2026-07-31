@@ -47,12 +47,16 @@ module AiFlow
     # vocabulary (the "/ask" in log prefixes and error text).
     WORDS_BY_COMMAND = T.let(COMMAND_WORDS.invert.freeze, T::Hash[Command, String])
 
-    # @param command [AiFlow::Command]
-    # @return [String] the comment word for the command
-    # @raise [KeyError] for a command missing from the table
-    sig { params(command: Command).returns(String) }
-    def self.word_for(command)
-      WORDS_BY_COMMAND.fetch(command)
+    class << self
+      extend T::Sig
+
+      # @param command [AiFlow::Command]
+      # @return [String] the comment word for the command
+      # @raise [KeyError] for a command missing from the table
+      sig { params(command: Command).returns(String) }
+      def word_for(command)
+        WORDS_BY_COMMAND.fetch(command)
+      end
     end
 
     # One quote+command pair. `quote` is the anchor text (de-quoted, nil when
@@ -153,8 +157,8 @@ module AiFlow
       return unless first_lifecycle
 
       raise ParseError,
-            "/#{self.class.word_for(first_lifecycle)} must be a comment's only command — " \
-            "batches are limited to /ask and /edit."
+        "/#{self.class.word_for(first_lifecycle)} must be a comment's only command — " \
+        "batches are limited to /ask and /edit."
     end
   end
 end

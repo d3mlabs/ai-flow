@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 # Dependency manifest for dev: the exact Ruby toolchain plus the gem set.
@@ -17,6 +18,9 @@ Dev::Deps.define do
   group(:development) do
     gem "sorbet"
     gem "tapioca", require: false
+    gem "rubocop", require: false
+    gem "rubocop-shopify", require: false
+    gem "rubocop-sorbet", require: false
   end
 
   group(:test) do

@@ -1,4 +1,4 @@
-name: test
+name: CI
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,10 +16,26 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           bundler-cache: true
+      - run: bundle exec rubocop
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
       - name: Verify gem RBIs are current
         run: bundle exec tapioca gem --verify
-      - name: Typecheck
-        run: bundle exec srb tc
+      - run: bundle exec srb tc
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
       - run: bundle exec rake test
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
