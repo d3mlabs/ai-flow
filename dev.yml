@@ -12,3 +12,6 @@ commands:
   dispatch:
     desc: Run the slash-command dispatcher (the ai-commands workflow entry point)
     run: bundle exec ruby bin/dispatch.rb
+  origin-firing-check:
+    desc: Run the origin-firing proposal check (the origin-firing workflow entry point)
+    run: bundle exec ruby bin/origin_firing_check.rb
