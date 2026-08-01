@@ -8,7 +8,7 @@ module AiFlow
   module Commands
     # /learn — capture a lesson as a learning (an index line in
     # .cursor/rules/learnings-index.mdc plus a detail skill under
-    # .cursor/skills/learnings/<slug>/), landed as a draft PR the human
+    # .cursor/skills/learnings/<slug>/), landed as a proposal PR the human
     # merges. The GitHub-comment twin of dev's capture-learning skill: same
     # distillation rubric, same output shape, one pipeline behind both.
     #
@@ -29,7 +29,7 @@ module AiFlow
     #   repo-scoped branch (ai/learn-scan), so rescans refine.
     # - **promotion** (`/learn --promote <slug>`): curation, not capture —
     #   moves an existing learning to the org tier (`knowledge_repo:` in
-    #   .github/ai-flow.yml): a draft PR adding it there, paired with a
+    #   .github/ai-flow.yml): a proposal PR adding it there, paired with a
     #   deterministic removal draft in this repo.
     #
     # This class also owns /build's build-time capture (see the capture
@@ -37,7 +37,7 @@ module AiFlow
     # hot pass.
     #
     # Distillation and file-writing are the agent's (it holds the rubric and
-    # the corpus); the branch, commit, and draft-PR mechanics are the
+    # the corpus); the branch, commit, and proposal-PR mechanics are the
     # script's — deterministic, like /build.
     class Learn
       extend T::Sig
@@ -75,7 +75,7 @@ module AiFlow
 
       # Where a learn-form draft comes from (dictated, sweep, or scan): the
       # branch is the refine key, the marker records surface + form in the
-      # PR body, the title names the draft PR, and dictated? switches the
+      # PR body, the title names the proposal PR, and dictated? switches the
       # evidence framing between the human's statement and a surface sweep.
       class Source
         extend T::Sig
@@ -143,7 +143,7 @@ module AiFlow
           include DraftOutcome
         end
 
-        # Learnings landed on the surface's draft PR.
+        # Learnings landed on the surface's proposal PR.
         class Drafted
           extend T::Sig
           include DraftOutcome
@@ -198,7 +198,7 @@ module AiFlow
         extend T::Helpers
         sealed!
 
-        # The removal draft PR is open in the source repo.
+        # The removal proposal PR is open in the source repo.
         class Opened
           extend T::Sig
           include Removal
@@ -320,7 +320,7 @@ module AiFlow
       # capture rubric (capture_prompt_section), the agent writes learning
       # files straight into the code worktree, and the commit step splits
       # them out (same mechanics as the workflows exclusion) to land on the
-      # surface's own learning branch as a separate draft PR.
+      # surface's own learning branch as a separate proposal PR.
 
       # @return [String] the rubric section /build appends to its prompts
       sig { returns(String) }
@@ -329,7 +329,7 @@ module AiFlow
           LEARNING CAPTURE (side quest — the code work above stays the priority):
           This repo keeps durable learnings: an index line in `#{INDEX_PATH}` plus a detail skill at `#{SKILLS_DIR}/<slug>/SKILL.md`. While your context is hot, distill anything from this pass that generalizes beyond the immediate diff — recurring style/API corrections, architecture constraints the feedback revealed, process rules. Diff-local fixes (typos, renames, one-off bugs) are NOT learnings, and most passes yield nothing — write learning files only when something truly generalizes.
           #{shared_rubric}
-          Write the learning files directly in this checkout; the tooling automatically splits them out of the code commit into a separate draft learning PR. If the checkout already contains learning files from this surface's open draft, they are yours to refine — or delete, if this pass dissolved their generalization.
+          Write the learning files directly in this checkout; the tooling automatically splits them out of the code commit into a separate learning proposal PR. If the checkout already contains learning files from this surface's open draft, they are yours to refine — or delete, if this pass dissolved their generalization.
         SECTION
       end
 
@@ -370,7 +370,7 @@ module AiFlow
         T.unsafe(@executor).capture("git", "clean", "-fdq", "--", *CAPTURE_PATHSPECS, chdir: dir)
       end
 
-      # Land the extracted diff as the surface's draft learning PR — create,
+      # Land the extracted diff as the surface's learning proposal PR — create,
       # refine (the branch is regenerated as base + current state, force
       # pushed), or close a dissolved draft (seeded files deleted by the
       # pass). Best-effort by contract: capture never fails the code build.
@@ -400,14 +400,14 @@ module AiFlow
 
       private
 
-      # The open draft learning PR whose files were brought into the build
+      # The open learning proposal PR whose files were brought into the build
       # worktree — the hot pass refines (or dissolves) them instead of
       # drafting blind duplicates.
       #
       # @param dir [String] the build worktree
       # @param source [CaptureSource] the built surface (branch is the
       #   refine key)
-      # @return [AiFlow::GitHub::PullRequest, nil] the draft PR, nil when
+      # @return [AiFlow::GitHub::PullRequest, nil] the proposal PR, nil when
       #   there is none — or when its files couldn't be fetched: without
       #   them in the tree, "the agent deleted them" can't be inferred, so
       #   forgetting the draft keeps an empty capture a no-op instead of
@@ -982,7 +982,7 @@ module AiFlow
           "ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change."
         when DraftOutcome::Drafted
           verb = outcome.refined? ? "refined" : "drafted"
-          lines = ["✅ **/learn** — #{verb} #{learning_count(outcome.slugs)} in a draft PR: #{outcome.pr.html_url}"]
+          lines = ["✅ **/learn** — #{verb} #{learning_count(outcome.slugs)} in a proposal PR: #{outcome.pr.html_url}"]
           named_slugs(outcome.slugs).each { |slug| lines << "- `#{slug}`" }
           lines.join("\n")
         else
@@ -1026,7 +1026,7 @@ module AiFlow
           push_branch(worktree, source.branch)
           pr = existing || open_capture_pr(source)
           verb = existing ? "refined" : "drafted"
-          lines = ["🧠 #{verb} #{learning_count(slugs)} in a draft learning PR: #{pr.html_url}"]
+          lines = ["🧠 #{verb} #{learning_count(slugs)} in a learning proposal PR: #{pr.html_url}"]
           named_slugs(slugs).each { |slug| lines << "- `#{slug}`" }
           lines.join("\n")
         end
@@ -1068,7 +1068,7 @@ module AiFlow
       sig { params(existing: GitHub::PullRequest).returns(String) }
       def close_dissolved_draft(existing)
         @github.close_pull_request(@context.owner_repo, existing.number)
-        note = "🧠 closed the draft learning PR #{existing.html_url} — this pass dissolved its generalization."
+        note = "🧠 closed the learning proposal PR #{existing.html_url} — this pass dissolved its generalization."
         $stdout.puts note
         note
       rescue GitHub::Error => e

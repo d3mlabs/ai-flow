@@ -100,7 +100,7 @@ module AiFlow
     end
 
     # Whether /build runs an opportunistic learning-capture pass after a
-    # successful build (the draft PR + human merge is the gate; the agent
+    # successful build (the proposal PR + human merge is the gate; the agent
     # drafts nothing when nothing generalizes). On by default — the loop is
     # the point — with an explicit off switch for repos that want quiet.
     #
