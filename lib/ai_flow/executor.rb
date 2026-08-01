@@ -38,14 +38,15 @@ module AiFlow
     # @param argv [Array<String>] command and arguments
     # @param stdin [String, nil] data piped to the subprocess
     # @param chdir [String, nil] working directory
-    # @param env [Hash{String => String}] extra environment variables
+    # @param env [Hash{String => String, nil}] extra environment variables
+    #   (a nil value unsets the key in the subprocess)
     # @return [Array(String, String, Boolean)] stdout, stderr, success?
     sig do
       params(
         argv: String,
         stdin: T.nilable(String),
         chdir: T.nilable(String),
-        env: T::Hash[String, String],
+        env: T::Hash[String, T.nilable(String)],
       ).returns([String, String, T::Boolean])
     end
     def capture(*argv, stdin: nil, chdir: nil, env: {})
@@ -69,7 +70,8 @@ module AiFlow
     # @param argv [Array<String>] command and arguments
     # @param stdin [String, nil] data piped to the subprocess
     # @param chdir [String, nil] working directory
-    # @param env [Hash{String => String}] extra environment variables
+    # @param env [Hash{String => String, nil}] extra environment variables
+    #   (a nil value unsets the key in the subprocess)
     # @yieldparam line [String] one stdout line, as emitted
     # @return [Array(String, Boolean)] stderr, success?
     sig do
@@ -77,7 +79,7 @@ module AiFlow
         argv: String,
         stdin: T.nilable(String),
         chdir: T.nilable(String),
-        env: T::Hash[String, String],
+        env: T::Hash[String, T.nilable(String)],
         on_line: T.proc.params(line: String).void,
       ).returns([String, T::Boolean])
     end
