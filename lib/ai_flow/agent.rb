@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "bundler"
 require "json"
 
 module AiFlow
@@ -45,6 +46,16 @@ module AiFlow
         %r{\.cursor/rules/([^/]+)\.mdc\z},
       ].freeze,
       T::Array[Regexp],
+    )
+
+    # The variables shadowenv writes when it activates a project's toolchain.
+    # Bundler.original_env can't undo these: on the runner, shadowenv
+    # activates the .ai-flow checkout *before* bundler starts, so its
+    # variables are part of what bundler recorded as "original". Force-unset,
+    # the worktree's own shadowenv activates from a clean slate.
+    SHADOWENV_KEYS = T.let(
+      ["__shadowenv_data", "RUBY_ROOT", "RUBY_ENGINE", "RUBY_VERSION", "GEM_ROOT"].freeze,
+      T::Array[String],
     )
 
     # @param executor [AiFlow::Executor]
@@ -100,7 +111,7 @@ module AiFlow
       assistant_texts = T.let([], T::Array[String])
       # T.unsafe: splatting a runtime-built argv into stream's rest param is
       # beyond Sorbet's static splat support (srb.help/7019).
-      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir) do |line|
+      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir, env: worktree_env) do |line|
         event = parse_event(line)
         result = event["result"].to_s if event && event["type"] == "result"
         render_event(word, line, event, assistant_texts)
@@ -139,6 +150,29 @@ module AiFlow
     end
 
     private
+
+    # The env overlay that undoes the harness's own toolchain activation, so
+    # the agent — and every shell it opens in the project worktree — sees the
+    # project's Ruby, not .ai-flow's (ai-flow#38). The dispatcher runs under
+    # `bundle exec` inside .ai-flow; without this, RUBYOPT/BUNDLE_GEMFILE/
+    # GEM_HOME leak in and `dev`/`bundle` in the worktree resolve the
+    # harness's pins (Bundler::RubyVersionMismatch naming a Ruby the project
+    # never declared). Bundler.original_env is bundler's own record of the
+    # pre-activation environment; a nil value in a spawn env hash unsets the
+    # key. This seam is agent-only on purpose: the gh/git calls inside
+    # .ai-flow legitimately run in the harness env.
+    #
+    # @return [Hash{String => String, nil}]
+    sig { returns(T::Hash[String, T.nilable(String)]) }
+    def worktree_env
+      original = Bundler.original_env
+      scrub = T.let({}, T::Hash[String, T.nilable(String)])
+      (ENV.keys | original.keys).each do |key|
+        scrub[key] = original[key] unless ENV[key] == original[key]
+      end
+      SHADOWENV_KEYS.each { |key| scrub[key] = nil }
+      scrub
+    end
 
     # The AI_FLOW_MODEL override coerced at its boundary: blank is unset.
     #
