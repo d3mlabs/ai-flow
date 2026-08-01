@@ -68,6 +68,30 @@ Division of labor, and why:
   step's env, is read once, and is scrubbed before any subprocess spawns —
   the agent only ever sees short-lived installation tokens.
 
+### Roles vs zones
+
+The zones above are the *deployment* view: where things run. The README's
+[four-role diagram](../README.md#one-system-four-roles) is the *logical*
+view: what each part owns. The two cuts don't coincide, which is why both
+exist:
+
+- The **dev machine** zone hosts pieces of two roles: a surface (the Cursor
+  session, both capture entry and retrieval endpoint) and the read path
+  (`dev` materializing admitted learnings — rendered index rules, linked
+  skills — onto the machine and its checkouts).
+- The **GitHub** zone hosts the state (the repos are the memory — repo tier
+  in each target repo, org tier in the knowledge repo), the gate (human
+  merge on proposal PRs), and the write path's event plumbing.
+- The **runner** zone executes the write path (this repo's dispatcher and
+  command implementations) — but a runner is also an ordinary machine on the
+  read path: `dev` provisions it and syncs org knowledge onto it, and the
+  agent session it hosts is a surface like any IDE session.
+
+The ownership rule the roles encode: every memory mutation is a proposal PR
+(write path), only human merge admits (gate), and everything that lands
+admitted state onto hardware belongs to `dev` (read path). When deciding
+where new behavior lives, route by role, not by zone.
+
 ## Job lifecycle
 
 From comment to in-place result:

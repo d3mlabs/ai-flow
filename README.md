@@ -1,16 +1,64 @@
 # ai-flow
 [![codecov](https://codecov.io/gh/d3mlabs/ai-flow/branch/main/graph/badge.svg)](https://codecov.io/gh/d3mlabs/ai-flow)
 
-GitHub-side slash commands that run the headless Cursor agent on self-hosted
-runners. Comment `/ask`, `/edit`, `/split`, `/build`, or `/learn` on an issue
-or PR and a GitHub Actions job picks it up, runs the agent on our own hardware
-(normal agent billing, fine model control, warm build environments), and lands
-the result back on the comment thread with minimal noise.
+ai-flow is the organization's learning loop: agents and humans capture
+durable lessons from the places work already happens, every lesson enters as
+a reviewable proposal, and only what a person merges becomes memory the next
+session loads. **This repo is the loop's GitHub control plane** — the slash
+commands (`/ask`, `/edit`, `/split`, `/build`, `/learn`), the reusable
+workflow that dispatches them to self-hosted runners, and the proposal
+checks. Distribution — getting admitted memory onto machines, checkouts, and
+sessions — ships inside [d3mlabs/dev](https://github.com/d3mlabs/dev), which
+also carries the local plan surface (`dev plan` — Cursor plans sync with
+GitHub issues; the issue is the canonical plan).
 
-The local half lives in [d3mlabs/dev](https://github.com/d3mlabs/dev) as
-`dev plan` — Cursor plans sync with GitHub issues (the issue is the canonical
-plan). This repo is the remote half: the reusable workflow, the Ruby command
-scripts, and the templates each repo copies.
+Comment a slash command on an issue or PR and a GitHub Actions job picks it
+up, runs the headless Cursor agent on our own hardware (normal agent
+billing, fine model control, warm build environments), and lands the result
+back on the comment thread with minimal noise.
+
+## One system, four roles
+
+```mermaid
+flowchart LR
+    subgraph surfaces [Surfaces]
+        IDE[Cursor session]
+        GH["GitHub comments<br/>/learn /build"]
+    end
+    subgraph state [State — git, two tiers]
+        RT["target repos<br/>repo tier"]
+        KT["knowledge repo<br/>org tier"]
+    end
+    AIF["ai-flow (this repo)<br/>WRITE PATH<br/>capture → propose → verify"]
+    GATE{{"human merge<br/>THE GATE<br/>admission, tiered by blast radius"}}
+    DEV["dev CLI<br/>READ PATH<br/>scaffold, distribute, materialize"]
+
+    IDE -- capture-learning skill --> RT
+    GH -- events --> AIF
+    AIF -- proposal PRs --> RT & KT
+    RT & KT --> GATE
+    GATE -- admitted diffs --> RT & KT
+    RT -- git checkout --> DEV
+    KT -- cache sync --> DEV
+    DEV -- "index rules + linked skills" --> IDE
+```
+
+- **State** is the repos themselves — nothing else holds memory. Two tiers,
+  one artifact: a *learning* (an index line plus a detail skill) lives in
+  each target repo (repo tier) or in the org's knowledge repo (org tier).
+- **Write path** is this repo: every memory mutation enters as a proposal PR,
+  from either surface. Capture, proposal, and verification — never admission.
+- **The gate** is human merge, tiered by blast radius — the only component
+  that isn't software.
+- **Read path** is `dev`: everything that scaffolds, distributes, and
+  materializes admitted state onto machines, checkouts, and sessions.
+- **Surfaces** — GitHub comments and Cursor sessions — are twins: each is
+  both a capture entry point and a retrieval endpoint. `/learn` and the
+  capture-learning skill are the same operation on different surfaces.
+
+How the roles map onto deployment zones is in
+[docs/architecture.md](docs/architecture.md); the research argument for the
+gate is the paper, [docs/paper.md](docs/paper.md).
 
 ## Command surface
 
