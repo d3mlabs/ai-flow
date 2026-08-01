@@ -48,13 +48,18 @@ module AiFlow
       T::Array[Regexp],
     )
 
-    # The variables shadowenv writes when it activates a project's toolchain.
-    # Bundler.original_env can't undo these: on the runner, shadowenv
-    # activates the .ai-flow checkout *before* bundler starts, so its
-    # variables are part of what bundler recorded as "original". Force-unset,
-    # the worktree's own shadowenv activates from a clean slate.
-    SHADOWENV_KEYS = T.let(
-      ["__shadowenv_data", "RUBY_ROOT", "RUBY_ENGINE", "RUBY_VERSION", "GEM_ROOT"].freeze,
+    # The toolchain-selection variables Bundler.original_env can't undo: on
+    # the runner they're written *before* bundler starts — shadowenv
+    # activates the .ai-flow checkout (__shadowenv_data, RUBY_*, GEM_ROOT),
+    # and an rbenv shim in the launch chain can pin a version (RBENV_VERSION,
+    # RBENV_DIR; observed in the dev#80 build pass) — so bundler recorded
+    # them as "original". Force-unset, the worktree's own activation starts
+    # from a clean slate.
+    TOOLCHAIN_KEYS = T.let(
+      [
+        "__shadowenv_data", "RUBY_ROOT", "RUBY_ENGINE", "RUBY_VERSION", "GEM_ROOT",
+        "RBENV_VERSION", "RBENV_DIR"
+      ].freeze,
       T::Array[String],
     )
 
@@ -158,9 +163,10 @@ module AiFlow
     # GEM_HOME leak in and `dev`/`bundle` in the worktree resolve the
     # harness's pins (Bundler::RubyVersionMismatch naming a Ruby the project
     # never declared). Bundler.original_env is bundler's own record of the
-    # pre-activation environment; a nil value in a spawn env hash unsets the
-    # key. This seam is agent-only on purpose: the gh/git calls inside
-    # .ai-flow legitimately run in the harness env.
+    # pre-activation environment; the toolchain-selection keys it can't see
+    # are force-unset on top (TOOLCHAIN_KEYS). A nil value in a spawn env
+    # hash unsets the key. This seam is agent-only on purpose: the gh/git
+    # calls inside .ai-flow legitimately run in the harness env.
     #
     # @return [Hash{String => String, nil}]
     sig { returns(T::Hash[String, T.nilable(String)]) }
@@ -170,7 +176,7 @@ module AiFlow
       (ENV.keys | original.keys).each do |key|
         scrub[key] = original[key] unless ENV[key] == original[key]
       end
-      SHADOWENV_KEYS.each { |key| scrub[key] = nil }
+      TOOLCHAIN_KEYS.each { |key| scrub[key] = nil }
       scrub
     end
 

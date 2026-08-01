@@ -363,6 +363,7 @@ class AiFlow::AgentTest < Minitest::Test
       "BUNDLE_GEMFILE" => "/harness/.ai-flow/Gemfile",
       "__shadowenv_data" => "harness-shadowenv-blob",
       "RUBY_ROOT" => "/harness/rubies/3.3.10",
+      "RBENV_VERSION" => "3.3.10",
     }
     saved = polluted.keys.to_h { |key| [key, ENV[key]] }
     polluted.each { |key, value| ENV[key] = value }
@@ -371,12 +372,13 @@ class AiFlow::AgentTest < Minitest::Test
     When "launching"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
-    Then "bundler keys are restored to their pre-activation values and shadowenv keys are unset"
+    Then "bundler keys are restored to their pre-activation values and toolchain keys are unset"
     env = executor.envs.fetch(0)
     env.fetch("RUBYOPT", :missing) == Bundler.original_env["RUBYOPT"]
     env.fetch("BUNDLE_GEMFILE", :missing) == Bundler.original_env["BUNDLE_GEMFILE"]
     env.fetch("__shadowenv_data", :missing).nil?
     env.fetch("RUBY_ROOT", :missing).nil?
+    env.fetch("RBENV_VERSION", :missing).nil?
 
     Cleanup
     saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
