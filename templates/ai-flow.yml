@@ -17,7 +17,7 @@ models:
 
 # Learning capture (optional):
 # - on_build: /build's opportunistic learning capture — the build pass may
-#   split learning files into a separate draft PR. Default on; set false
+#   split learning files into a separate proposal PR. Default on; set false
 #   for quiet repos.
 # learn:
 #   on_build: true

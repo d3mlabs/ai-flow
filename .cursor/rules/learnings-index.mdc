@@ -13,7 +13,7 @@ territory. Detail skills live in `.cursor/skills/learnings/<slug>/`
 org skills are pointed at wherever their channel installs them.
 
 Capture and curation go through the capture-learning skill (IDE sessions)
-or ai-flow's `/learn` (GitHub comments) — both land as draft PRs; human
+or ai-flow's `/learn` (GitHub comments) — both land as proposal PRs; human
 merge is the gate. Soft cap ~50 entries: at the cap, an addition must
 propose a retirement, a consolidation, or a glob-scoped sub-index split.
 

@@ -31,8 +31,8 @@ above — is **content the agent judges**: statements, targets, steering. So
 one flag (`--scan`) and hands the rest to the agent verbatim.
 
 Two flags `/learn` deliberately does *not* get: no `--dry`/`--apply`,
-because every capture form already **is** two-phase — the draft PR is the
-staged proposal and merge is the apply (`/split` needs explicit phases only
+because every capture form already **is** two-phase — the proposal PR is the
+staged change and merge is the apply (`/split` needs explicit phases only
 because its staging medium is the issue body itself). And no
 `--split`/routing flag, because where learnings land (same repo, another
 repo, the org tier) is target scope — rubric-judged content under this same
@@ -270,7 +270,7 @@ Refusals, verbatim:
 Captures a **learning** — a lesson distilled from feedback, stored as an
 index line in `.cursor/rules/learnings-index.mdc` (always-on awareness) plus
 a detail skill under `.cursor/skills/learnings/<slug>/` (loaded on demand).
-Learnings always land as a **draft PR** the human merges — the curation gate
+Learnings always land as a **proposal PR** the human merges — the curation gate
 that keeps the always-on tier trustworthy. `/learn` is the GitHub-comment
 twin of dev's `capture-learning` skill: same distillation rubric, same
 output shape, one pipeline behind both.
@@ -287,9 +287,9 @@ nothing generalizes it drafts nothing and says so (a common, valid outcome).
 You already distilled the lesson; the agent only formats it into the
 two-tier shape, dedups, and applies the scope rubric. Works from any
 surface. Its source is the single comment, so each dictation opens its own
-draft PR (branch `ai/learn-c<comment-id>`):
+proposal PR (branch `ai/learn-c<comment-id>`):
 
-> ✅ **/learn** — drafted 1 learning in a draft PR: https://github.com/owner/repo/pull/N
+> ✅ **/learn** — drafted 1 learning in a proposal PR: https://github.com/owner/repo/pull/N
 > - `design/factory-over-class-methods`
 
 ### `/learn` — bare sweep
@@ -299,9 +299,9 @@ threads, and conversation (the diff is in the checkout, so the agent reads
 what the feedback is *about*); on an issue, the body and comment discussion.
 Re-running on the same surface **refines that surface's open draft** (branch
 `ai/learn-pr-<n>` / `ai/learn-issue-<n>`) instead of duplicating — the push
-updates the existing draft PR:
+updates the existing proposal PR:
 
-> ✅ **/learn** — refined 2 learnings in a draft PR: https://github.com/owner/repo/pull/N
+> ✅ **/learn** — refined 2 learnings in a proposal PR: https://github.com/owner/repo/pull/N
 
 With nothing that generalizes:
 
@@ -329,7 +329,7 @@ Curation, not capture: moves an existing learning to the org knowledge repo
 (`knowledge_repo:` in `.github/ai-flow.yml`; without it the command refuses
 with a pointer). `<slug>` is the learning's name — its skill folder; a
 domain prefix (`ruby/typed-errors`) is accepted and dropped. Unknown slugs
-refuse with a near-match listing. Two paired draft PRs:
+refuse with a near-match listing. Two paired proposal PRs:
 
 - **the org draft** (an agent pass in a knowledge-repo clone adapts the
   learning to org-general wording and dedups against the org corpus), and
@@ -347,7 +347,7 @@ off with `learn: { on_build: false }` in `.github/ai-flow.yml`): the build
 agent writes learning files straight into the code worktree while its
 context is hot, and the commit step splits them out of the code commit —
 same mechanics as the workflows exclusion — landing them on the surface's
-own learning branch as a **separate draft PR**. The result panel gets one
+own learning branch as a **separate proposal PR**. The result panel gets one
 🧠 line per outcome. Cross-repo builds (org-wide plans) skip capture. A
 failed capture warns in the panel but never fails the code build.
 
@@ -361,9 +361,9 @@ means "codify the lesson — don't touch this PR"** (general feedback worth
 keeping that needs no code change). Both share the surface's learning
 branch, so either order refines the same draft.
 
-### Draft tracking (the linked-update rule)
+### Proposal tracking (the linked-update rule)
 
-Every draft learning PR carries a `learned-from: <repo>#<n>
+Every learning proposal PR carries a `learned-from: <repo>#<n>
 (build-sweep|learn-sweep|scan|dictated|promote)` marker naming its source
 and form, plus the branch convention `ai/learn-<source>`. Capture-form
 commands re-running on the same source surface **refine that surface's open
@@ -378,7 +378,7 @@ duplicates:
 | `/learn <statement>` | new draft each time — its source is the single comment |
 
 Non-capture commands never touch learning drafts. Once the source surface
-goes quiet, the draft PR is itself an ordinary ai-flow surface — `/build`
+goes quiet, the proposal PR is itself an ordinary ai-flow surface — `/build`
 iterates the wording, review threads sweep it, `/ask` challenges a
 generalization — so nothing is orphaned.
 

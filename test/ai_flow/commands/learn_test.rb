@@ -339,7 +339,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     run_learn(github: github, executor: executor, body: "/learn --promote ruby/typed-errors",
       agent: agent, workdir: dir)
 
-    Then "the agent saw the verbatim learning; the knowledge repo was cloned; both draft PRs opened"
+    Then "the agent saw the verbatim learning; the knowledge repo was cloned; both proposal PRs opened"
     agent.prompts.first.include?("Raise typed errors, never bare strings.")
     agent.prompts.first.include?("[ruby/typed-errors]")
     executor.command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/knowledge") }

@@ -521,7 +521,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     +- [design/one-seam] One seam to the CLI. → .cursor/skills/learnings/one-seam/
   PATCH
 
-  test "an issue /build carries the capture rubric and lands extracted learnings as a separate draft PR" do
+  test "an issue /build carries the capture rubric and lands extracted learnings as a separate proposal PR" do
     Given "an issue build whose pass staged both code and learning files"
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
@@ -540,7 +540,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
     github.calls.include?([:create_pull_request, REPO, "ai/learn-issue-7", "main"])
     github.pull_request_bodies.fetch(1).include?("learned-from: #{REPO}#7 (build-sweep)")
-    github.comment_edits.fetch(55).include?("🧠 drafted 1 learning in a draft learning PR")
+    github.comment_edits.fetch(55).include?("🧠 drafted 1 learning in a learning proposal PR")
     github.comment_edits.fetch(55).include?("`one-seam`")
 
     Cleanup
@@ -566,7 +566,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     executor.command_lines.any? { |line| line.start_with?("git checkout origin/ai/learn-pr-7 -- .cursor/") }
     github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
     executor.command_lines.any? { |line| line.include?("push -u origin ai/learn-pr-7") }
-    github.comment_edits.fetch(55).include?("🧠 refined 1 learning in a draft learning PR")
+    github.comment_edits.fetch(55).include?("🧠 refined 1 learning in a learning proposal PR")
 
     Cleanup
     nil
@@ -586,7 +586,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     Then "the draft is closed and the panel says why"
     github.calls.include?([:close_pull_request, REPO, 500])
-    github.comment_edits.fetch(55).include?("🧠 closed the draft learning PR")
+    github.comment_edits.fetch(55).include?("🧠 closed the learning proposal PR")
     github.comment_edits.fetch(55).include?("dissolved its generalization")
 
     Cleanup

@@ -309,8 +309,9 @@ module AiFlow
       )
     end
 
-    # @param draft [Boolean] open as a draft (learning PRs are drafts — the
-    #   human merge is the curation gate, never an auto-merge)
+    # @param draft [Boolean] open in GitHub's draft state (unused by the
+    #   learning pipeline — proposals open as ordinary PRs so review requests
+    #   are not muted; held in reserve as a noise throttle)
     # @return [PullRequest] the created PR
     sig do
       params(owner_repo: String, title: String, body: String, head: String, base: String, draft: T::Boolean)
@@ -340,7 +341,7 @@ module AiFlow
     end
 
     # Close a PR without merging — how a later pass retires a dissolved
-    # draft learning PR.
+    # learning proposal PR.
     #
     # @return [void]
     sig { params(owner_repo: String, number: Integer).void }

@@ -67,7 +67,7 @@ Commands are recognized only at the start of a comment line. Quote-reply
 The consistency rule: `/ask` and `/edit` always operate on the document (the
 issue body or the PR description); `/build` always operates on code (open a
 PR from an issue, iterate on the branch from a PR); `/learn` always operates
-on memory (draft learning PRs), never the surface's code.
+on memory (learning proposal PRs), never the surface's code.
 
 | Command | One line |
 |---|---|
@@ -77,7 +77,7 @@ on memory (draft learning PRs), never the surface's code.
 | `/build` (issue) | Builds the plan into a PR on branch `ai/<n>-<slug>` — state-aware: refuses on a staged split spec, notes open sub-issues. |
 | `/build [instruction]` (PR) | Iterates on the head branch, sweeping unresolved threads + fresh comments; replies per thread with disposition + commit link. |
 | `/build --split` (issue) | Orchestrates `/build` across sub-issues in dependency waves with a live checklist; skips undrivable nodes with warnings. |
-| `/learn [statement]` | Captures durable learnings into a draft PR — dictated, or a bare sweep of the surface's threads; never touches the surface's code. |
+| `/learn [statement]` | Captures durable learnings into a proposal PR — dictated, or a bare sweep of the surface's threads; never touches the surface's code. |
 | `/learn --scan [context…]` | Surveys the codebase + docs instead of a discussion: seeds/refreshes architecture digests and distills visible practices. |
 | `/learn --promote <slug>` | Promotes a repo-local learning to the org knowledge repo — paired drafts: the org addition plus the repo-local removal. |
 
@@ -131,7 +131,7 @@ around that memory, a full learning system with the weights never moving:
    `learn: { on_build: false }` in `.github/ai-flow.yml` opts out) — never
    as a cold re-ingest step. The written form is an index line (one
    sentence: the retrieval cue) plus a detail skill (the full lesson),
-   landed as a draft PR.
+   landed as a proposal PR.
 4. **Behavior change.** A memory only counts if it's retrieved at the
    moment it applies.[^tulving1973] The always-on index rides in every
    session's context
@@ -143,7 +143,7 @@ around that memory, a full learning system with the weights never moving:
    on, because a memory that is never retrieved is a memory worth
    forgetting.[^bjork1992]
 
-The human gate — every learning lands as a *draft* PR, merged by a person —
+The human gate — every learning lands as a *proposal* PR, merged by a person —
 is not training wheels; it is the missing half of learning, supplied from
 outside. Humans learn the way the model was trained: by mimicry. An infant
 imitates speech and gesture long before understanding either,[^meltzoff1977]
@@ -175,9 +175,9 @@ full gate; the trajectory is this paragraph, not code.)
 
 Learnings graduate: `/learn --promote <slug>` lifts a repo-local learning to
 the org tier — `knowledge_repo:` in `.github/ai-flow.yml` names the org's
-knowledge repo — as paired drafts, the org addition and the repo-local
+knowledge repo — as paired proposals, the org addition and the repo-local
 removal that merges after it. The forms, branch conventions, and the
-draft-tracking rules live in [docs/commands.md](docs/commands.md#learn).
+proposal-tracking rules live in [docs/commands.md](docs/commands.md#learn).
 
 ## Layout
 
