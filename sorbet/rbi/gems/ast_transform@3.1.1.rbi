@@ -186,13 +186,15 @@ class ASTTransform::Layout
 
   # The line number currently being written; the next fresh line would be +cursor + 1+.
   #
-  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:15
+  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:16
   def cursor; end
 
-  # Appends +text+ to the current line with a `; ` separator. The last line is never blank here: padding blanks
-  # are only created inside +place+, which immediately overwrites the padded line.
+  # Appends +text+ to the current line with a `; ` separator — unless the current line is sealed, in which case
+  # the text opens a fresh line (alignment degrades by one more line; validity is preserved). The last line is
+  # never blank here: padding blanks are only created inside +place+, which immediately overwrites the padded
+  # line.
   #
-  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:45
+  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:53
   def pack(text); end
 
   # Places +text+ at +target_line+ when the cursor hasn't passed it; otherwise packs onto the current line.
@@ -201,23 +203,26 @@ class ASTTransform::Layout
   # visually close to the source. Packed text ignores the column, as do continuation lines (they keep their own
   # relative indentation).
   #
-  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:24
-  def place(target_line, text, column: T.unsafe(nil)); end
+  # +seal+ declares the text's last line unextendable (the caller's property — e.g. it terminates a heredoc,
+  # whose terminator must stand alone): a subsequent pack opens a fresh line instead of joining it.
+  #
+  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:28
+  def place(target_line, text, column: T.unsafe(nil), seal: T.unsafe(nil)); end
 
   # Appends +text+ on a new line unconditionally — for text that must never be `;`-packed after a statement
   # (e.g. keywords).
   #
-  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:39
+  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:44
   def place_on_fresh_line(text); end
 
   # @return [String] the laid-out text, with a trailing newline.
   #
-  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:54
+  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:63
   def to_source; end
 
   private
 
-  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:60
+  # pkg:gem/ast_transform#lib/ast_transform/layout.rb:69
   def indented(text, column); end
 end
 
@@ -259,45 +264,45 @@ class ASTTransform::LineAlignedEmitter
 
   private
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:212
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:215
   def assert_no_custom_types(node, source_path); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:139
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:141
   def block_assignment?(node); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:196
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:199
   def closer_column(node); end
 
   # The line the container's `end`/`}` occupies in the source, when known.
   #
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:191
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:194
   def closer_line(node); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:182
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:185
   def container_body(node); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:153
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:156
   def container_delimiters(node, renderer); end
 
   # Emits a container body that may be a bare :ensure/:rescue node (their begin/end context comes from the
   # surrounding def/block/kwbegin, so the keywords must be emitted inline, aligned like statements).
   #
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:80
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:82
   def emit_body(body, layout, renderer); end
 
   # Renders a container's opener and closer from the node with its body emptied, then recurses into the body so
   # nested statements align.
   #
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:146
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:148
   def emit_container(node, layout, renderer); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:88
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:90
   def emit_ensure(node, layout, renderer); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:106
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:108
   def emit_resbody(node, layout, renderer); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:95
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:97
   def emit_rescue(node, layout, renderer); end
 
   # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:70
@@ -306,28 +311,28 @@ class ASTTransform::LineAlignedEmitter
   # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:66
   def emit_statements(statements, layout, renderer); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:167
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:170
   def empty_container(node); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:130
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:132
   def keyword_column(node); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:125
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:127
   def keyword_line(node); end
 
   # Keywords (rescue/ensure/else) cannot be `;`-packed after a statement; when their line is taken they go on a
   # fresh line instead.
   #
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:117
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:119
   def place_keyword(layout, target_line, keyword, column: T.unsafe(nil)); end
 
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:135
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:137
   def recursive_container?(node); end
 
   # Loc-less :begin nodes in statement position (e.g. a lowered thunk in a single-statement container body, carried
   # with its placement) are grouping, not structure: flatten them so each inner statement is laid out independently.
   #
-  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:203
+  # pkg:gem/ast_transform#lib/ast_transform/line_aligned_emitter.rb:206
   def statements_of(body); end
 end
 
@@ -480,6 +485,17 @@ class ASTTransform::StatementRenderer
   # pkg:gem/ast_transform#lib/ast_transform/statement_renderer.rb:54
   def aligned_render(node); end
 
+  # Whether +render+ must be the last text on its final line: a render ending on a heredoc terminator (Unparser
+  # falls back to `<<-HEREDOC` form when its quoted-string round-trip fails) cannot have anything `;`-packed
+  # after it — the terminator must stand alone, so a join unterminates the heredoc. Probed by re-parse, the same
+  # verification style as +compress_to_single_line+, behind a cheap textual gate: only a heredoc makes a last
+  # line unextendable, and every heredoc opener contains +<<+. A false positive (the probe failing for another
+  # reason, e.g. an isolated container opener carrying a heredoc argument) costs one line of alignment, never
+  # correctness.
+  #
+  # pkg:gem/ast_transform#lib/ast_transform/statement_renderer.rb:72
+  def line_terminal?(render); end
+
   # @param node [Parser::AST::Node] the statement to render.
   # @return [String] Unparser's render, informed of the tree's locals.
   #
@@ -488,8 +504,11 @@ class ASTTransform::StatementRenderer
 
   private
 
-  # pkg:gem/ast_transform#lib/ast_transform/statement_renderer.rb:67
+  # pkg:gem/ast_transform#lib/ast_transform/statement_renderer.rb:89
   def compress_to_single_line(render); end
+
+  # pkg:gem/ast_transform#lib/ast_transform/statement_renderer.rb:82
+  def parses?(source); end
 
   class << self
     # Builds a renderer for statements of +node+'s tree, holding every local bound anywhere in it — an

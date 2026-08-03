@@ -3,7 +3,7 @@ GEM
   specs:
     ansi (1.6.0)
     ast (2.4.3)
-    ast_transform (3.1.0)
+    ast_transform (3.1.1)
       parser (>= 3.3)
       prism (>= 1.5)
       unparser (>= 0.8)

@@ -329,17 +329,14 @@ class AiFlow::Commands::LearnTest < Minitest::Test
   # ---- Capture-initiated org routing (the PROMOTE contract, #35) ----
 
   # Writes a learning (skill + index line) into the launch workdir — the
-  # per-run capture worktree — via FakeAgent's launch block. Strings are
-  # joined from newline-free pieces: the AST transform mis-emits
-  # interpolated strings that carry newlines (ast-transform#16).
+  # per-run capture worktree — via FakeAgent's launch block.
   def write_learning(dir, slug, index_domain: "tooling")
     skill_dir = File.join(dir, ".cursor", "skills", "learnings", slug)
     FileUtils.mkdir_p(skill_dir)
-    skill_lines = ["---", "name: #{slug}", "---", "The #{slug} lesson.", ""]
-    File.write(File.join(skill_dir, "SKILL.md"), skill_lines.join("\n"))
+    File.write(File.join(skill_dir, "SKILL.md"), "---\nname: #{slug}\n---\nThe #{slug} lesson.\n")
     FileUtils.mkdir_p(File.join(dir, ".cursor", "rules"))
-    line = "- [#{index_domain}/#{slug}] The #{slug} cue. → .cursor/skills/learnings/#{slug}/"
-    File.open(File.join(dir, INDEX), "a") { |index| index.puts(line) }
+    line = "- [#{index_domain}/#{slug}] The #{slug} cue. → .cursor/skills/learnings/#{slug}/\n"
+    File.open(File.join(dir, INDEX), "a") { |index| index.write(line) }
   end
 
   def org_configured_workdir(dir)
