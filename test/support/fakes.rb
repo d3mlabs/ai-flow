@@ -4,6 +4,23 @@
 # In-memory stand-ins for the network/process boundaries, so command flows are
 # exercised end to end with real parsing/diffing and only gh/agent faked.
 
+# Cans one capture result for the `dev learnings invariants` shell-out
+# OrgInvariants makes (the dev CLI is a subprocess boundary, same standing as
+# gh/git); records every argv it was asked for.
+class FakeInvariantsExecutor < AiFlow::Executor
+  attr_reader :argvs
+
+  def initialize(stdout: "", stderr: "", ok: true)
+    @result = [stdout, stderr, ok]
+    @argvs = []
+  end
+
+  def capture(*argv, stdin: nil, chdir: nil, env: {})
+    @argvs << argv
+    @result
+  end
+end
+
 # Records every GitHub call; issues are seeded and mutated in memory.
 # Subclasses the real class so sorbet-runtime's sig checks accept it at the
 # injection seams; every method the tests reach is overridden here.
