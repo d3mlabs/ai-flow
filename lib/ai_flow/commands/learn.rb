@@ -748,6 +748,7 @@ module AiFlow
         existing = @github.open_pull_request_for_head(@context.owner_repo, source.branch)
 
         outcome = in_worktree(source.branch, refine: !existing.nil?) do |worktree|
+          scaffold_index(worktree)
           @agent.launch(prompt: prompt, workdir: worktree, command: Command::Learn.new, force: true)
           # The agent may have run close to the token's lifetime; the write
           # phase (commit, push, PR) starts on a fresh mint.
@@ -761,6 +762,22 @@ module AiFlow
         end
 
         @result_writer.write(@context, [[segment, learn_result(outcome)]])
+      end
+
+      # Unseeded repos get dev's canonical scaffold before the capture pass:
+      # an agent-improvised index lacks the `alwaysApply: true` front matter,
+      # so its learnings are never loaded in IDE sessions — written, gated,
+      # merged, and never read (#33). Scaffolding is materialization, the
+      # read path's job: dev owns the template (Dev::Learnings::Layout), and
+      # its init is write-once, so a seeded repo is never touched.
+      #
+      # @param worktree [String] the capture worktree
+      # @return [void]
+      sig { params(worktree: String).void }
+      def scaffold_index(worktree)
+        return if File.exist?(File.join(worktree, INDEX_PATH))
+
+        run!(["dev", "learnings", "init"], chdir: worktree)
       end
 
       # @return [String] the capture pass's prompt

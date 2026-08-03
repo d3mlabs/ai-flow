@@ -232,6 +232,39 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     nil
   end
 
+  test "a capture on an unseeded repo scaffolds the index via dev before the write phase" do
+    Given "a worktree with no learnings index (the fake never materializes one)"
+    github = FakeGitHub.new
+    executor = RecordingExecutor.new(staged: [INDEX, SKILL])
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods")
+
+    Then "dev learnings init ran, ahead of the commit phase's staged diff"
+    init_at = executor.command_lines.index("dev learnings init")
+    diff_at = executor.command_lines.index { |line| line.start_with?("git diff --cached") }
+    !init_at.nil?
+    init_at < diff_at
+
+    Cleanup
+    nil
+  end
+
+  test "a capture on a seeded repo never shells out to dev learnings init" do
+    Given "a worktree already carrying a learnings index (planted by the fake)"
+    github = FakeGitHub.new
+    executor = WorktreePlantingExecutor.new(staged: [INDEX, SKILL])
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods")
+
+    Then "no scaffold call was made"
+    executor.command_lines.none? { |line| line.include?("dev learnings init") }
+
+    Cleanup
+    nil
+  end
+
   test "the index-only edit is not counted as a named learning in the panel" do
     Given "an agent that only touched the index (a revision), no skill folder"
     github = FakeGitHub.new
