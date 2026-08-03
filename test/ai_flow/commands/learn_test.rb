@@ -28,6 +28,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
       @staged_queue = staged_queue
       @fail_on = fail_on
       @command_lines = []
+      @envs = []
       @refreshes = 0
     end
 
@@ -37,10 +38,16 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
+      @envs << env
       return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
 
       out = argv.take(4) == %w[git diff --cached --name-only] ? "#{next_staged.join("\n")}\n" : ""
       [out, "", true]
+    end
+
+    # The env the first command line containing +needle+ was spawned with.
+    def env_for(needle)
+      @envs.fetch(@command_lines.index { |line| line.include?(needle) })
     end
 
     private
@@ -245,11 +252,14 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     When "learning"
     run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods")
 
-    Then "dev learnings init ran, ahead of the commit phase's staged diff"
+    Then "dev learnings init ran with the harness scrub, ahead of the commit phase's staged diff"
     init_at = executor.command_lines.index("dev learnings init")
     diff_at = executor.command_lines.index { |line| line.start_with?("git diff --cached") }
     !init_at.nil?
     init_at < diff_at
+    # The dev child must resolve its own toolchain, never the dispatcher's
+    # bundler env (#44) — the scrub always carries the toolchain unsets.
+    executor.env_for("dev learnings init").fetch("RBENV_VERSION", :missing).nil?
 
     Cleanup
     nil

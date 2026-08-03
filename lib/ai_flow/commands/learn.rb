@@ -884,7 +884,11 @@ module AiFlow
       def scaffold_index(worktree)
         return if File.exist?(File.join(worktree, INDEX_PATH))
 
-        run!(["dev", "learnings", "init"], chdir: worktree)
+        # The dev child resolves its own toolchain, never the dispatcher's
+        # bundler env (#44) — and unlike the invariants injection, this call
+        # is load-bearing: run! raising under a leaked env would fail the
+        # whole capture.
+        run!(["dev", "learnings", "init"], chdir: worktree, env: HarnessEnv.scrub)
       end
 
       # @return [String] the capture pass's prompt
@@ -1292,12 +1296,15 @@ module AiFlow
 
       # @param argv [Array<String>] command and arguments
       # @param chdir [String] working directory
+      # @param env [Hash{String => String, nil}] spawn-env overlay (the
+      #   harness scrub for dev CLI children; empty for git/gh, which
+      #   legitimately run in the harness env)
       # @raise [GitHub::Error] when the command fails
-      sig { params(argv: T::Array[String], chdir: String).void }
-      def run!(argv, chdir:)
+      sig { params(argv: T::Array[String], chdir: String, env: T::Hash[String, T.nilable(String)]).void }
+      def run!(argv, chdir:, env: {})
         # T.unsafe: splatting a runtime-built argv into capture's rest param
         # is beyond Sorbet's static splat support (srb.help/7019).
-        _out, err, ok = T.unsafe(@executor).capture(*argv, chdir: chdir)
+        _out, err, ok = T.unsafe(@executor).capture(*argv, chdir: chdir, env: env)
         raise GitHub::Error, "#{argv.take(2).join(" ")} failed: #{err.strip}" unless ok
       end
     end

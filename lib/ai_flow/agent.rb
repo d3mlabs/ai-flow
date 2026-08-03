@@ -48,21 +48,6 @@ module AiFlow
       T::Array[Regexp],
     )
 
-    # The toolchain-selection variables Bundler.original_env can't undo: on
-    # the runner they're written *before* bundler starts — shadowenv
-    # activates the .ai-flow checkout (__shadowenv_data, RUBY_*, GEM_ROOT),
-    # and an rbenv shim in the launch chain can pin a version (RBENV_VERSION,
-    # RBENV_DIR; observed in the dev#80 build pass) — so bundler recorded
-    # them as "original". Force-unset, the worktree's own activation starts
-    # from a clean slate.
-    TOOLCHAIN_KEYS = T.let(
-      [
-        "__shadowenv_data", "RUBY_ROOT", "RUBY_ENGINE", "RUBY_VERSION", "GEM_ROOT",
-        "RBENV_VERSION", "RBENV_DIR"
-      ].freeze,
-      T::Array[String],
-    )
-
     # @param executor [AiFlow::Executor]
     sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
@@ -156,28 +141,14 @@ module AiFlow
 
     private
 
-    # The env overlay that undoes the harness's own toolchain activation, so
-    # the agent — and every shell it opens in the project worktree — sees the
-    # project's Ruby, not .ai-flow's (ai-flow#38). The dispatcher runs under
-    # `bundle exec` inside .ai-flow; without this, RUBYOPT/BUNDLE_GEMFILE/
-    # GEM_HOME leak in and `dev`/`bundle` in the worktree resolve the
-    # harness's pins (Bundler::RubyVersionMismatch naming a Ruby the project
-    # never declared). Bundler.original_env is bundler's own record of the
-    # pre-activation environment; the toolchain-selection keys it can't see
-    # are force-unset on top (TOOLCHAIN_KEYS). A nil value in a spawn env
-    # hash unsets the key. This seam is agent-only on purpose: the gh/git
-    # calls inside .ai-flow legitimately run in the harness env.
+    # The agent — and every shell it opens in the project worktree — must see
+    # the project's toolchain, not .ai-flow's (#38); the scrub itself lives
+    # in HarnessEnv, shared with the dev CLI shell-outs (#44).
     #
     # @return [Hash{String => String, nil}]
     sig { returns(T::Hash[String, T.nilable(String)]) }
     def worktree_env
-      original = Bundler.original_env
-      scrub = T.let({}, T::Hash[String, T.nilable(String)])
-      (ENV.keys | original.keys).each do |key|
-        scrub[key] = original[key] unless ENV[key] == original[key]
-      end
-      TOOLCHAIN_KEYS.each { |key| scrub[key] = nil }
-      scrub
+      HarnessEnv.scrub
     end
 
     # The AI_FLOW_MODEL override coerced at its boundary: blank is unset.
