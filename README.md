@@ -176,7 +176,9 @@ full gate; the trajectory is this paragraph, not code.)
 Learnings graduate: `/learn --promote <slug>` lifts a repo-local learning to
 the org tier — `knowledge_repo:` in `.github/ai-flow.yml` names the org's
 knowledge repo — as paired proposals, the org addition and the repo-local
-removal that merges after it. The forms, branch conventions, and the
+removal that merges after it. Capture passes can initiate the same move
+themselves by declaring `PROMOTE: <slug>` in their output — routing changes,
+the human gate doesn't. The forms, branch conventions, and the
 proposal-tracking rules live in [docs/commands.md](docs/commands.md#learn).
 
 ## Layout

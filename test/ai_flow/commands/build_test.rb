@@ -543,6 +543,65 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  # Materializes the landing worktree on `git apply` (real files, so the
+  # PROMOTE routing can read and prune them) and sequences the post-apply
+  # staged diffs: first the org clone's commit, then the pruned landing
+  # commit.
+  class PromotingExecutor < RecordingExecutor
+    def initialize(landing_files:, post_apply_staged:, **kwargs)
+      super(**kwargs)
+      @landing_files = landing_files
+      @post_apply_staged = post_apply_staged.dup
+    end
+
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      if argv.take(2) == %w[git apply]
+        @landing_files.each do |path, content|
+          full = File.join(chdir.to_s, path)
+          FileUtils.mkdir_p(File.dirname(full))
+          File.write(full, content)
+        end
+      end
+      result = super
+      if @applied && argv.take(4) == %w[git diff --cached --name-only]
+        return ["#{(@post_apply_staged.shift || []).join("\n")}\n", "", true]
+      end
+
+      result
+    end
+  end
+
+  test "a /build capture declaring PROMOTE routes the lesson to the knowledge repo" do
+    Given "a knowledge-repo config and a build pass that drafted one lesson, declared org-tier"
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "knowledge_repo: d3mlabs/knowledge\n")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = PromotingExecutor.new(
+      capture_patch: LEARNING_PATCH,
+      landing_files: {
+        ".cursor/rules/learnings-index.mdc" =>
+          "- [design/one-seam] One seam to the CLI. → .cursor/skills/learnings/one-seam/\n",
+        ".cursor/skills/learnings/one-seam/SKILL.md" => "---\nname: one-seam\n---\nOne seam.\n",
+      },
+      post_apply_staged: [["index.md", "skills/one-seam/SKILL.md"], []],
+    )
+    agent = FakeAgent.new(["done\nPROMOTE: one-seam", "placed under design"])
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent, workdir: dir)
+
+    Then "the code PR opened; the lesson went to the knowledge repo, not a repo learning PR"
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+    github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-one-seam", "main"])
+    github.calls.none? { |call| call.is_a?(Array) && call.first == :create_pull_request && call.fetch(2) == "ai/learn-issue-7" }
+    github.comment_edits.fetch(55).include?("🌐 `one-seam` → org-tier proposal on d3mlabs/knowledge")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a PR iteration's capture refines the surface's open learning draft (linked update)" do
     Given "a PR iteration with an open ai/learn-pr-7 draft and a pass that re-staged learning files"
     github = FakeGitHub.new

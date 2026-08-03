@@ -48,6 +48,14 @@ module AiFlow
       SKILLS_DIR = ".cursor/skills/learnings"
       INDEX_PATH = ".cursor/rules/learnings-index.mdc"
 
+      # The declarative org-routing contract (#35): a capture pass drafts an
+      # org-worthy lesson as ordinary learning files and declares it on a
+      # final output line — `PROMOTE: slug-one, slug-two`. Parsing keys on
+      # the contract line, never on prose (same shape as the origin-firing
+      # check's FIRED line); the last declaration wins when a pass rambles
+      # through several.
+      PROMOTE_LINE = T.let(/^PROMOTE:\s*(.+?)\s*$/, Regexp)
+
       # Learning artifacts live under these trees — the per-repo layout, then
       # the org knowledge repo's root layout (index.md + skills/). The panel
       # names what changed by reading the staged file list, never by trusting
@@ -375,9 +383,11 @@ module AiFlow
       # pushed), or close a dissolved draft (seeded files deleted by the
       # pass). Best-effort by contract: capture never fails the code build.
       #
+      # @param result [String, nil] the build pass's agent output — carries
+      #   the PROMOTE line when the pass declared an org-tier lesson (#35)
       # @return [String, nil] a panel note, nil when there was nothing to land
-      sig { returns(T.nilable(String)) }
-      def land_capture
+      sig { params(result: T.nilable(String)).returns(T.nilable(String)) }
+      def land_capture(result: nil)
         # Consume the capture: a Build instance is reused across --split
         # sub-builds, and one build's capture must not haunt the next.
         capture = @capture
@@ -389,7 +399,7 @@ module AiFlow
         return close_dissolved_draft(existing) if patch.nil? && existing
         return nil if patch.nil?
 
-        note = land_patch(patch, existing, capture.source)
+        note = land_patch(patch, existing, capture.source, result)
         $stdout.puts note if note
         note
       rescue GitHub::Error => e
@@ -537,7 +547,7 @@ module AiFlow
         skill_path = File.join(@workdir, SKILLS_DIR, slug, "SKILL.md")
         return refuse(segment, unknown_slug_message(slug)) unless File.exist?(skill_path)
 
-        org = promote_into_org(slug, knowledge_repo, File.read(skill_path))
+        org = promote_into_org(slug, knowledge_repo, File.read(skill_path), index_line: index_line_for(slug))
         removal = drop_local_entry(slug, org.pr)
         @result_writer.write(@context, [[segment, promote_result(slug, knowledge_repo, org, removal)]])
       end
@@ -582,15 +592,16 @@ module AiFlow
       #
       # @return [Promotion]
       sig do
-        params(slug: String, knowledge_repo: String, skill_text: String)
+        params(slug: String, knowledge_repo: String, skill_text: String, index_line: T.nilable(String))
           .returns(Promotion)
       end
-      def promote_into_org(slug, knowledge_repo, skill_text)
+      def promote_into_org(slug, knowledge_repo, skill_text, index_line:)
         branch = "ai/learn-promote-#{@context.owner_repo.split("/").last}-#{slug}"
         existing = @github.open_pull_request_for_head(knowledge_repo, branch)
         in_clone(knowledge_repo, branch, refine: !existing.nil?) do |clone|
           @agent.launch(
-            prompt: promote_prompt(slug, knowledge_repo, skill_text), workdir: clone, command: Command::Learn.new, force: true,
+            prompt: promote_prompt(slug, knowledge_repo, skill_text, index_line),
+            workdir: clone, command: Command::Learn.new, force: true,
           )
           @executor.refresh_auth!
           slugs = commit_learnings(clone, message: "ai-flow /learn: promote #{slug} to the org tier")
@@ -603,13 +614,16 @@ module AiFlow
       end
 
       # @return [String] the promotion pass's prompt
-      sig { params(slug: String, knowledge_repo: String, skill_text: String).returns(String) }
-      def promote_prompt(slug, knowledge_repo, skill_text)
+      sig do
+        params(slug: String, knowledge_repo: String, skill_text: String, index_line: T.nilable(String))
+          .returns(String)
+      end
+      def promote_prompt(slug, knowledge_repo, skill_text, index_line)
         <<~PROMPT
-          You are ai-flow, promoting a repo-local learning to the org knowledge tier in this checkout of #{knowledge_repo} (layout: `index.md` at the root, detail skills at `skills/<slug>/SKILL.md`).
+          You are ai-flow, promoting a learning to the org knowledge tier in this checkout of #{knowledge_repo} (layout: `index.md` at the root, detail skills at `skills/<slug>/SKILL.md`).
 
           THE LEARNING, verbatim from #{@context.owner_repo}:
-          Index line: #{index_line_for(slug) || "(none found — derive one from the skill)"}
+          Index line: #{index_line || "(none found — derive one from the skill)"}
           <<<SKILL>>>
           #{skill_text}
           <<<END SKILL>>>
@@ -622,10 +636,12 @@ module AiFlow
         PROMPT
       end
 
-      # @return [String, nil] the learning's line in this repo's index
-      sig { params(slug: String).returns(T.nilable(String)) }
-      def index_line_for(slug)
-        path = File.join(@workdir, INDEX_PATH)
+      # @param root [String] where to read the index — the job checkout for
+      #   --promote, the capture worktree for PROMOTE-routed lessons
+      # @return [String, nil] the learning's line in that root's index
+      sig { params(slug: String, root: String).returns(T.nilable(String)) }
+      def index_line_for(slug, root: @workdir)
+        path = File.join(root, INDEX_PATH)
         return nil unless File.exist?(path)
 
         File.readlines(path).find { |line| line.include?("learnings/#{slug}/") }&.strip
@@ -721,17 +737,106 @@ module AiFlow
       def promote_result(slug, knowledge_repo, org, removal)
         verb = org.refined? ? "refined the open org draft" : "opened an org draft"
         lines = ["✅ **/learn --promote** — `#{slug}` → #{knowledge_repo}: #{verb} #{org.pr.html_url}"]
-        lines <<
-          case removal
-          when Removal::Failed
-            "⚠️ the paired repo-local removal failed: #{removal.error}"
-          when Removal::Opened
-            "🧹 paired removal draft in #{@context.owner_repo}: #{removal.pr.html_url} — " \
-              "merge after the org PR lands and the knowledge sync ships it."
-          else
-            T.absurd(removal)
-          end
+        lines << removal_note(removal)
         lines.join("\n")
+      end
+
+      # @return [String]
+      sig { params(removal: Removal).returns(String) }
+      def removal_note(removal)
+        case removal
+        when Removal::Failed
+          "⚠️ the paired repo-local removal failed: #{removal.error}"
+        when Removal::Opened
+          "🧹 paired removal draft in #{@context.owner_repo}: #{removal.pr.html_url} — " \
+            "merge after the org PR lands and the knowledge sync ships it."
+        else
+          T.absurd(removal)
+        end
+      end
+
+      # ---- Capture-initiated org routing (the PROMOTE contract, #35) ----
+      # Capture stays a proposal source, never an admission path: routed
+      # lessons are ordinary PRs on the knowledge repo, its caller runs the
+      # proposal checks on them, and admission stays human merge with
+      # org-tier sign-off. This widens who initiates promotion, not what
+      # promotion is.
+
+      # Routes the pass's declared org-tier lessons through the promotion
+      # machinery: org proposal first, prune the local files only on
+      # success — a failed routing leaves the lesson repo-local instead of
+      # losing it, and never fails the capture.
+      #
+      # @param worktree [String] the capture worktree, after the agent pass
+      # @param agent_output [String] the pass's result (carries the
+      #   PROMOTE line)
+      # @return [Array<String>] panel note lines, one per declared slug
+      sig { params(worktree: String, agent_output: String).returns(T::Array[String]) }
+      def route_promotions(worktree, agent_output)
+        slugs = declared_promotions(agent_output)
+        return [] if slugs.empty?
+
+        knowledge_repo = RepoConfig.load(@workdir).knowledge_repo
+        unless knowledge_repo
+          return slugs.map do |slug|
+            "ℹ️ `#{slug}` was judged org-tier, but no `knowledge_repo:` is configured in " \
+              "`#{RepoConfig::PATH}` — kept repo-local."
+          end
+        end
+
+        slugs.map { |slug| route_promotion(worktree, slug, knowledge_repo) }
+      end
+
+      # @return [Array<String>] slugs the pass declared on its PROMOTE line
+      sig { params(agent_output: String).returns(T::Array[String]) }
+      def declared_promotions(agent_output)
+        match = agent_output.lines.reverse_each.filter_map { |line| PROMOTE_LINE.match(line) }.first
+        return [] unless match
+
+        # T.must: the group is unconditional in PROMOTE_LINE, so a match
+        # always carries it.
+        T.must(match[1]).split(",")
+          .map { |slug| slug.gsub(/[`\s]/, "") }
+          .reject { |slug| slug.empty? || slug == "(none)" }
+      end
+
+      # @param worktree [String]
+      # @param slug [String]
+      # @param knowledge_repo [String]
+      # @return [String] the slug's panel note
+      sig { params(worktree: String, slug: String, knowledge_repo: String).returns(String) }
+      def route_promotion(worktree, slug, knowledge_repo)
+        unless File.exist?(File.join(worktree, SKILLS_DIR, slug, "SKILL.md"))
+          return "ℹ️ the pass declared `PROMOTE: #{slug}` but drafted no `#{SKILLS_DIR}/#{slug}/` " \
+                 "files — nothing routed."
+        end
+
+        org = promote_into_org(
+          slug, knowledge_repo,
+          File.read(File.join(worktree, SKILLS_DIR, slug, "SKILL.md")),
+          index_line: index_line_for(slug, root: worktree),
+        )
+        prune_local_draft(worktree, slug)
+        lines = ["🌐 `#{slug}` → org-tier proposal on #{knowledge_repo}: #{org.pr.html_url}"]
+        # The paired removal applies only when the learning is already
+        # admitted repo-local (the job checkout has it); a fresh org-worthy
+        # lesson or an org-only revision has no repo counterpart to drop.
+        lines << removal_note(drop_local_entry(slug, org.pr)) if File.exist?(File.join(@workdir, SKILLS_DIR, slug, "SKILL.md"))
+        lines.join("\n")
+      rescue GitHub::Error => e
+        "⚠️ org routing for `#{slug}` failed (kept repo-local): #{e.message}"
+      end
+
+      # Drops a routed lesson from the capture worktree so the repo-local
+      # proposal excludes it.
+      #
+      # @param worktree [String]
+      # @param slug [String]
+      # @return [void]
+      sig { params(worktree: String, slug: String).void }
+      def prune_local_draft(worktree, slug)
+        FileUtils.rm_rf(File.join(worktree, SKILLS_DIR, slug))
+        drop_index_line(worktree, slug)
       end
 
       # ---- The shared draft pipeline (dictated, sweep, scan) ----
@@ -747,12 +852,14 @@ module AiFlow
       def draft(segment, source, prompt)
         existing = @github.open_pull_request_for_head(@context.owner_repo, source.branch)
 
+        promotion_notes = T.let([], T::Array[String])
         outcome = in_worktree(source.branch, refine: !existing.nil?) do |worktree|
           scaffold_index(worktree)
-          @agent.launch(prompt: prompt, workdir: worktree, command: Command::Learn.new, force: true)
+          result = @agent.launch(prompt: prompt, workdir: worktree, command: Command::Learn.new, force: true)
           # The agent may have run close to the token's lifetime; the write
           # phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
+          promotion_notes = route_promotions(worktree, result)
           slugs = commit_learnings(worktree)
           next DraftOutcome::Empty.new if slugs.empty?
 
@@ -761,7 +868,7 @@ module AiFlow
           DraftOutcome::Drafted.new(slugs: slugs, pr: pr, refined: !existing.nil?)
         end
 
-        @result_writer.write(@context, [[segment, learn_result(outcome)]])
+        @result_writer.write(@context, [[segment, learn_result(outcome, promotion_notes)]])
       end
 
       # Unseeded repos get dev's canonical scaffold before the capture pass:
@@ -819,9 +926,9 @@ module AiFlow
         <<~RUBRIC.strip
           DISTILLATION RUBRIC — only lessons that generalize beyond the immediate diff or discussion become learnings. Three kinds, one format: coding practices (style/API corrections that recur), architecture knowledge (constraints and shapes of the system — "X must never call Y directly", "this subsystem owns that lifecycle"), and process rules. Diff-local fixes (typos, renames, one-off bugs) are NOT learnings.
 
-          Before writing, DEDUP: read `#{INDEX_PATH}` and skills under `~/.cursor/skills/` (the org tier); if an equivalent learning exists, revise it rather than adding a duplicate; if swept feedback contradicts one, edit or remove it. Revision always beats a contradictory sibling.
+          Before writing, DEDUP: read `#{INDEX_PATH}` and skills under `~/.cursor/skills/` (the org tier); if an equivalent learning exists, revise it rather than adding a duplicate; if swept feedback contradicts one, edit or remove it. Revision always beats a contradictory sibling. A contradicted ORG-tier entry is fixable from here too: draft the corrected lesson in this checkout under that entry's slug and declare it on the PROMOTE line (below) — the tooling opens a revision proposal against the knowledge repo.
 
-          SCOPE: ask whether the lesson is about THIS repo's code or about how we build software. Repo-specific lessons land here. A repo-agnostic lesson (SRP-class principles, universal testing/error-handling posture) belongs in the org knowledge tier — note that in your summary and still draft it repo-local (org promotion is `/learn --promote <slug>`, a separate reviewed step); borderline calls default to repo-local.
+          SCOPE: ask whether the lesson is about THIS repo's code or about how we build software. Repo-specific lessons land here. A repo-agnostic lesson (SRP-class principles, universal testing/error-handling posture) belongs in the org knowledge tier — draft it in this checkout like any learning, and declare it on a line of your final output: `PROMOTE: <slug>` (comma-separated for several). The tooling routes declared slugs into an org-tier proposal on the knowledge repo instead of this repo's PR (paired with a repo-local removal when the learning already exists in this repo); the human gate is unchanged. Borderline calls default to repo-local: no declaration.
 
           FORMAT:
           - Index line under a `## <domain>` section: `- [domain/slug] One-sentence trigger. → #{SKILLS_DIR}/<slug>/`
@@ -991,20 +1098,28 @@ module AiFlow
         "#{@context.subject_url} (#{@context.owner_repo}##{@context.number})"
       end
 
+      # @param promotion_notes [Array<String>] org-routing notes appended to
+      #   the repo-local outcome (see route_promotions)
       # @return [String]
-      sig { params(outcome: DraftOutcome).returns(String) }
-      def learn_result(outcome)
-        case outcome
-        when DraftOutcome::Empty
-          "ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change."
-        when DraftOutcome::Drafted
-          verb = outcome.refined? ? "refined" : "drafted"
-          lines = ["✅ **/learn** — #{verb} #{learning_count(outcome.slugs)} in a proposal PR: #{outcome.pr.html_url}"]
-          named_slugs(outcome.slugs).each { |slug| lines << "- `#{slug}`" }
-          lines.join("\n")
-        else
-          T.absurd(outcome)
-        end
+      sig { params(outcome: DraftOutcome, promotion_notes: T::Array[String]).returns(String) }
+      def learn_result(outcome, promotion_notes = [])
+        lines =
+          case outcome
+          when DraftOutcome::Empty
+            if promotion_notes.empty?
+              ["ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change."]
+            else
+              ["✅ **/learn** — everything captured routed to the org tier."]
+            end
+          when DraftOutcome::Drafted
+            verb = outcome.refined? ? "refined" : "drafted"
+            drafted = ["✅ **/learn** — #{verb} #{learning_count(outcome.slugs)} in a proposal PR: #{outcome.pr.html_url}"]
+            named_slugs(outcome.slugs).each { |slug| drafted << "- `#{slug}`" }
+            drafted
+          else
+            T.absurd(outcome)
+          end
+        (lines + promotion_notes).join("\n")
       end
 
       # @return [String]
@@ -1032,20 +1147,24 @@ module AiFlow
           patch: String,
           existing: T.nilable(GitHub::PullRequest),
           source: CaptureSource,
+          result: T.nilable(String),
         ).returns(T.nilable(String))
       end
-      def land_patch(patch, existing, source)
+      def land_patch(patch, existing, source, result)
         in_worktree(source.branch, refine: false) do |worktree|
           apply_patch(worktree, patch)
+          promotion_notes = result ? route_promotions(worktree, result) : []
           slugs = commit_learnings(worktree, message: "ai-flow /build: capture learnings from the build pass")
-          next nil if slugs.empty?
+          if slugs.empty?
+            next promotion_notes.empty? ? nil : promotion_notes.join("\n")
+          end
 
           push_branch(worktree, source.branch)
           pr = existing || open_capture_pr(source)
           verb = existing ? "refined" : "drafted"
           lines = ["🧠 #{verb} #{learning_count(slugs)} in a learning proposal PR: #{pr.html_url}"]
           named_slugs(slugs).each { |slug| lines << "- `#{slug}`" }
-          lines.join("\n")
+          (lines + promotion_notes).join("\n")
         end
       end
 

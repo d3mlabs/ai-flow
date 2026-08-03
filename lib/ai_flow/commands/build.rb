@@ -164,7 +164,7 @@ module AiFlow
           create_branch(worktree, branch)
           capture = capture_learnings?(code_repo, worktree)
           @learn.seed_capture(worktree, issue_capture_source(issue, issue_repo)) if capture
-          @agent.launch(
+          output = @agent.launch(
             prompt: build_prompt(issue, extra_instruction, capture: capture),
             workdir: worktree, command: Command::Build.new, force: true,
           )
@@ -178,7 +178,7 @@ module AiFlow
             # A pass may yield learnings without code changes — land them
             # even though no code PR opens.
             next Outcome::NothingToBuild.new(
-              capture_notes: landed_capture_notes(capture), workflows_patch: workflows_patch,
+              capture_notes: landed_capture_notes(capture, output), workflows_patch: workflows_patch,
             )
           end
 
@@ -186,7 +186,7 @@ module AiFlow
           pr = open_pull_request(code_repo, issue_repo, issue, branch)
           Outcome::PrOpened.new(
             url: pr.html_url,
-            capture_notes: landed_capture_notes(capture), workflows_patch: workflows_patch,
+            capture_notes: landed_capture_notes(capture, output), workflows_patch: workflows_patch,
           )
         end
       end
@@ -284,7 +284,7 @@ module AiFlow
         @learn.extract_capture(@workdir) if capture
         workflows_patch = extract_workflows_patch(@workdir)
         sha = commit_and_push(segment)
-        capture_notes = landed_capture_notes(capture)
+        capture_notes = landed_capture_notes(capture, output)
         reply_to_threads(threads, parsed, sha)
         @result_writer.write(
           @context,
@@ -414,12 +414,14 @@ module AiFlow
       # landed" both contribute no blocks.
       #
       # @param capture [Boolean] whether capture ran for this pass
+      # @param output [String] the pass's agent output (may carry a PROMOTE
+      #   declaration — see Learn's org routing)
       # @return [Array<String>] zero or one landed-capture panel blocks
-      sig { params(capture: T::Boolean).returns(T::Array[String]) }
-      def landed_capture_notes(capture)
+      sig { params(capture: T::Boolean, output: String).returns(T::Array[String]) }
+      def landed_capture_notes(capture, output)
         return [] unless capture
 
-        note = @learn.land_capture
+        note = @learn.land_capture(result: output)
         note ? [note] : []
       end
 

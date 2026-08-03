@@ -340,6 +340,23 @@ refuse with a near-match listing. Two paired proposal PRs:
 > ✅ **/learn --promote** — `typed-errors` → d3mlabs/knowledge: opened an org draft https://github.com/d3mlabs/knowledge/pull/N
 > 🧹 paired removal draft in owner/repo: https://github.com/owner/repo/pull/M — merge after the org PR lands and the knowledge sync ships it.
 
+### Capture-initiated promotion (the `PROMOTE` contract)
+
+Any capture pass — dictated, sweep, scan, or build-time — can judge a lesson
+org-tier itself: it drafts the learning as ordinary files and declares it on
+a final output line, `PROMOTE: <slug>` (comma-separated for several). The
+tooling then routes each declared slug through the same paired machinery as
+`--promote`: an org proposal PR on the knowledge repo, the local draft
+pruned out of the repo PR, and — when the learning is already admitted
+repo-local — the paired removal PR. The same path revises a contradicted
+org entry: the pass drafts the correction under the entry's existing slug
+and declares it. This widens who *initiates* promotion, not what promotion
+is — every routed lesson is still a proposal PR behind the knowledge repo's
+human gate. Without `knowledge_repo:` configured the lesson stays
+repo-local and the panel says so.
+
+> 🌐 `http-retries` → org-tier proposal on d3mlabs/knowledge: https://github.com/d3mlabs/knowledge/pull/N
+
 ### Build-time capture (inside `/build`)
 
 Every `/build` pass also carries the capture rubric (on by default; switch
