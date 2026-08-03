@@ -21,9 +21,12 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     attr_reader :command_lines, :refreshes
 
-    def initialize(staged: [], staged_queue: nil)
+    # `fail_on` substrings make matching command lines fail, for the
+    # best-effort routing paths.
+    def initialize(staged: [], staged_queue: nil, fail_on: [])
       @staged = staged
       @staged_queue = staged_queue
+      @fail_on = fail_on
       @command_lines = []
       @refreshes = 0
     end
@@ -34,6 +37,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
+      return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
+
       out = argv.take(4) == %w[git diff --cached --name-only] ? "#{next_staged.join("\n")}\n" : ""
       [out, "", true]
     end
@@ -453,6 +458,31 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github.comment_edits.fetch(55).include?("`PROMOTE: ghost`")
     github.comment_edits.fetch(55).include?("drafted no")
     github.comment_edits.fetch(55).include?("factory-over-class-methods")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failed org routing keeps the lesson in the repo proposal (best-effort per slug)" do
+    Given "a knowledge-repo config and a routing whose knowledge-repo clone fails"
+    dir = org_configured_workdir(Dir.mktmpdir("ai-flow-learn-test-"))
+    github = FakeGitHub.new
+    executor = CaptureSnapshotExecutor.new(
+      staged: [INDEX, ".cursor/skills/learnings/http-retries/SKILL.md"],
+      fail_on: ["gh repo clone"],
+    )
+    agent = FakeAgent.new(["drafted\nPROMOTE: http-retries"]) do |_prompt, workdir|
+      write_learning(workdir, "http-retries")
+    end
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn retries", agent: agent, workdir: dir)
+
+    Then "no org PR; the un-pruned lesson lands in the repo proposal and the panel carries the warning"
+    github.calls.none? { |call| call.is_a?(Array) && call.first == :create_pull_request && call.fetch(1) == "d3mlabs/knowledge" }
+    executor.pushed_skills == ["http-retries"]
+    github.comment_edits.fetch(55).include?("⚠️ org routing for `http-retries` failed (kept repo-local)")
+    github.comment_edits.fetch(55).include?("drafted 1 learning")
 
     Cleanup
     FileUtils.rm_rf(dir)
