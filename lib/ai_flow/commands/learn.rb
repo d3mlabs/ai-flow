@@ -291,7 +291,7 @@ module AiFlow
         ).void
       end
       def initialize(context:, github:, agent:, result_writer:, executor:, workdir:, prefix: "",
-        org_invariants: OrgInvariants.new)
+        org_invariants: OrgInvariants.new(executor: executor))
         @context = context
         @github = github
         @agent = agent

@@ -103,10 +103,10 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     dir
   end
 
-  # A cache dir that doesn't exist: no invariants injected. Tests must never
-  # pick up the developer machine's real knowledge cache.
+  # A dev CLI declining: no invariants injected. Tests must never shell out
+  # to the developer machine's real dev/knowledge setup.
   def empty_org_invariants
-    AiFlow::OrgInvariants.new(cache_dir: File.join(Dir.tmpdir, "ai-flow-learn-no-cache-#{object_id}"))
+    AiFlow::OrgInvariants.new(executor: FakeInvariantsExecutor.new(ok: false))
   end
 
   SKILL = ".cursor/skills/learnings/factory-over-class-methods/SKILL.md"
