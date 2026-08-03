@@ -4,9 +4,12 @@
 require "bundler"
 
 module AiFlow
-  # The env overlay that undoes the harness's own toolchain activation, for
-  # any child process that must resolve its own toolchain: the agent (and
-  # every shell it opens in a project worktree, #38) and the dev CLI (#44).
+  # The env overlay that undoes the harness's own toolchain activation.
+  # Executor applies it to every spawn (#46) — callers never pass it
+  # themselves. Per-call-site opt-in kept regrowing the leak: #38 was fixed
+  # agent-only, then the invariants shell-out added later missed it (#44).
+  # gh/git are indifferent to the bundler keys, so a clean default costs
+  # nothing.
   #
   # The dispatcher runs under `bundle exec` inside the .ai-flow checkout;
   # without the scrub, RUBYOPT/BUNDLE_GEMFILE/GEM_HOME leak into the child
@@ -18,9 +21,6 @@ module AiFlow
   # bundler started, by shadowenv activating .ai-flow or an rbenv shim in
   # the launch chain — are force-unset on top (TOOLCHAIN_KEYS). A nil value
   # in a spawn env hash unsets the key.
-  #
-  # The scrub is deliberately not Executor-wide: the gh/git calls inside
-  # .ai-flow legitimately run in the harness env.
   module HarnessEnv
     extend T::Sig
 

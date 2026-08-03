@@ -101,7 +101,7 @@ module AiFlow
       assistant_texts = T.let([], T::Array[String])
       # T.unsafe: splatting a runtime-built argv into stream's rest param is
       # beyond Sorbet's static splat support (srb.help/7019).
-      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir, env: worktree_env) do |line|
+      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir) do |line|
         event = parse_event(line)
         result = event["result"].to_s if event && event["type"] == "result"
         render_event(word, line, event, assistant_texts)
@@ -140,16 +140,6 @@ module AiFlow
     end
 
     private
-
-    # The agent — and every shell it opens in the project worktree — must see
-    # the project's toolchain, not .ai-flow's (#38); the scrub itself lives
-    # in HarnessEnv, shared with the dev CLI shell-outs (#44).
-    #
-    # @return [Hash{String => String, nil}]
-    sig { returns(T::Hash[String, T.nilable(String)]) }
-    def worktree_env
-      HarnessEnv.scrub
-    end
 
     # The AI_FLOW_MODEL override coerced at its boundary: blank is unset.
     #

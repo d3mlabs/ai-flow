@@ -28,11 +28,58 @@ end unless defined?(ScriptedTokenProvider)
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::ExecutorTest < Minitest::Test
-  # The running interpreter, with the test process's bundler activation
-  # scrubbed (nil unsets) — otherwise the child ruby loads this suite's
-  # bundler setup and dies before the -e script runs.
   RUBY = RbConfig.ruby
-  CLEAN = { "RUBYOPT" => nil, "BUNDLE_GEMFILE" => nil }.freeze
+
+  test "every spawn gets the harness scrub — bundler and toolchain activation never leak (#46)" do
+    Given "a harness-polluted process env"
+    saved = ENV["RBENV_VERSION"]
+    ENV["RBENV_VERSION"] = "9.9.9"
+    executor = AiFlow::Executor.new
+
+    When "capturing with no caller env at all"
+    out, _err, ok = executor.capture(RUBY, "-e", 'print [ENV["RBENV_VERSION"], ENV["BUNDLE_GEMFILE"]].inspect')
+
+    Then "the child sees the pre-activation environment, not the dispatcher's"
+    ok
+    out == [nil, Bundler.original_env["BUNDLE_GEMFILE"]].inspect
+
+    Cleanup
+    saved.nil? ? ENV.delete("RBENV_VERSION") : ENV["RBENV_VERSION"] = saved
+  end
+
+  test "stream applies the same default scrub" do
+    Given "a harness-polluted process env"
+    saved = ENV["RBENV_VERSION"]
+    ENV["RBENV_VERSION"] = "9.9.9"
+    executor = AiFlow::Executor.new
+
+    When "streaming with no caller env"
+    lines = []
+    _err, ok = executor.stream(RUBY, "-e", 'puts ENV["RBENV_VERSION"].inspect') { |line| lines << line.chomp }
+
+    Then
+    ok
+    lines == ["nil"]
+
+    Cleanup
+    saved.nil? ? ENV.delete("RBENV_VERSION") : ENV["RBENV_VERSION"] = saved
+  end
+
+  test "a caller env override outranks the scrub" do
+    Given "a caller that explicitly wants a scrubbed key back"
+    saved = ENV["RBENV_VERSION"]
+    ENV["RBENV_VERSION"] = "9.9.9"
+    executor = AiFlow::Executor.new
+
+    When "capturing with the key in the caller env"
+    out, = executor.capture(RUBY, "-e", 'print ENV["RBENV_VERSION"]', env: { "RBENV_VERSION" => "kept" })
+
+    Then
+    out == "kept"
+
+    Cleanup
+    saved.nil? ? ENV.delete("RBENV_VERSION") : ENV["RBENV_VERSION"] = saved
+  end
 
   test "capture injects GH_TOKEN and env-borne git auth from the provider" do
     Given "an executor with a token provider"
@@ -42,7 +89,6 @@ class AiFlow::ExecutorTest < Minitest::Test
     When "capturing a subprocess that prints its auth env"
     out, _err, ok = executor.capture(
       RUBY, "-e", 'puts ENV["GH_TOKEN"]; puts ENV["GIT_CONFIG_KEY_0"]; puts ENV["GIT_CONFIG_VALUE_0"]',
-      env: CLEAN,
     )
     lines = out.split("\n")
 
@@ -63,9 +109,9 @@ class AiFlow::ExecutorTest < Minitest::Test
     executor = AiFlow::Executor.new(token_provider: provider)
 
     When "capturing, refreshing, capturing again"
-    first, = executor.capture(RUBY, "-e", 'print ENV["GH_TOKEN"]', env: CLEAN)
+    first, = executor.capture(RUBY, "-e", 'print ENV["GH_TOKEN"]')
     executor.refresh_auth!
-    second, = executor.capture(RUBY, "-e", 'print ENV["GH_TOKEN"]', env: CLEAN)
+    second, = executor.capture(RUBY, "-e", 'print ENV["GH_TOKEN"]')
 
     Then "the second spawn carries the fresh token"
     first == "ghs_alpha"
@@ -84,7 +130,6 @@ class AiFlow::ExecutorTest < Minitest::Test
     executor.refresh_auth!
     out, _err, ok = executor.capture(
       RUBY, "-e", 'print ENV.key?("GIT_CONFIG_KEY_0").to_s',
-      env: CLEAN,
     )
 
     Then "no git auth key was injected"
@@ -103,7 +148,7 @@ class AiFlow::ExecutorTest < Minitest::Test
     When "capturing with an extra env var"
     out, = executor.capture(
       RUBY, "-e", 'print [ENV["GH_TOKEN"], ENV["EXTRA"]].join(",")',
-      env: CLEAN.merge("EXTRA" => "hello"),
+      env: { "EXTRA" => "hello" },
     )
 
     Then "both are present"
@@ -120,7 +165,7 @@ class AiFlow::ExecutorTest < Minitest::Test
 
     When "streaming a subprocess that prints its token"
     lines = []
-    _err, ok = executor.stream(RUBY, "-e", 'puts ENV["GH_TOKEN"]', env: CLEAN) { |line| lines << line.chomp }
+    _err, ok = executor.stream(RUBY, "-e", 'puts ENV["GH_TOKEN"]') { |line| lines << line.chomp }
 
     Then
     ok

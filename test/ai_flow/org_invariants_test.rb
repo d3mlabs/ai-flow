@@ -49,22 +49,6 @@ class AiFlow::OrgInvariantsTest < Minitest::Test
     nil
   end
 
-  test "the dev child gets the harness scrub, never the dispatcher's bundler env" do
-    Given "a planted harness toolchain env"
-    saved = ENV["RBENV_VERSION"]
-    ENV["RBENV_VERSION"] = "3.3.10"
-    executor = FakeInvariantsExecutor.new(stdout: "#{INVARIANTS_BODY}\n")
-
-    When "building the block"
-    AiFlow::OrgInvariants.new(executor: executor).prompt_block
-
-    Then "the capture env unsets the toolchain key instead of inheriting it"
-    executor.envs.fetch(0).fetch("RBENV_VERSION", :missing).nil?
-
-    Cleanup
-    saved.nil? ? ENV.delete("RBENV_VERSION") : ENV["RBENV_VERSION"] = saved
-  end
-
   test "a blank success injects nothing" do
     Given "a dev CLI printing only whitespace"
     executor = FakeInvariantsExecutor.new(stdout: "\n")
