@@ -21,9 +21,12 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     attr_reader :command_lines, :refreshes
 
-    def initialize(staged: [], staged_queue: nil)
+    # `fail_on` substrings make matching command lines fail, for the
+    # best-effort routing paths.
+    def initialize(staged: [], staged_queue: nil, fail_on: [])
       @staged = staged
       @staged_queue = staged_queue
+      @fail_on = fail_on
       @command_lines = []
       @refreshes = 0
     end
@@ -34,6 +37,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
+      return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
+
       out = argv.take(4) == %w[git diff --cached --name-only] ? "#{next_staged.join("\n")}\n" : ""
       [out, "", true]
     end
@@ -319,6 +324,165 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  # ---- Capture-initiated org routing (the PROMOTE contract, #35) ----
+
+  # Writes a learning (skill + index line) into the launch workdir — the
+  # per-run capture worktree — via FakeAgent's launch block.
+  def write_learning(dir, slug, index_domain: "tooling")
+    skill_dir = File.join(dir, ".cursor", "skills", "learnings", slug)
+    FileUtils.mkdir_p(skill_dir)
+    File.write(File.join(skill_dir, "SKILL.md"), "---\nname: #{slug}\n---\nThe #{slug} lesson.\n")
+    FileUtils.mkdir_p(File.join(dir, ".cursor", "rules"))
+    line = "- [#{index_domain}/#{slug}] The #{slug} cue. → .cursor/skills/learnings/#{slug}/\n"
+    File.open(File.join(dir, INDEX), "a") { |index| index.write(line) }
+  end
+
+  def org_configured_workdir(dir)
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "knowledge_repo: d3mlabs/knowledge\n")
+    dir
+  end
+
+  # Snapshots the capture worktree's learning files at its `git push`, since
+  # the worktree is gone once the run returns (pushes from the org clone or a
+  # removal worktree have other basenames and are ignored).
+  class CaptureSnapshotExecutor < RecordingExecutor
+    attr_reader :pushed_skills, :pushed_index
+
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      if argv.take(2) == %w[git push] && File.basename(chdir.to_s) == "worktree"
+        skills = File.join(chdir.to_s, ".cursor", "skills", "learnings")
+        @pushed_skills = File.directory?(skills) ? Dir.children(skills).sort : []
+        index = File.join(chdir.to_s, INDEX)
+        @pushed_index = File.exist?(index) ? File.read(index) : ""
+      end
+      super
+    end
+  end
+
+  test "a capture pass declaring PROMOTE routes the lesson org-ward and out of the repo PR" do
+    Given "a knowledge-repo config, and a pass that drafted two lessons, one declared org-tier"
+    dir = org_configured_workdir(Dir.mktmpdir("ai-flow-learn-test-"))
+    github = FakeGitHub.new
+    executor = CaptureSnapshotExecutor.new(staged_queue: [
+      ["index.md", "skills/http-retries/SKILL.md"],
+      [INDEX, ".cursor/skills/learnings/factory-x/SKILL.md"],
+    ])
+    agent = FakeAgent.new(["drafted two\nPROMOTE: http-retries", "placed under tooling"]) do |_prompt, workdir|
+      write_learning(workdir, "http-retries")
+      write_learning(workdir, "factory-x", index_domain: "design")
+    end
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn retries and factories", agent: agent, workdir: dir)
+
+    Then "an org proposal opened on the knowledge repo; the repo PR carries only the local lesson"
+    github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-http-retries", "main"])
+    executor.pushed_skills == ["factory-x"]
+    !executor.pushed_index.include?("http-retries")
+    executor.pushed_index.include?("factory-x")
+    github.comment_edits.fetch(55).include?("🌐 `http-retries` → org-tier proposal on d3mlabs/knowledge")
+    github.comment_edits.fetch(55).include?("`factory-x`")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a declared slug that exists on main gets the paired repo-local removal" do
+    Given "typed-errors already admitted repo-local, and a pass declaring its promotion"
+    dir = Dir.mktmpdir("ai-flow-learn-test-")
+    promotable_workdir(dir)
+    github = FakeGitHub.new
+    executor = RecordingExecutor.new(staged_queue: [
+      ["index.md", "skills/typed-errors/SKILL.md"],
+      [INDEX, ".cursor/skills/learnings/typed-errors/SKILL.md"],
+      [],
+    ])
+    agent = FakeAgent.new(["refined and promoted\nPROMOTE: typed-errors", "merged into ruby"]) do |_prompt, workdir|
+      write_learning(workdir, "typed-errors", index_domain: "ruby")
+    end
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn typed errors everywhere", agent: agent, workdir: dir)
+
+    Then "the org proposal and the paired removal both opened; the repo capture stayed empty"
+    github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-typed-errors", "main"])
+    github.calls.include?([:create_pull_request, REPO, "ai/learn-promote-typed-errors", "main"])
+    github.comment_edits.fetch(55).include?("🌐 `typed-errors` → org-tier proposal on d3mlabs/knowledge")
+    github.comment_edits.fetch(55).include?("paired removal")
+    github.comment_edits.fetch(55).include?("routed to the org tier")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a PROMOTE declaration without a knowledge_repo keeps the lesson repo-local" do
+    Given "no knowledge-repo config, and a pass declaring an org-tier lesson"
+    dir = Dir.mktmpdir("ai-flow-learn-test-")
+    github = FakeGitHub.new
+    executor = CaptureSnapshotExecutor.new(staged: [INDEX, ".cursor/skills/learnings/http-retries/SKILL.md"])
+    agent = FakeAgent.new(["drafted\nPROMOTE: http-retries"]) do |_prompt, workdir|
+      write_learning(workdir, "http-retries")
+    end
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn retries", agent: agent, workdir: dir)
+
+    Then "no org PR; the lesson stays in the repo proposal and the panel points at the config key"
+    github.calls.none? { |call| call.is_a?(Array) && call.first == :create_pull_request && call.fetch(1) == "d3mlabs/knowledge" }
+    executor.pushed_skills == ["http-retries"]
+    github.comment_edits.fetch(55).include?("no `knowledge_repo:` is configured")
+    github.comment_edits.fetch(55).include?("kept repo-local")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a PROMOTE declaration naming a slug the pass never drafted is reported, not routed" do
+    Given "a knowledge-repo config and a declaration with no matching files"
+    dir = org_configured_workdir(Dir.mktmpdir("ai-flow-learn-test-"))
+    github = FakeGitHub.new
+    executor = RecordingExecutor.new(staged: [INDEX, SKILL])
+    agent = FakeAgent.new(["drafted\nPROMOTE: ghost"])
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn something", agent: agent, workdir: dir)
+
+    Then "no org PR, one panel note, and the repo draft lands as usual"
+    github.calls.none? { |call| call.is_a?(Array) && call.first == :create_pull_request && call.fetch(1) == "d3mlabs/knowledge" }
+    github.comment_edits.fetch(55).include?("`PROMOTE: ghost`")
+    github.comment_edits.fetch(55).include?("drafted no")
+    github.comment_edits.fetch(55).include?("factory-over-class-methods")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failed org routing keeps the lesson in the repo proposal (best-effort per slug)" do
+    Given "a knowledge-repo config and a routing whose knowledge-repo clone fails"
+    dir = org_configured_workdir(Dir.mktmpdir("ai-flow-learn-test-"))
+    github = FakeGitHub.new
+    executor = CaptureSnapshotExecutor.new(
+      staged: [INDEX, ".cursor/skills/learnings/http-retries/SKILL.md"],
+      fail_on: ["gh repo clone"],
+    )
+    agent = FakeAgent.new(["drafted\nPROMOTE: http-retries"]) do |_prompt, workdir|
+      write_learning(workdir, "http-retries")
+    end
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn retries", agent: agent, workdir: dir)
+
+    Then "no org PR; the un-pruned lesson lands in the repo proposal and the panel carries the warning"
+    github.calls.none? { |call| call.is_a?(Array) && call.first == :create_pull_request && call.fetch(1) == "d3mlabs/knowledge" }
+    executor.pushed_skills == ["http-retries"]
+    github.comment_edits.fetch(55).include?("⚠️ org routing for `http-retries` failed (kept repo-local)")
+    github.comment_edits.fetch(55).include?("drafted 1 learning")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "--promote refuses with a pointer when no knowledge_repo is configured" do

@@ -294,7 +294,9 @@ class FakeAgent < AiFlow::Agent
     @prompts << prompt
     @launches << { command: command, force: force, workdir: workdir }
     @models_used[command] = model_for(command, workdir)
-    @on_launch&.call(prompt)
+    # The block also receives the launch workdir so file-writing fakes can
+    # target per-run worktrees; existing narrower blocks ignore the extra arg.
+    @on_launch&.call(prompt, workdir)
     @outputs.shift or raise AiFlow::Agent::Error, "no canned output left"
   end
 
