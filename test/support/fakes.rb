@@ -8,15 +8,17 @@
 # OrgInvariants makes (the dev CLI is a subprocess boundary, same standing as
 # gh/git); records every argv it was asked for.
 class FakeInvariantsExecutor < AiFlow::Executor
-  attr_reader :argvs
+  attr_reader :argvs, :envs
 
   def initialize(stdout: "", stderr: "", ok: true)
     @result = [stdout, stderr, ok]
     @argvs = []
+    @envs = []
   end
 
   def capture(*argv, stdin: nil, chdir: nil, env: {})
     @argvs << argv
+    @envs << env
     @result
   end
 end

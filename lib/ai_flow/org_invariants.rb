@@ -33,8 +33,17 @@ module AiFlow
     #   when the command reports there is nothing to inject
     sig { returns(T.nilable(String)) }
     def prompt_block
-      out, _err, ok = @executor.capture("dev", "learnings", "invariants")
-      return nil unless ok
+      # The dev child resolves its own toolchain, never the dispatcher's
+      # bundler env (#44 — the leak crashed dev and this method's graceful
+      # nil hid the broken read path for every runner /build).
+      out, err, ok = @executor.capture("dev", "learnings", "invariants", env: HarnessEnv.scrub)
+      unless ok
+        # Degrading is still right (a machine without the knowledge repo has
+        # no invariants to carry), but the decline is named in the run log so
+        # genuine breakage is visible.
+        $stderr.puts "ai-flow: org invariants not injected — `dev learnings invariants` failed: #{err.strip}"
+        return nil
+      end
 
       body = out.strip
       return nil if body.empty?
