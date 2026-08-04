@@ -138,15 +138,20 @@ module AiFlow
     # The origin-firing check for one proposal PR.
     #
     # @param workdir [String] the PR checkout (merge ref, full history)
-    # @param pr_body [String] the proposal PR's body (carries the origin marker)
+    # @param owner_repo [String] the proposal PR's repo ("owner/name")
+    # @param number [Integer] the proposal PR's number
     # @param base_ref [String] the PR's base branch name
     # @return [Result]
-    sig { params(workdir: String, pr_body: String, base_ref: String).returns(Result) }
-    def origin_firing(workdir:, pr_body:, base_ref:)
+    sig { params(workdir: String, owner_repo: String, number: Integer, base_ref: String).returns(Result) }
+    def origin_firing(workdir:, owner_repo:, number:, base_ref:)
       slugs = changed_skill_slugs(workdir, base_ref)
       return Result::StructureOnly.new if slugs.empty?
 
-      origin = origin_ref(pr_body)
+      # The proposal body is read live (the PR is an issue to this API), never
+      # taken from the triggering event's snapshot: the learned-from marker is
+      # this check's input, and a body edited after the event — a marker
+      # repair — must drive reruns and later verdicts.
+      origin = origin_ref(@github.issue(owner_repo, number).body)
       return Result::Unmarked.new unless origin
 
       fired = rerun_retrieval(workdir, origin)

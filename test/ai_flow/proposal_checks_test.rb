@@ -10,6 +10,8 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class AiFlow::ProposalChecksTest < Minitest::Test
   ORIGIN_REPO = "d3mlabs/dev"
+  PROPOSAL_REPO = "d3mlabs/knowledge"
+  PROPOSAL_NUMBER = 39
 
   ORG_INDEX = "index.md"
   ORG_SKILL = "skills/typed-errors/SKILL.md"
@@ -68,10 +70,14 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     github
   end
 
+  # The proposal PR body is seeded on the fake, never handed to the check:
+  # the check reads it live from the API (a body edited after the triggering
+  # event must drive reruns, #52 repair path).
   def run_check(workdir:, github: origin_github, agent: FakeAgent.new(["FIRED: typed-errors"]),
     pr_body: "Proposed learning(s).\n\nlearned-from: #{ORIGIN_REPO}#12 (learn-sweep)")
+    github.seed_issue(PROPOSAL_REPO, PROPOSAL_NUMBER, title: "Learnings: typed-errors", body: pr_body)
     AiFlow::ProposalChecks.new(github: github, agent: agent, executor: AiFlow::Executor.new)
-                       .origin_firing(workdir: workdir, pr_body: pr_body, base_ref: "main")
+                       .origin_firing(workdir: workdir, owner_repo: PROPOSAL_REPO, number: PROPOSAL_NUMBER, base_ref: "main")
   end
 
   test "a changed learning that fires on its origin context passes" do
@@ -169,6 +175,27 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     Then "the check concludes unmarked and never launched the agent"
     result.is_a?(AiFlow::ProposalChecks::Result::Unmarked)
     agent.launches.empty?
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "the proposal body is read live, so a marker corrected after the triggering event drives the replay" do
+    Given "a marker repaired to name dev#99 after the PR event fired carrying dev#12 (#52 repair path)"
+    dir = seeded_repo(Dir.mktmpdir("origin-firing-"), index_path: ORG_INDEX)
+    add_proposed_learning(dir, index_path: ORG_INDEX, skill_path: ORG_SKILL)
+    github = origin_github
+    github.seed_issue(ORIGIN_REPO, 99, title: "The true origin thread", body: "Corrected provenance.")
+    agent = FakeAgent.new(["FIRED: typed-errors"])
+
+    When "checking with the corrected marker live on the proposal PR"
+    result = run_check(workdir: dir, github: github, agent: agent,
+      pr_body: "Proposed learning(s).\n\nlearned-from: #{ORIGIN_REPO}#99 (promote)")
+
+    Then "the replayed context is dev#99's thread, not the stale event's dev#12"
+    result.is_a?(AiFlow::ProposalChecks::Result::Pass)
+    agent.prompts.first.include?("The true origin thread")
+    !agent.prompts.first.include?("Error handling cleanup")
 
     Cleanup
     FileUtils.remove_entry(dir)
