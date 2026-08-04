@@ -21,12 +21,14 @@ module AiFlow
 
     class Error < StandardError; end
 
-    # What each command actually ran on, keyed by command so a batch that
-    # launches the same command repeatedly records one entry. Feeds the
-    # ResultWriter footer's model note.
+    # What each command actually ran on — every launch's selection, in
+    # order, grouped by command. Keying a single selection per command let
+    # a later launch erase an earlier one (#49: the promote pass overwrote
+    # the drafting pass's name in the footer). Feeds the ResultWriter
+    # footer's model note, which dedupes for display.
     #
-    # @return [Hash{AiFlow::Command => AiFlow::ModelSelection}]
-    sig { returns(T::Hash[Command, ModelSelection]) }
+    # @return [Hash{AiFlow::Command => Array<AiFlow::ModelSelection>}]
+    sig { returns(T::Hash[Command, T::Array[ModelSelection]]) }
     attr_reader :models_used
 
     # Skill and rule reads observed in the event stream — the loop's own
@@ -52,7 +54,7 @@ module AiFlow
     sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
       @executor = executor
-      @models_used = T.let({}, T::Hash[Command, ModelSelection])
+      @models_used = T.let({}, T::Hash[Command, T::Array[ModelSelection]])
       @knowledge_applied = T.let([], T::Array[String])
     end
 
@@ -68,18 +70,22 @@ module AiFlow
     # @param command [AiFlow::Command] the policy the pass runs under
     # @param force [Boolean] allow file edits/commands without approval (used
     #   by /edit-on-PR and /build, which work in disposable worktrees)
+    # @param policy_root [String] the checkout whose .github/ai-flow.yml
+    #   governs the pass — the workdir unless the pass executes on behalf of
+    #   another repo's request (a /learn promote pass runs in the knowledge
+    #   clone under the source repo's policy, #49)
     # @return [String] the agent's result text
     # @raise [Error] when the agent fails
     sig do
-      params(prompt: String, workdir: String, command: Command, force: T::Boolean)
+      params(prompt: String, workdir: String, command: Command, force: T::Boolean, policy_root: String)
         .returns(String)
     end
-    def launch(prompt:, workdir:, command:, force: false)
+    def launch(prompt:, workdir:, command:, force: false, policy_root: workdir)
       # --trust: headless runs can't answer the workspace-trust prompt, and the
       # workdir is always a CI checkout of a repo we dispatched for.
       argv = [binary, "-p", "--output-format", "stream-json", "--trust"]
-      selection = model_for(command, workdir)
-      @models_used[command] = selection
+      selection = model_for(command, policy_root)
+      (@models_used[command] ||= []) << selection
       # Display names speak the comment vocabulary, so they come from the
       # parser's table.
       word = CommentParser.word_for(command)

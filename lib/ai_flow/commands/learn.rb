@@ -609,9 +609,12 @@ module AiFlow
         branch = "ai/learn-promote-#{@context.owner_repo.split("/").last}-#{slug}"
         existing = @github.open_pull_request_for_head(knowledge_repo, branch)
         in_clone(knowledge_repo, branch, refine: !existing.nil?) do |clone|
+          # policy_root: the promote pass is the tail of the source repo's
+          # /learn — its model policy travels with the request, not with the
+          # knowledge clone it executes in (#49).
           @agent.launch(
             prompt: promote_prompt(slug, knowledge_repo, skill_text, index_line),
-            workdir: clone, command: Command::Learn.new, force: true,
+            workdir: clone, command: Command::Learn.new, force: true, policy_root: @workdir,
           )
           @executor.refresh_auth!
           slugs = commit_learnings(clone, message: "ai-flow /learn: promote #{slug} to the org tier")

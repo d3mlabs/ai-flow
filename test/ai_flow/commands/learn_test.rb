@@ -400,6 +400,9 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-http-retries", "main"])
     # The promote pass saw the whole wrapped entry, not just its pointer line.
     agent.prompts.fetch(1).include?("The http-retries cue, wrapped over a second line.")
+    # The promote pass inherits the source request's model policy — the
+    # knowledge clone's (absent) config has no say (#49).
+    agent.launches.fetch(1)[:policy_root] == dir
     executor.pushed_skills == ["factory-x"]
     # The routed entry is dropped whole — no orphaned summary lines (#48).
     !executor.pushed_index.include?("http-retries")
@@ -593,6 +596,9 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     Then "the agent saw the verbatim learning; the knowledge repo was cloned; both proposal PRs opened"
     agent.prompts.first.include?("Raise typed errors, never bare strings.")
     agent.prompts.first.include?("[ruby/typed-errors]")
+    # The promote pass runs in the knowledge clone under the source repo's
+    # model policy (#49).
+    agent.launches.fetch(0)[:policy_root] == dir
     executor.command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/knowledge") }
     github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-typed-errors", "main"])
     github.calls.include?([:create_pull_request, REPO, "ai/learn-promote-typed-errors", "main"])
