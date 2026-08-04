@@ -7,26 +7,24 @@ require "fileutils"
 require "json"
 require "stringio"
 
-# Captures every stream() argv and env so tests assert on the exact agent CLI
+# Captures every stream() argv so tests assert on the exact agent CLI
 # invocation; replays a canned NDJSON stream (default: one terminal result
 # event) line by line, like the real CLI in stream-json mode. Subclasses the
 # real class so sorbet-runtime's sig checks accept it at the injection seam.
 class RecordingExecutor < AiFlow::Executor
   DEFAULT_STREAM = [%({"type":"result","subtype":"success","is_error":false,"result":"ok"})].freeze
 
-  attr_reader :captures, :envs
+  attr_reader :captures
 
   def initialize(lines: DEFAULT_STREAM, err: "", ok: true)
     @lines = lines
     @err = err
     @ok = ok
     @captures = []
-    @envs = []
   end
 
   def stream(*argv, stdin: nil, chdir: nil, env: {})
     @captures << argv
-    @envs << env
     @lines.each { |line| yield "#{line}\n" }
     [@err, @ok]
   end
@@ -394,39 +392,9 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  # The test process itself runs under bundle exec (and, locally, shadowenv),
-  # which is exactly the harness situation: sentinel values planted in ENV
-  # here cannot appear in Bundler.original_env, so the spawn env must carry a
-  # restore (or unset) entry for each polluted key (ai-flow#38).
-  test "the agent spawn env undoes the harness's bundler and shadowenv activation" do
-    Given "an env polluted the way bundle exec + shadowenv leave the harness's"
-    dir = Dir.mktmpdir("ai-flow-agent-test-")
-    polluted = {
-      "RUBYOPT" => "-r/harness/.ai-flow/bundler/setup",
-      "BUNDLE_GEMFILE" => "/harness/.ai-flow/Gemfile",
-      "__shadowenv_data" => "harness-shadowenv-blob",
-      "RUBY_ROOT" => "/harness/rubies/3.3.10",
-      "RBENV_VERSION" => "3.3.10",
-    }
-    saved = polluted.keys.to_h { |key| [key, ENV[key]] }
-    polluted.each { |key, value| ENV[key] = value }
-    executor = RecordingExecutor.new
-
-    When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
-
-    Then "bundler keys are restored to their pre-activation values and toolchain keys are unset"
-    env = executor.envs.fetch(0)
-    env.fetch("RUBYOPT", :missing) == Bundler.original_env["RUBYOPT"]
-    env.fetch("BUNDLE_GEMFILE", :missing) == Bundler.original_env["BUNDLE_GEMFILE"]
-    env.fetch("__shadowenv_data", :missing).nil?
-    env.fetch("RUBY_ROOT", :missing).nil?
-    env.fetch("RBENV_VERSION", :missing).nil?
-
-    Cleanup
-    saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
-    FileUtils.rm_rf(dir)
-  end
+  # The agent's spawn-env hygiene (ai-flow#38) is Executor's job now (#46):
+  # every spawn gets HarnessEnv.scrub at the seam, asserted with real
+  # subprocesses in executor_test.
 
   test "a failed run raises" do
     Given "a failing executor with stderr"

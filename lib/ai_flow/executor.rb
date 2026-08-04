@@ -8,8 +8,16 @@ module AiFlow
   # one injectable boundary, so command orchestration is testable without real
   # subprocesses (same pattern as d3mlabs/dev's RunnerSetup::Executor).
   #
-  # Auth freshness lives here: every spawn asks the TokenProvider for a token
-  # (age-checked per call, see TokenProvider) and injects it into the
+  # Env hygiene lives here (#46): every spawn starts from HarnessEnv.scrub —
+  # the pre-activation environment — because per-call-site scrubbing kept
+  # regrowing the leak (#38 was fixed agent-only, then #44 hit the invariants
+  # shell-out that was added without it). gh/git are indifferent to the
+  # bundler keys, and children that resolve a Ruby toolchain (agent, dev)
+  # need them gone, so the clean env is the default for everyone; a caller's
+  # env: overlay still wins key-by-key.
+  #
+  # Auth freshness lives here too: every spawn asks the TokenProvider for a
+  # token (age-checked per call, see TokenProvider) and injects it into the
   # subprocess env — GH_TOKEN for gh, a git-config extraheader for git. Git
   # auth in particular must be per-invocation: actions/checkout bakes the
   # mint-time token into the repo's git config, which is exactly what expired
@@ -55,7 +63,7 @@ module AiFlow
       opts[:chdir] = chdir if chdir
       # T.unsafe: variadic forwarding (env hash + *argv + **opts) is beyond
       # what Sorbet can check against Open3's sigs (srb.help/7019).
-      out, err, status = T.unsafe(Open3).capture3(auth_env.merge(env), *argv, **opts)
+      out, err, status = T.unsafe(Open3).capture3(spawn_env(env), *argv, **opts)
       [out, err, status.success?]
     rescue Errno::ENOENT => e
       ["", e.message, false]
@@ -87,7 +95,7 @@ module AiFlow
       opts = chdir ? { chdir: chdir } : {}
       err = T.let("", String)
       # T.unsafe: same variadic forwarding as capture (srb.help/7019).
-      status = T.unsafe(Open3).popen3(auth_env.merge(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
+      status = T.unsafe(Open3).popen3(spawn_env(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
         writer = Thread.new do
           stdin_io.write(stdin) if stdin
           stdin_io.close
@@ -107,6 +115,16 @@ module AiFlow
     end
 
     private
+
+    # The full env overlay for one spawn: harness scrub as the base, auth on
+    # top, the caller's explicit overrides last.
+    #
+    # @param env [Hash{String => String, nil}] caller overrides
+    # @return [Hash{String => String, nil}]
+    sig { params(env: T::Hash[String, T.nilable(String)]).returns(T::Hash[String, T.nilable(String)]) }
+    def spawn_env(env)
+      HarnessEnv.scrub.merge(auth_env).merge(env)
+    end
 
     # The per-spawn auth overlay. GH_TOKEN covers gh (the agent's own gh
     # calls inherit it too — the agent only ever sees short-lived
