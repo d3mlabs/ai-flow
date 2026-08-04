@@ -384,7 +384,12 @@ branch, so either order refines the same draft.
 
 Every learning proposal PR carries a `learned-from: <repo>#<n>
 (build-sweep|learn-sweep|scan|dictated|promote)` marker naming its source
-and form, plus the branch convention `ai/learn-<source>`. Capture-form
+and form, plus the branch convention `ai/learn-<source>`. For promotions
+the marker names the lesson's own origin — parsed from the skill's
+`learned-from:` line, owner-qualified — not the surface the promotion was
+requested on, so origin-firing replays the situation that produced the
+lesson; the request surface only serves as the fallback when the skill's
+line carries no issue/PR ref. Capture-form
 commands re-running on the same source surface **refine that surface's open
 drafts** (a refining push, or closing a dissolved draft) instead of opening
 duplicates:
