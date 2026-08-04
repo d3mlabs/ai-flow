@@ -621,9 +621,42 @@ module AiFlow
           raise GitHub::Error, "the agent staged no org learning files for `#{slug}`" if slugs.empty?
 
           push_branch(clone, branch)
-          pr = existing || open_promotion_pr(slug, knowledge_repo, branch)
+          pr = existing || open_promotion_pr(slug, knowledge_repo, branch, origin: promotion_origin(skill_text))
           Promotion.new(pr: pr, refined: !existing.nil?)
         end
+      end
+
+      # The origin the promotion PR's learned-from marker names: the thread
+      # that produced the lesson, so origin-firing replays the situation the
+      # cue must fire on. The promotion-request surface is usually not that
+      # thread (#52) — it only serves as the fallback when the skill's own
+      # learned-from line carries no issue/PR ref (e.g. prose-only origins).
+      #
+      # @param skill_text [String] the promoted skill, verbatim
+      # @return [String] an "owner/repo#n" ref
+      sig { params(skill_text: String).returns(String) }
+      def promotion_origin(skill_text)
+        skill_origin_ref(skill_text) || "#{@context.owner_repo}##{@context.number}"
+      end
+
+      # The first issue/PR ref on the skill's learned-from line. Skill lines
+      # are free-form and repo-local ("dev#75, root-causing …"), written in
+      # the source repo — bare `repo#n` / `#n` shorthand qualifies with the
+      # source repo's owner (and name), known here while the promotion still
+      # has the source context at hand.
+      #
+      # @param skill_text [String]
+      # @return [String, nil] "owner/repo#n", nil when no ref parses
+      sig { params(skill_text: String).returns(T.nilable(String)) }
+      def skill_origin_ref(skill_text)
+        line = skill_text[/^learned-from:.*$/]
+        return nil unless line
+
+        match = %r{(?:([\w.-]+)/)?([\w.-]+)?#(\d+)}.match(line)
+        return nil unless match
+
+        source_owner, source_repo = @context.owner_repo.split("/")
+        "#{match[1] || source_owner}/#{match[2] || source_repo}##{match[3]}"
       end
 
       # @return [String] the promotion pass's prompt
@@ -662,18 +695,20 @@ module AiFlow
         entry.empty? ? nil : entry.map(&:strip).join(" ")
       end
 
+      # @param origin [String] the "owner/repo#n" the marker names (see
+      #   promotion_origin)
       # @return [AiFlow::GitHub::PullRequest] the created proposal PR
       #   (ordinary, not GitHub draft state — see open_learning_pr)
       sig do
-        params(slug: String, knowledge_repo: String, branch: String)
+        params(slug: String, knowledge_repo: String, branch: String, origin: String)
           .returns(GitHub::PullRequest)
       end
-      def open_promotion_pr(slug, knowledge_repo, branch)
+      def open_promotion_pr(slug, knowledge_repo, branch, origin:)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         body = <<~BODY
           Promotes the `#{slug}` learning from #{@context.owner_repo} to the org tier (requested on #{source_link}).
 
-          #{requested_by}learned-from: #{@context.owner_repo}##{@context.number} (promote)
+          #{requested_by}learned-from: #{origin} (promote)
         BODY
         @github.create_pull_request(
           knowledge_repo,

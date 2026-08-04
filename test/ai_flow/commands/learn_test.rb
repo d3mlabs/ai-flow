@@ -107,9 +107,13 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     FileUtils.mkdir_p(File.join(dir, ".github"))
     File.write(File.join(dir, ".github", "ai-flow.yml"), "knowledge_repo: #{knowledge_repo}\n") if knowledge_repo
     FileUtils.mkdir_p(File.join(dir, ".cursor", "skills", "learnings", "typed-errors"))
+    # The skill's learned-from line names the lesson's actual origin in
+    # repo-local shorthand, like live skills do — the promotion marker must
+    # carry it, qualified, not the surface the --promote landed on (#52).
     File.write(
       File.join(dir, ".cursor", "skills", "learnings", "typed-errors", "SKILL.md"),
-      "---\nname: typed-errors\n---\nRaise typed errors, never bare strings.\n",
+      "---\nname: typed-errors\n---\nRaise typed errors, never bare strings.\n\n" \
+        "learned-from: demo#41, root-causing the original failure.\ndate: 2026-08-01\n",
     )
     FileUtils.mkdir_p(File.join(dir, ".cursor", "rules"))
     File.write(
@@ -403,6 +407,9 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     # The promote pass inherits the source request's model policy — the
     # knowledge clone's (absent) config has no say (#49).
     agent.launches.fetch(1)[:policy_root] == dir
+    # The drafted skill carries no learned-from ref, so the org PR's marker
+    # falls back to the request surface — here the lesson's actual origin (#52).
+    github.pull_request_bodies.fetch(0).include?("learned-from: d3mlabs/demo#7 (promote)")
     executor.pushed_skills == ["factory-x"]
     # The routed entry is dropped whole — no orphaned summary lines (#48).
     !executor.pushed_index.include?("http-retries")
@@ -602,6 +609,9 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     executor.command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/knowledge") }
     github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-typed-errors", "main"])
     github.calls.include?([:create_pull_request, REPO, "ai/learn-promote-typed-errors", "main"])
+    # The org PR's marker names the lesson's own origin (from the skill's
+    # learned-from line, owner-qualified) — not the --promote surface (#52).
+    github.pull_request_bodies.fetch(0).include?("learned-from: d3mlabs/demo#41 (promote)")
     github.pull_request_bodies.fetch(1).include?("Merge after that PR lands")
     github.comment_edits.fetch(55).include?("✅ **/learn --promote** — `typed-errors` → d3mlabs/knowledge")
     github.comment_edits.fetch(55).include?("🧹 paired removal draft")
