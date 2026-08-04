@@ -66,7 +66,11 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     attr_reader :index_after_removal
 
     INDEX_RELATIVE_PATH = File.join(".cursor", "rules", "learnings-index.mdc")
-    PLANTED_INDEX = "- [ruby/typed-errors] Raising? Use a typed error. → .cursor/skills/learnings/typed-errors/\n" \
+    # The promoted entry wraps over several lines with the pointer on its
+    # own line — the live index shape, the one #48's orphaning missed.
+    PLANTED_INDEX = "- [ruby/typed-errors] Raising? Use a typed\n  " \
+      "error, never a bare string.\n  " \
+      "→ .cursor/skills/learnings/typed-errors/\n" \
       "- [design/one-seam] Keep me.\n"
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
@@ -338,15 +342,19 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
   # ---- Capture-initiated org routing (the PROMOTE contract, #35) ----
 
-  # Writes a learning (skill + index line) into the launch workdir — the
-  # per-run capture worktree — via FakeAgent's launch block.
+  # Writes a learning (skill + index entry) into the launch workdir — the
+  # per-run capture worktree — via FakeAgent's launch block. The index entry
+  # wraps over several lines with the pointer on its own line, the live
+  # index shape (#48).
   def write_learning(dir, slug, index_domain: "tooling")
     skill_dir = File.join(dir, ".cursor", "skills", "learnings", slug)
     FileUtils.mkdir_p(skill_dir)
     File.write(File.join(skill_dir, "SKILL.md"), "---\nname: #{slug}\n---\nThe #{slug} lesson.\n")
     FileUtils.mkdir_p(File.join(dir, ".cursor", "rules"))
-    line = "- [#{index_domain}/#{slug}] The #{slug} cue. → .cursor/skills/learnings/#{slug}/\n"
-    File.open(File.join(dir, INDEX), "a") { |index| index.write(line) }
+    entry = "- [#{index_domain}/#{slug}] The #{slug} cue,\n  " \
+      "wrapped over a second line.\n  " \
+      "→ .cursor/skills/learnings/#{slug}/\n"
+    File.open(File.join(dir, INDEX), "a") { |index| index.write(entry) }
   end
 
   def org_configured_workdir(dir)
@@ -390,7 +398,10 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     Then "an org proposal opened on the knowledge repo; the repo PR carries only the local lesson"
     github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-http-retries", "main"])
+    # The promote pass saw the whole wrapped entry, not just its pointer line.
+    agent.prompts.fetch(1).include?("The http-retries cue, wrapped over a second line.")
     executor.pushed_skills == ["factory-x"]
+    # The routed entry is dropped whole — no orphaned summary lines (#48).
     !executor.pushed_index.include?("http-retries")
     executor.pushed_index.include?("factory-x")
     github.comment_edits.fetch(55).include?("🌐 `http-retries` → org-tier proposal on d3mlabs/knowledge")
@@ -495,6 +506,39 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a refine whose every lesson routes org-ward closes the emptied repo proposal" do
+    Given "an open draft carrying the lesson, and a pass that promotes it"
+    dir = org_configured_workdir(Dir.mktmpdir("ai-flow-learn-test-"))
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
+    github.seed_open_pull_request_for_head("ai/learn-pr-7",
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
+    # First commit: the org clone's. Second: the repo worktree's, staging
+    # only the routing's prune residue (the skill's deletion, the index edit).
+    executor = RecordingExecutor.new(staged_queue: [
+      ["index.md", "skills/http-retries/SKILL.md"],
+      [INDEX, ".cursor/skills/learnings/http-retries/SKILL.md"],
+    ])
+    agent = FakeAgent.new(["refined\nPROMOTE: http-retries", "placed under tooling"]) do |_prompt, workdir|
+      write_learning(workdir, "http-retries")
+    end
+    context = ContextBuilder.issue_comment(number: 7, body: "/learn", pull_request: true)
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn", context: context, agent: agent, workdir: dir)
+
+    Then "the org proposal opened; the repo draft was pushed clean and closed, not left hollow"
+    github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-http-retries", "main"])
+    github.calls.none? { |call| call.is_a?(Array) && call.first == :create_pull_request && call.fetch(1) == REPO }
+    executor.command_lines.any? { |line| line.include?("push -u origin ai/learn-pr-7") }
+    github.calls.include?([:close_pull_request, REPO, 500])
+    github.comment_edits.fetch(55).include?("everything captured routed to the org tier")
+    github.comment_edits.fetch(55).include?("emptied by the routing — closed")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "--promote refuses with a pointer when no knowledge_repo is configured" do
     Given "a workdir whose ai-flow.yml names no knowledge repo"
     dir = Dir.mktmpdir("ai-flow-learn-test-")
@@ -555,8 +599,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github.pull_request_bodies.fetch(1).include?("Merge after that PR lands")
     github.comment_edits.fetch(55).include?("✅ **/learn --promote** — `typed-errors` → d3mlabs/knowledge")
     github.comment_edits.fetch(55).include?("🧹 paired removal draft")
-    # The removal worktree's index (planted by the fake) lost only the
-    # promoted slug's line.
+    # The removal worktree's index (planted by the fake) lost the promoted
+    # slug's whole wrapped entry — no orphaned summary lines (#48).
     executor.index_after_removal == "- [design/one-seam] Keep me.\n"
 
     Cleanup
