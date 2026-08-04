@@ -9,12 +9,14 @@
 # learning must fire on the context it was distilled from. Runs on every PR —
 # GitHub draft state included, which is the point: the verdict lands while
 # the human gate is still deciding. Structure-only and unmarked PRs skip
-# green.
+# green. `edited` is in the trigger list because the PR body carries the
+# learned-from marker — the check's input — so repairing a marker by editing
+# the body re-verifies without needing a new commit.
 name: proposal-checks
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read

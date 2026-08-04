@@ -4,9 +4,12 @@
 
 # Origin-firing check entry point, invoked by
 # .github/workflows/origin-firing.yml on a learning repo's pull requests.
-# Reads the PR payload from GITHUB_EVENT_PATH, re-runs retrieval against the
-# proposal's origin context, and fails the job when a changed learning's cue
-# does not fire. See lib/ai_flow/proposal_checks.rb.
+# The GITHUB_EVENT_PATH payload supplies only the PR's identity (repo,
+# number, base ref); the check reads the PR body live, so reruns and
+# post-edit runs verify the current marker, not the event's snapshot.
+# Re-runs retrieval against the proposal's origin context and fails the job
+# when a changed learning's cue does not fire. See
+# lib/ai_flow/proposal_checks.rb.
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
@@ -30,7 +33,8 @@ result = AiFlow::ProposalChecks.new(
   executor: executor,
 ).origin_firing(
   workdir: ENV.fetch("AI_FLOW_WORKDIR", Dir.pwd),
-  pr_body: pull_request["body"].to_s,
+  owner_repo: event.fetch("repository").fetch("full_name"),
+  number: pull_request.fetch("number"),
   base_ref: pull_request.fetch("base").fetch("ref"),
 )
 
