@@ -47,3 +47,5 @@ jobs:
           # (simplecov-sorbet's skipped ranges) error Codecov's processing.
           disable_search: true
           fail_ci_if_error: false
+
+# (codeowners probe — temporary)
