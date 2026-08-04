@@ -1,0 +1,6 @@
+# The runner-group pin (restricted_to_workflows) makes ai-commands.yml@main
+# the self-hosted runners' root of trust: whatever lands on this path is
+# what adopters' runners will execute. Required review on these files is
+# the guard on that trust — see README "Public repos" and
+# docs/architecture.md "Public-repo posture".
+/.github/workflows/ @JPDuchesne

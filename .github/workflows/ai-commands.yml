@@ -66,8 +66,11 @@ jobs:
   #
   # CONTRIBUTOR passes the coarse association filter because review-comment
   # payloads under-report membership (an org MEMBER can arrive as
-  # CONTRIBUTOR); the dispatcher re-checks authorization against the
+  # CONTRIBUTOR); the authorize job re-checks authorization against the
   # collaborator-permission API and fails closed.
+  #
+  # The Bot-type guard keeps the bot's own replies (panels quoting a
+  # command) from spawning runs — noise, and a latent self-trigger surface.
   #
   # Review summaries (pull_request_review) are deliberately absent here:
   # reviews have no reactions API, so their acknowledgment is the
@@ -75,6 +78,7 @@ jobs:
   ack:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+      github.event.comment.user.type != 'Bot' &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
       (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
@@ -108,22 +112,28 @@ jobs:
           fi
           gh api -X POST "$path" -f content=eyes || echo "::warning::ack reaction failed"
 
-  # The `if` runs in the workflow engine, so non-command comments never start
-  # a job (no billed no-op runs — free anyway on self-hosted, but noisy). It
-  # is a coarse contains() filter; the exact line-start command grammar and
-  # the permission gate are re-checked by the Ruby dispatcher, which exits
-  # cleanly on a mid-line prose mention. CONTRIBUTOR is allowed through for
-  # the same reason as in the ack job: review-comment payloads under-report
-  # membership, and the dispatcher's API-backed gate is the real one.
+  # The authoritative permission gate, on free hosted seconds *before* any
+  # self-hosted time. The coarse `if` runs in the workflow engine, so
+  # non-command comments never start a job; it deliberately lets CONTRIBUTOR
+  # through (review-comment payloads under-report membership — an org MEMBER
+  # can arrive as CONTRIBUTOR), and this job's API-backed check is the real
+  # gate: without it, a past drive-by contributor could burn ~1 min of
+  # self-hosted setup per spam comment before the dispatcher denied them.
+  # The check mirrors the dispatcher's own gate (Dispatcher#authorized?),
+  # which stays as defense-in-depth: allow-listed associations authorize on
+  # their own; anything else falls back to the collaborator-permission API
+  # and denies on any failure (fail closed). Kept separate from ack so the
+  # instant-👀 job stays never-blocking.
   #
   # pull_request_review carries the command under event.review instead of
   # event.comment; the `||` coalescing below reads whichever surface fired
   # (missing properties resolve to null, and contains(null, x) is false).
   # Plain approvals with an empty body coalesce to no command — no job.
-  dispatch:
+  authorize:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment' ||
        github.event_name == 'pull_request_review') &&
+      (github.event.comment.user.type || github.event.review.user.type) != 'Bot' &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'),
                github.event.comment.author_association || github.event.review.author_association) &&
       (contains(github.event.comment.body || github.event.review.body, format('/{0}ask', inputs.command_prefix)) ||
@@ -131,6 +141,55 @@ jobs:
        contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) ||
        contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) ||
        contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      authorized: ${{ steps.gate.outputs.authorized }}
+    env:
+      AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
+    steps:
+      - name: Mint the ai-flow App token
+        id: app-token
+        if: ${{ env.AI_FLOW_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AI_FLOW_APP_ID }}
+          private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Check the author's repo permission
+        id: gate
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          ASSOCIATION: ${{ github.event.comment.author_association || github.event.review.author_association }}
+          AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login }}
+        run: |
+          case "$ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR)
+              authorized=true
+              ;;
+            *)
+              # Fail closed: an API error reads as no permission.
+              permission=$(gh api "repos/${{ github.repository }}/collaborators/${AUTHOR}/permission" --jq .permission || echo "none")
+              case "$permission" in
+                admin|write) authorized=true ;;
+                *) authorized=false ;;
+              esac
+              ;;
+          esac
+          if [ "$authorized" != "true" ]; then
+            echo "::notice::ai-flow: @${AUTHOR} (${ASSOCIATION}) lacks write permission — command not dispatched"
+          fi
+          echo "authorized=$authorized" >> "$GITHUB_OUTPUT"
+
+  # Gated behind authorize (above): denials never reach a self-hosted
+  # runner, and the dispatcher's in-Ruby permission gate demotes to
+  # defense-in-depth. The exact line-start command grammar is still the
+  # dispatcher's to check — it exits cleanly on a mid-line prose mention
+  # that slipped through the coarse contains() filter.
+  dispatch:
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
     # per_actor_runners routes to the commenter's own box; otherwise each
     # command routes to its own fixed label, ai-<command> — convention over
     # configuration (deployment decides the topology: one box can carry all

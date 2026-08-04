@@ -312,6 +312,44 @@ Callers reference `@main` deliberately: the dispatcher
 checkout inside the workflow always runs main, so pinning the YAML to a tag
 or SHA would only freeze half the system and silently split the two versions.
 
+### Public repos
+
+A public caller repo on self-hosted runners is the combination GitHub
+cautions against — and d3mlabs runs it live (`d3mlabs/dev`), so this
+subsection is the reference deployment, not theory. The workflow ships two
+guards every adopter inherits: a Bot-type filter on the job conditions
+(the bot's own replies never spawn runs) and a hosted `authorize` job that
+checks the command author's repo permission on free hosted seconds, before
+any self-hosted second — unauthorized commands die there, and the
+dispatcher's in-Ruby fail-closed gate stays as defense-in-depth. See
+[docs/architecture.md](docs/architecture.md#public-repo-posture) for the
+threat mechanics.
+
+The org/repo settings are the adopter's half, and for a public caller they
+are required, not suggested:
+
+- **Fork-PR approval: "require approval for all outside collaborators"**
+  (org or repo Actions setting). Some event types run the *head* branch's
+  workflow file, so unreviewed fork YAML must never execute.
+- **Runner group restriction**: visibility `selected` with only adopting
+  repos, and `restricted_to_workflows` pinned to
+  `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` (jobs defined
+  in a reusable workflow are checked against the reusable workflow's
+  path/ref). Even an accidentally approved malicious fork workflow then
+  gets no self-hosted runner.
+- **CODEOWNERS + required review on the workflow path**: the pin makes
+  `ai-commands.yml@main` the runner group's root of trust, so
+  `.github/workflows/**` needs a required human review — note PR authors
+  can't approve their own PRs but *can* approve bot-authored ones, which
+  is exactly the case that matters (a `/build` proposing workflow changes
+  must not become runner-trusted on a casual merge). Mirroring the same
+  entry on adopters' own `.github/workflows/` guards the caller's
+  conditions from quiet loosening.
+
+Rotation note: the App private key transits the runner host in the
+token-mint step, so treat a runner-host compromise as an App-key rotation
+event.
+
 ## Development
 
 ```sh
