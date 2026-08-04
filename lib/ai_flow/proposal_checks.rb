@@ -116,8 +116,9 @@ module AiFlow
         def missing = new_slugs - fired
       end
 
-      # No skill files changed — a structure-only diff, outside the
-      # origin-firing check's scope.
+      # No skill files added or edited — a structure-only diff (index
+      # rewording, or a paired promotion removal), outside the origin-firing
+      # check's scope.
       class StructureOnly < Result; end
 
       # No learned-from: marker in the PR body — a migration/manual PR,
@@ -165,7 +166,10 @@ module AiFlow
     private
 
     # The skills the PR adds or edits, from the merge-base diff (three-dot,
-    # so a stale base branch never pollutes the file list).
+    # so a stale base branch never pollutes the file list). Deletions are
+    # filtered out (--diff-filter=d): a paired promotion removal deletes the
+    # skill and its index cue, so its cue can never fire here — the removed
+    # content's verification belongs to the paired org proposal (#56).
     #
     # @param workdir [String]
     # @param base_ref [String]
@@ -174,7 +178,7 @@ module AiFlow
     sig { params(workdir: String, base_ref: String).returns(T::Array[String]) }
     def changed_skill_slugs(workdir, base_ref)
       out, err, ok = @executor.capture(
-        "git", "diff", "--name-only", "origin/#{base_ref}...HEAD", chdir: workdir,
+        "git", "diff", "--name-only", "--diff-filter=d", "origin/#{base_ref}...HEAD", chdir: workdir,
       )
       raise Error, "git diff against origin/#{base_ref} failed: #{err.strip}" unless ok
 

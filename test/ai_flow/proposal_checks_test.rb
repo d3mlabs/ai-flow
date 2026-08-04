@@ -43,6 +43,19 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     commit(dir, "reindex")
   end
 
+  # A paired promotion removal: the skill (admitted on the base) is deleted
+  # and its index entry dropped — the shape /learn's PROMOTE routing opens
+  # against the source repo.
+  def remove_admitted_learning(dir, index_path:, skill_path:)
+    write(dir, skill_path, "---\nname: one-seam\n---\nAdmitted content.\n")
+    commit(dir, "backfill admitted skill")
+    git(dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+    FileUtils.rm(File.join(dir, skill_path))
+    index = File.join(dir, index_path)
+    File.write(index, File.read(index).sub(/^- \[design\/one-seam\].*\n/, ""))
+    commit(dir, "drop one-seam (promoted to the org tier)")
+  end
+
   def write(dir, relative, content)
     path = File.join(dir, relative)
     FileUtils.mkdir_p(File.dirname(path))
@@ -156,6 +169,23 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     result = run_check(workdir: dir, agent: agent)
 
     Then "the check concludes out-of-scope and never launched the agent"
+    result.is_a?(AiFlow::ProposalChecks::Result::StructureOnly)
+    agent.launches.empty?
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "a removal-only diff (paired promotion removal) skips green without an agent pass" do
+    Given "a PR that only deletes an admitted skill and drops its index entry (#56)"
+    dir = seeded_repo(Dir.mktmpdir("origin-firing-"), index_path: ORG_INDEX)
+    remove_admitted_learning(dir, index_path: ORG_INDEX, skill_path: "skills/one-seam/SKILL.md")
+    agent = FakeAgent.new([])
+
+    When "checking"
+    result = run_check(workdir: dir, agent: agent)
+
+    Then "the deletion never counts as a changed learning and no agent pass launches"
     result.is_a?(AiFlow::ProposalChecks::Result::StructureOnly)
     agent.launches.empty?
 

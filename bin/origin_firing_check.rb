@@ -55,8 +55,8 @@ lines, green =
       "changed learnings: #{result.new_slugs.join(", ")}",
       "fired on origin: #{result.fired.empty? ? "(none)" : result.fired.join(", ")}"], false]
   when AiFlow::ProposalChecks::Result::StructureOnly
-    [["ℹ️ origin-firing (skip): no skill files changed — structure-only diff, " \
-      "origin-firing not applicable"], true]
+    [["ℹ️ origin-firing (skip): no skill files added or edited — structure-only " \
+      "or removal diff, origin-firing not applicable"], true]
   when AiFlow::ProposalChecks::Result::Unmarked
     [["ℹ️ origin-firing (skip): no `learned-from:` marker in the PR body — not a captured " \
       "proposal (migration or manual PR), origin-firing not applicable"], true]
