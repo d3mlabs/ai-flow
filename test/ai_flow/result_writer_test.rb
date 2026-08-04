@@ -111,8 +111,8 @@ class AiFlow::ResultWriterTest < Minitest::Test
   test "distinct model values list out (defensive — a job launches under one policy)" do
     Given "an agent seeded with two distinct models"
     agent = FakeAgent.new([], model: nil)
-    agent.models_used[AiFlow::Command::Ask.new] = AiFlow::ModelSelection::Named.new("claude-fable-5-high")
-    agent.models_used[AiFlow::Command::Edit.new] = AiFlow::ModelSelection::Named.new("gpt-5.3-codex")
+    agent.models_used[AiFlow::Command::Ask.new] = [AiFlow::ModelSelection::Named.new("claude-fable-5-high")]
+    agent.models_used[AiFlow::Command::Edit.new] = [AiFlow::ModelSelection::Named.new("gpt-5.3-codex")]
     writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
 
     When "rendering the footer"
@@ -121,6 +121,26 @@ class AiFlow::ResultWriterTest < Minitest::Test
     Then
     footer == "⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9) · " \
               "model: `claude-fable-5-high`, `gpt-5.3-codex`"
+
+    Cleanup
+    nil
+  end
+
+  test "a command that launched under two policies lists both selections (#49)" do
+    Given "a /learn whose drafting pass resolved a name and whose promote pass fell to the account default"
+    agent = FakeAgent.new([], model: nil)
+    agent.models_used[AiFlow::Command::Learn.new] = [
+      AiFlow::ModelSelection::Named.new("claude-fable-5-high"),
+      AiFlow::ModelSelection::AccountDefault.new,
+    ]
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
+
+    When "rendering the footer"
+    footer = writer.footer("https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then "neither selection hides the other"
+    footer == "⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/9) · " \
+              "model: `claude-fable-5-high`, `cursor default`"
 
     Cleanup
     nil

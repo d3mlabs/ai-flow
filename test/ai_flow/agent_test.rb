@@ -180,7 +180,7 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "models_used records the resolved model per command, once per command" do
+  test "models_used records every launch's resolved model, grouped per command" do
     Given "a config with a default model and two launches of the same command"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  default: gpt-5\n")
@@ -194,12 +194,36 @@ class AiFlow::AgentTest < Minitest::Test
 
     Then
     agent.models_used == {
-      AiFlow::Command::Ask.new => AiFlow::ModelSelection::Named.new("gpt-5"),
-      AiFlow::Command::Build.new => AiFlow::ModelSelection::Named.new("gpt-5"),
+      AiFlow::Command::Ask.new => [AiFlow::ModelSelection::Named.new("gpt-5")] * 2,
+      AiFlow::Command::Build.new => [AiFlow::ModelSelection::Named.new("gpt-5")],
     }
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  test "a later launch under the same command never erases an earlier selection (#49)" do
+    Given "a configured source checkout and a bare clone, both launched under /learn"
+    source = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(source, "models:\n  default: gpt-5\n")
+    clone = Dir.mktmpdir("ai-flow-agent-test-")
+    agent = AiFlow::Agent.new(executor: RecordingExecutor.new)
+
+    When "launching in the source, then in the unconfigured clone"
+    agent.launch(prompt: "p", workdir: source, command: AiFlow::Command::Learn.new)
+    agent.launch(prompt: "p", workdir: clone, command: AiFlow::Command::Learn.new)
+
+    Then "both selections survive, in launch order"
+    agent.models_used == {
+      AiFlow::Command::Learn.new => [
+        AiFlow::ModelSelection::Named.new("gpt-5"),
+        AiFlow::ModelSelection::AccountDefault.new,
+      ],
+    }
+
+    Cleanup
+    FileUtils.rm_rf(source)
+    FileUtils.rm_rf(clone)
   end
 
   test "models_used records AccountDefault when no policy resolved" do
@@ -212,10 +236,29 @@ class AiFlow::AgentTest < Minitest::Test
     agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
-    agent.models_used == { AiFlow::Command::Ask.new => AiFlow::ModelSelection::AccountDefault.new }
+    agent.models_used == { AiFlow::Command::Ask.new => [AiFlow::ModelSelection::AccountDefault.new] }
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  test "policy_root resolves the model from the source checkout, not the execution workdir (#49)" do
+    Given "a configured source checkout and a bare clone to execute in"
+    source = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(source, "models:\n  default: gpt-5\n")
+    clone = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new
+
+    When "launching in the clone under the source's policy"
+    AiFlow::Agent.new(executor: executor)
+      .launch(prompt: "p", workdir: clone, command: AiFlow::Command::Learn.new, policy_root: source)
+
+    Then "the launch carries the source's model"
+    model_flag(executor) == "gpt-5"
+
+    Cleanup
+    FileUtils.rm_rf(source)
+    FileUtils.rm_rf(clone)
   end
 
   test "a models section that is not a mapping is treated as empty" do

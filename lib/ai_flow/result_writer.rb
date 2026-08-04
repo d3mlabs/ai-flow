@@ -78,24 +78,24 @@ module AiFlow
     # In practice this renders one name: a job launches under a single
     # command policy (a batch is one agent pass — run as /edit when any
     # edit is present — and /build --split's fan-out passes all share the
-    # Build key), so models_used holds one entry. Distinct values (if
-    # per-segment passes ever exist) list out — uniq works because
-    # ModelSelection carries value equality. nil for an empty hash (no
-    # agent pass: failure before launch, /split --apply) so the caller's
-    # line stays run-link-only. A class method so the dispatcher's ⏳
-    # status line renders its pre-launch prediction with the same grammar
-    # as the footer.
+    # Build key), and inner passes inherit the request's policy (#49).
+    # Distinct values list out rather than hide each other — uniq works
+    # because ModelSelection carries value equality. nil for an empty hash
+    # (no agent pass: failure before launch, /split --apply) so the
+    # caller's line stays run-link-only. A class method so the
+    # dispatcher's ⏳ status line renders its pre-launch prediction with
+    # the same grammar as the footer.
     #
     class << self
       extend T::Sig
 
-      # @param models [Hash{AiFlow::Command => AiFlow::ModelSelection}]
+      # @param models [Hash{AiFlow::Command => Array<AiFlow::ModelSelection>}]
       # @return [String, nil]
-      sig { params(models: T::Hash[Command, ModelSelection]).returns(T.nilable(String)) }
+      sig { params(models: T::Hash[Command, T::Array[ModelSelection]]).returns(T.nilable(String)) }
       def models_note(models)
         return nil if models.empty?
 
-        "model: #{models.values.uniq.map { |selection| "`#{model_label(selection)}`" }.join(", ")}"
+        "model: #{models.values.flatten.uniq.map { |selection| "`#{model_label(selection)}`" }.join(", ")}"
       end
 
       private
