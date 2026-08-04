@@ -107,6 +107,7 @@ sequenceDiagram
     Human->>GitHub: comment "/edit tighten this section"
     GitHub->>Workflow: issue_comment event (job-level if filter passed)
     Note over Workflow: ack job (GitHub-hosted, outside the<br/>concurrency group) reacts 👀 within<br/>seconds, before dispatch even starts
+    Note over Workflow: authorize job (GitHub-hosted) checks the<br/>author's repo permission, fail closed —<br/>denials never reach a self-hosted runner
     Note over Workflow: runs-on picks the per-command label,<br/>heaviest command wins in a batch<br/>(or dev-login when per_actor_runners)
     Workflow->>GitHub: mint App installation token (required)
     Workflow->>Workflow: checkout target repo + ai-flow (persist-credentials off)
@@ -121,10 +122,15 @@ sequenceDiagram
     Dispatcher->>GitHub: edit the command comment with interleaved results + diff<br/>(replaces the ⏳ line; run link stays as a ⚙️ footer)
 ```
 
-Two deliberate layers of filtering: the workflow-level `if` is a coarse
-`contains()` check so non-command comments never start a job; the Ruby
-dispatcher re-checks the exact line-start grammar and the permission gate
-(`OWNER`/`MEMBER`/`COLLABORATOR`), exiting quietly on prose mentions. A
+Three deliberate layers of filtering: the workflow-level `if` is a coarse
+`contains()` check (plus a Bot-type guard, so the bot's own replies never
+spawn runs) that keeps non-command comments from starting any job; the
+hosted `authorize` job is the authoritative permission gate —
+allow-listed associations pass, anything else hits the
+collaborator-permission API and denies on any failure — run on free
+hosted seconds so a denial never costs self-hosted time; and the Ruby
+dispatcher re-checks the exact line-start grammar plus the same
+permission gate as defense-in-depth, exiting quietly on prose mentions. A
 `concurrency` group serializes jobs per issue/PR, because batches assume a
 stable body snapshot.
 
@@ -133,6 +139,49 @@ dispatcher appends results into the command comment itself
 (`ResultWriter`), so one comment carries both the ask and the outcome. The
 single exception is a standalone `/ask`, which gets a reply comment —
 a question and answer is a legitimate two-comment conversation.
+
+## Public-repo posture
+
+A public caller repo on self-hosted runners is the configuration GitHub
+cautions against, and ai-flow treats its intrinsic gaps as product
+concerns — the guards below ship in the reusable workflow for every
+adopter; the org/repo settings they assume are prescribed in the README's
+adoption section ("Public repos").
+
+**The head-branch YAML quirk, and why a workflow `if` cannot defend
+itself.** `pull_request_review_comment` events run the workflow file from
+the PR *head* branch (empirically confirmed), so a fork PR that edits the
+caller workflow brings its own YAML — including a YAML with every guard
+deleted and `runs-on: [self-hosted, ...]` pointed wherever it likes.
+No condition written *inside* the workflow can defend against a fork that
+rewrites the workflow. The defenses are structural, outside the file: the
+org fork-approval policy ("require approval for all outside
+collaborators") is the human gate on fork YAML executing at all, and the
+runner-group pin (`restricted_to_workflows` naming this reusable
+workflow's path) is the layer that survives a misclicked approval — the
+fork's arbitrary YAML is not the pinned workflow, so no self-hosted
+runner will take its jobs. The two layers deliberately overlap on that
+one path while differing in scope: the policy also guards hosted runners
+and free-minute abuse; the pin only guards the self-hosted group, but
+does it without trusting any human decision. The pin in turn makes
+`ai-commands.yml@main` the runner group's root of trust, which is why the
+workflow path carries CODEOWNERS + required review — whatever lands there
+is what the runner will run.
+
+**Authorize before dispatch.** The job graph is `ack` ∥ (`authorize` →
+`dispatch`): the instant-👀 ack job stays never-blocking, while dispatch
+only starts once the hosted authorize job emits `authorized == 'true'`.
+The coarse `if` must let `CONTRIBUTOR` through (review-comment payloads
+under-report membership — an org MEMBER can arrive as CONTRIBUTOR), which
+on a public repo means anyone who ever landed a PR passes the engine
+filter; before the authorize job, each such comment burned ~1 min of
+self-hosted setup before the dispatcher's in-Ruby gate denied it. Hoisted,
+the authoritative check (allow-listed associations, else the
+collaborator-permission API, fail closed) costs a few hosted seconds —
+free on public repos — and a denial never touches the runner. The
+dispatcher's own gate stays as defense-in-depth, and the Bot-type guard on
+the job conditions keeps the bot's replies (panels quoting a command) from
+spawning runs at all — noise, and a latent self-trigger surface.
 
 ## Dispatcher module map
 
