@@ -237,6 +237,16 @@ module AiFlow
         end
       end
 
+      # One declared slug's org routing: the panel note, and whether the
+      # lesson actually moved org-ward (its repo-local draft pruned). The
+      # draft pipeline needs the routed slugs, not just prose: a routed
+      # lesson's staged paths are prune residue, not repo-local content.
+      class SlugRouting < T::Struct
+        const :slug, String
+        const :note, String
+        const :routed, T::Boolean
+      end
+
       # One build pass's capture in flight: seeded before the agent runs
       # (seed_capture), given its staged learning diff after the commit's
       # `git add -A` (extract_capture), consumed by land_capture. The three
@@ -599,9 +609,12 @@ module AiFlow
         branch = "ai/learn-promote-#{@context.owner_repo.split("/").last}-#{slug}"
         existing = @github.open_pull_request_for_head(knowledge_repo, branch)
         in_clone(knowledge_repo, branch, refine: !existing.nil?) do |clone|
+          # policy_root: the promote pass is the tail of the source repo's
+          # /learn — its model policy travels with the request, not with the
+          # knowledge clone it executes in (#49).
           @agent.launch(
             prompt: promote_prompt(slug, knowledge_repo, skill_text, index_line),
-            workdir: clone, command: Command::Learn.new, force: true,
+            workdir: clone, command: Command::Learn.new, force: true, policy_root: @workdir,
           )
           @executor.refresh_auth!
           slugs = commit_learnings(clone, message: "ai-flow /learn: promote #{slug} to the org tier")
@@ -638,13 +651,15 @@ module AiFlow
 
       # @param root [String] where to read the index — the job checkout for
       #   --promote, the capture worktree for PROMOTE-routed lessons
-      # @return [String, nil] the learning's line in that root's index
+      # @return [String, nil] the learning's index entry in that root's
+      #   index, squished to one line
       sig { params(slug: String, root: String).returns(T.nilable(String)) }
       def index_line_for(slug, root: @workdir)
         path = File.join(root, INDEX_PATH)
         return nil unless File.exist?(path)
 
-        File.readlines(path).find { |line| line.include?("learnings/#{slug}/") }&.strip
+        entry, = split_index_entry(File.readlines(path), slug)
+        entry.empty? ? nil : entry.map(&:strip).join(" ")
       end
 
       # @return [AiFlow::GitHub::PullRequest] the created proposal PR
@@ -681,7 +696,7 @@ module AiFlow
         existing = @github.open_pull_request_for_head(@context.owner_repo, branch)
         pr = in_worktree(branch, refine: false) do |worktree|
           FileUtils.rm_rf(File.join(worktree, SKILLS_DIR, slug))
-          drop_index_line(worktree, slug)
+          drop_index_entry(worktree, slug)
           slugs = commit_learnings(worktree, message: "ai-flow /learn: drop #{slug} (promoted to the org tier)")
           raise GitHub::Error, "nothing to remove for `#{slug}`" if slugs.empty?
 
@@ -697,12 +712,33 @@ module AiFlow
       # @param slug [String]
       # @return [void]
       sig { params(worktree: String, slug: String).void }
-      def drop_index_line(worktree, slug)
+      def drop_index_entry(worktree, slug)
         path = File.join(worktree, INDEX_PATH)
         return unless File.exist?(path)
 
-        kept = File.readlines(path).reject { |line| line.include?("learnings/#{slug}/") }
+        _, kept = split_index_entry(File.readlines(path), slug)
         File.write(path, kept.join)
+      end
+
+      # An index entry spans lines: the `- [domain/slug]` bullet, wrapped
+      # summary continuations, and the `→ …learnings/<slug>/` pointer,
+      # indented under the bullet. Matching pointer-bearing lines alone
+      # orphaned the wrapped summary when the entry was dropped (#48) — an
+      # entry is its whole block: the bullet plus every indented line under
+      # it (stray pointer lines outside a matching bullet still count).
+      #
+      # @param lines [Array<String>] the index file's lines
+      # @param slug [String]
+      # @return [Array(Array<String>, Array<String>)] the slug's entry
+      #   lines, and every other line in order
+      sig { params(lines: T::Array[String], slug: String).returns([T::Array[String], T::Array[String]]) }
+      def split_index_entry(lines, slug)
+        bullet = /\A- \[[^\]]*\/#{Regexp.escape(slug)}\]/
+        in_entry = T.let(false, T::Boolean)
+        lines.partition do |line|
+          in_entry = line.match?(bullet) || (in_entry && line.match?(/\A[ \t]/))
+          in_entry || line.include?("learnings/#{slug}/")
+        end
       end
 
       # @return [AiFlow::GitHub::PullRequest] the created proposal PR
@@ -770,8 +806,8 @@ module AiFlow
       # @param worktree [String] the capture worktree, after the agent pass
       # @param agent_output [String] the pass's result (carries the
       #   PROMOTE line)
-      # @return [Array<String>] panel note lines, one per declared slug
-      sig { params(worktree: String, agent_output: String).returns(T::Array[String]) }
+      # @return [Array<SlugRouting>] one routing per declared slug
+      sig { params(worktree: String, agent_output: String).returns(T::Array[SlugRouting]) }
       def route_promotions(worktree, agent_output)
         slugs = declared_promotions(agent_output)
         return [] if slugs.empty?
@@ -779,8 +815,9 @@ module AiFlow
         knowledge_repo = RepoConfig.load(@workdir).knowledge_repo
         unless knowledge_repo
           return slugs.map do |slug|
-            "ℹ️ `#{slug}` was judged org-tier, but no `knowledge_repo:` is configured in " \
+            note = "ℹ️ `#{slug}` was judged org-tier, but no `knowledge_repo:` is configured in " \
               "`#{RepoConfig::PATH}` — kept repo-local."
+            SlugRouting.new(slug: slug, note: note, routed: false)
           end
         end
 
@@ -803,12 +840,13 @@ module AiFlow
       # @param worktree [String]
       # @param slug [String]
       # @param knowledge_repo [String]
-      # @return [String] the slug's panel note
-      sig { params(worktree: String, slug: String, knowledge_repo: String).returns(String) }
+      # @return [SlugRouting] the slug's routing outcome
+      sig { params(worktree: String, slug: String, knowledge_repo: String).returns(SlugRouting) }
       def route_promotion(worktree, slug, knowledge_repo)
         unless File.exist?(File.join(worktree, SKILLS_DIR, slug, "SKILL.md"))
-          return "ℹ️ the pass declared `PROMOTE: #{slug}` but drafted no `#{SKILLS_DIR}/#{slug}/` " \
+          note = "ℹ️ the pass declared `PROMOTE: #{slug}` but drafted no `#{SKILLS_DIR}/#{slug}/` " \
                  "files — nothing routed."
+          return SlugRouting.new(slug: slug, note: note, routed: false)
         end
 
         org = promote_into_org(
@@ -822,9 +860,9 @@ module AiFlow
         # admitted repo-local (the job checkout has it); a fresh org-worthy
         # lesson or an org-only revision has no repo counterpart to drop.
         lines << removal_note(drop_local_entry(slug, org.pr)) if File.exist?(File.join(@workdir, SKILLS_DIR, slug, "SKILL.md"))
-        lines.join("\n")
+        SlugRouting.new(slug: slug, note: lines.join("\n"), routed: true)
       rescue GitHub::Error => e
-        "⚠️ org routing for `#{slug}` failed (kept repo-local): #{e.message}"
+        SlugRouting.new(slug: slug, note: "⚠️ org routing for `#{slug}` failed (kept repo-local): #{e.message}", routed: false)
       end
 
       # Drops a routed lesson from the capture worktree so the repo-local
@@ -836,7 +874,7 @@ module AiFlow
       sig { params(worktree: String, slug: String).void }
       def prune_local_draft(worktree, slug)
         FileUtils.rm_rf(File.join(worktree, SKILLS_DIR, slug))
-        drop_index_line(worktree, slug)
+        drop_index_entry(worktree, slug)
       end
 
       # ---- The shared draft pipeline (dictated, sweep, scan) ----
@@ -859,13 +897,30 @@ module AiFlow
           # The agent may have run close to the token's lifetime; the write
           # phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
-          promotion_notes = route_promotions(worktree, result)
+          routings = route_promotions(worktree, result)
+          promotion_notes = routings.map(&:note)
           slugs = commit_learnings(worktree)
           next DraftOutcome::Empty.new if slugs.empty?
 
+          # A routed lesson's staged paths are prune residue (its skill's
+          # deletion, its index entry's drop), not repo-local content —
+          # report only what actually stays in the repo proposal.
+          drafted = slugs - routings.select(&:routed).map(&:slug)
+          if routings.any?(&:routed) && named_slugs(drafted).empty?
+            # The routing consumed everything the pass staged: there is no
+            # repo-local proposal left. Mirror the prune onto an existing
+            # draft and close it — never leave (or open) a hollow proposal.
+            if existing
+              push_branch(worktree, source.branch)
+              @github.close_pull_request(@context.owner_repo, existing.number)
+              promotion_notes << "🧹 the repo draft #{existing.html_url} emptied by the routing — closed."
+            end
+            next DraftOutcome::Empty.new
+          end
+
           push_branch(worktree, source.branch)
           pr = existing || open_learning_pr(source, segment)
-          DraftOutcome::Drafted.new(slugs: slugs, pr: pr, refined: !existing.nil?)
+          DraftOutcome::Drafted.new(slugs: drafted, pr: pr, refined: !existing.nil?)
         end
 
         @result_writer.write(@context, [[segment, learn_result(outcome, promotion_notes)]])
@@ -1153,7 +1208,7 @@ module AiFlow
       def land_patch(patch, existing, source, result)
         in_worktree(source.branch, refine: false) do |worktree|
           apply_patch(worktree, patch)
-          promotion_notes = result ? route_promotions(worktree, result) : []
+          promotion_notes = result ? route_promotions(worktree, result).map(&:note) : []
           slugs = commit_learnings(worktree, message: "ai-flow /build: capture learnings from the build pass")
           if slugs.empty?
             next promotion_notes.empty? ? nil : promotion_notes.join("\n")

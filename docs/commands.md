@@ -353,7 +353,9 @@ org entry: the pass drafts the correction under the entry's existing slug
 and declares it. This widens who *initiates* promotion, not what promotion
 is — every routed lesson is still a proposal PR behind the knowledge repo's
 human gate. Without `knowledge_repo:` configured the lesson stays
-repo-local and the panel says so.
+repo-local and the panel says so. A routing that empties the repo proposal
+(the pass's only lessons all moved org-ward) closes an existing draft PR —
+pushed clean first — instead of leaving it hollow.
 
 > 🌐 `http-retries` → org-tier proposal on d3mlabs/knowledge: https://github.com/d3mlabs/knowledge/pull/N
 
