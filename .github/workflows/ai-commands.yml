@@ -93,7 +93,7 @@ jobs:
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
           private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
@@ -151,7 +151,7 @@ jobs:
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
           private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
@@ -232,14 +232,14 @@ jobs:
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
           private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
       - name: Check out the target repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || github.token }}
@@ -255,7 +255,7 @@ jobs:
       # private ai-flow — the App token can (installed org-wide). Public
       # ai-flow forks work with the plain github.token fallback.
       - name: Check out ai-flow (the dispatcher)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: d3mlabs/ai-flow
           path: .ai-flow
