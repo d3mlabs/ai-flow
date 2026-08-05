@@ -196,6 +196,7 @@ module AiFlow
           prompt: batch_prompt(resolved),
           workdir: @workdir,
           command: edits?(resolved) ? Command::Edit.new : Command::Ask.new,
+          repos: [@context.owner_repo],
           force: edits?(resolved),
         )
 

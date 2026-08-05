@@ -290,9 +290,9 @@ class FakeAgent < AiFlow::Agent
     @knowledge_applied = knowledge_applied
   end
 
-  def launch(prompt:, workdir:, command:, force: false, policy_root: workdir)
+  def launch(prompt:, workdir:, command:, repos:, force: false, policy_root: workdir)
     @prompts << prompt
-    @launches << { command: command, force: force, workdir: workdir, policy_root: policy_root }
+    @launches << { command: command, repos: repos, force: force, workdir: workdir, policy_root: policy_root }
     (@models_used[command] ||= []) << model_for(command, policy_root)
     # The block also receives the launch workdir so file-writing fakes can
     # target per-run worktrees; existing narrower blocks ignore the extra arg.

@@ -136,6 +136,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
     Then "the agent got the dictated statement, and a proposal PR opened on ai/learn-c55 — ordinary, not GitHub draft state — with the marker"
     agent.launches.first[:command] == AiFlow::Command::Learn.new
+    # The drafting pass's token covers the command repo only (plans#25).
+    agent.launches.first[:repos] == [REPO]
     agent.prompts.first.include?("DICTATED LESSON")
     agent.prompts.first.include?("prefer a factory over class methods")
     github.calls.include?([:create_pull_request, REPO, "ai/learn-c55", "main"])
@@ -628,6 +630,9 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     # The promote pass runs in the knowledge clone under the source repo's
     # model policy (#49).
     agent.launches.fetch(0)[:policy_root] == dir
+    # Its token spans the knowledge repo it drafts into and the source repo
+    # whose origin the skill names — nothing installation-wide (plans#25).
+    agent.launches.fetch(0)[:repos] == ["d3mlabs/knowledge", REPO]
     executor.command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/knowledge") }
     github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-typed-errors", "main"])
     github.calls.include?([:create_pull_request, REPO, "ai/learn-promote-typed-errors", "main"])

@@ -66,7 +66,11 @@ Division of labor, and why:
   checkout's git config (`persist-credentials: false`), so no git call ever
   relies on a mint-time credential. The App private key enters the Dispatch
   step's env, is read once, and is scrubbed before any subprocess spawns —
-  the agent only ever sees short-lived installation tokens.
+  the agent only ever sees short-lived installation tokens. The agent's own
+  token is further downscoped to the repos its pass declares (every
+  `Agent#launch` names its repo set, and the mint carries an explicit
+  `repositories:` list), so the arbitrary shell it runs under `--force`
+  never holds the dispatcher's installation-wide reach.
 
 ### Roles vs zones
 

@@ -7,17 +7,19 @@ require "openssl"
 require "socket"
 
 # In-memory GitHub App endpoints: installation lookup + token mint, counting
-# mints and handing out sequenced tokens so freshness is observable.
+# mints and handing out sequenced tokens so freshness is observable. Mint
+# request bodies are recorded so scoping is observable too.
 class FakeAppApi
-  attr_reader :mints, :requests
+  attr_reader :mints, :requests, :mint_bodies
 
   def initialize(owner_kind: "orgs")
     @owner_kind = owner_kind
     @mints = 0
     @requests = []
+    @mint_bodies = []
   end
 
-  def call(method, url, _headers)
+  def call(method, url, _headers, body = nil)
     @requests << [method, url]
     case url
     when %r{/#{@owner_kind}/[^/]+/installation\z}
@@ -26,6 +28,7 @@ class FakeAppApi
       [404, JSON.generate(message: "Not Found")]
     when %r{/app/installations/42/access_tokens\z}
       @mints += 1
+      @mint_bodies << body
       [201, JSON.generate(token: "ghs_minted_#{@mints}")]
     else
       [404, JSON.generate(message: "unexpected: #{url}")]
@@ -173,7 +176,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
   test "the mint JWT authenticates as the App and is verifiable with its key" do
     Given "an API that captures the Authorization header"
     captured = T.let(nil, T.nilable(String))
-    http = lambda do |_method, url, headers|
+    http = lambda do |_method, url, headers, _body|
       captured ||= headers.fetch("Authorization")
       if url.end_with?("/orgs/d3mlabs/installation")
         [200, JSON.generate(id: 42)]
@@ -200,9 +203,107 @@ class AiFlow::TokenProviderTest < Minitest::Test
     nil
   end
 
+  test "a scoped token mints with exactly the given repositories, as bare names" do
+    Given "App credentials"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "asking for a token scoped to two repos"
+    token = provider.scoped_token(repositories: ["d3mlabs/ai-flow", "d3mlabs/knowledge"])
+
+    Then "the mint body carries the bare repo names"
+    token == "ghs_minted_1"
+    JSON.parse(T.must(api.mint_bodies.fetch(0))) == { "repositories" => ["ai-flow", "knowledge"] }
+
+    Cleanup
+    nil
+  end
+
+  test "a scoped mint is one-off — it never touches the dispatcher's cached token" do
+    Given "a provider with a young dispatcher token"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+    dispatcher_token = provider.token
+
+    When "minting a scoped token, then asking for the dispatcher token again"
+    scoped = provider.scoped_token(repositories: ["d3mlabs/ai-flow"])
+    after = provider.token
+
+    Then "the scoped mint is its own, and the cached token survives untouched"
+    dispatcher_token == "ghs_minted_1"
+    scoped == "ghs_minted_2"
+    after == "ghs_minted_1"
+
+    Cleanup
+    nil
+  end
+
+  test "repos outside the installation owner drop from the scope" do
+    Given "App credentials installed on d3mlabs"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "the scope names a foreign owner's repo"
+    capture_io { provider.scoped_token(repositories: ["d3mlabs/ai-flow", "someoneelse/thing"]) }
+
+    Then "only the owned repo reaches the mint"
+    JSON.parse(T.must(api.mint_bodies.fetch(0))) == { "repositories" => ["ai-flow"] }
+
+    Cleanup
+    nil
+  end
+
+  test "an all-foreign scope refuses to mint rather than fall back to installation-wide" do
+    Given "App credentials installed on d3mlabs"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "every repo in the scope belongs to another owner"
+    error = assert_raises(AiFlow::TokenProvider::Error) do
+      capture_io { provider.scoped_token(repositories: ["someoneelse/thing"]) }
+    end
+
+    Then "no token minted, and the error names the refusal"
+    error.message.include?("refusing to mint an unscoped agent token")
+    api.mints == 0
+
+    Cleanup
+    nil
+  end
+
+  test "static mode answers its one token for a scoped ask — github.token is repo-scoped by construction" do
+    Given "a static-token provider"
+    provider = AiFlow::TokenProvider.new(
+      app_id: nil, private_key_pem: nil, owner: "d3mlabs", static_token: "ghp_static",
+    )
+
+    When "asking scoped"
+    token = provider.scoped_token(repositories: ["d3mlabs/ai-flow"])
+
+    Then
+    token == "ghp_static"
+
+    Cleanup
+    nil
+  end
+
+  test "ambient mode answers nil for a scoped ask, like the plain token" do
+    Given "an empty provider"
+    provider = AiFlow::TokenProvider.new(app_id: nil, private_key_pem: nil, owner: nil)
+
+    When "asking scoped"
+    token = provider.scoped_token(repositories: ["d3mlabs/ai-flow"])
+
+    Then
+    token.nil?
+
+    Cleanup
+    nil
+  end
+
   test "a failed mint raises with the status and body" do
     Given "an API that rejects the installation lookup everywhere"
-    http = ->(_method, _url, _headers) { [401, "Bad credentials"] }
+    http = ->(_method, _url, _headers, _body) { [401, "Bad credentials"] }
     provider = build_provider(http: http, clock: -> { Time.at(0) })
 
     When "asking for the token"

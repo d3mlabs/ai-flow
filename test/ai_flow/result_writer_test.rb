@@ -94,8 +94,8 @@ class AiFlow::ResultWriterTest < Minitest::Test
   test "one distinct model collapses to a single footer name, whatever the command mix" do
     Given "an agent whose /ask and /edit both resolved to the same model"
     agent = FakeAgent.new(["out", "out"], model: "claude-fable-5-high")
-    agent.launch(prompt: "p", workdir: ".", command: AiFlow::Command::Ask.new)
-    agent.launch(prompt: "p", workdir: ".", command: AiFlow::Command::Edit.new)
+    agent.launch(prompt: "p", workdir: ".", command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    agent.launch(prompt: "p", workdir: ".", command: AiFlow::Command::Edit.new, repos: ["d3mlabs/repo"])
     writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
 
     When "rendering the footer"

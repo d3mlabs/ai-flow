@@ -43,6 +43,19 @@ module AiFlow
       @token_provider&.refresh!
     end
 
+    # The auth overlay for an agent launch (plans#25): same shape as the
+    # per-spawn default, but the token is downscoped to the run's declared
+    # repos, so the arbitrary shell the agent runs under --force never holds
+    # the dispatcher's installation-wide reach. Callers pass it as the env:
+    # overlay, which wins key-by-key over the default injection.
+    #
+    # @param repositories [Array<String>] "owner/repo" names the run touches
+    # @return [Hash{String => String}] empty without credentials (ambient)
+    sig { params(repositories: T::Array[String]).returns(T::Hash[String, String]) }
+    def scoped_auth_env(repositories:)
+      auth_overlay(@token_provider&.scoped_token(repositories: repositories))
+    end
+
     # @param argv [Array<String>] command and arguments
     # @param stdin [String, nil] data piped to the subprocess
     # @param chdir [String, nil] working directory
@@ -135,7 +148,13 @@ module AiFlow
     # @return [Hash{String => String}]
     sig { returns(T::Hash[String, String]) }
     def auth_env
-      token = @token_provider&.token
+      auth_overlay(@token_provider&.token)
+    end
+
+    # @param token [String, nil]
+    # @return [Hash{String => String}] empty when there is no token
+    sig { params(token: T.nilable(String)).returns(T::Hash[String, String]) }
+    def auth_overlay(token)
       return {} unless token
 
       basic = ["x-access-token:#{token}"].pack("m0")

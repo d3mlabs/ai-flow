@@ -68,6 +68,9 @@ module AiFlow
     # @param prompt [String]
     # @param workdir [String] repo checkout the agent works in
     # @param command [AiFlow::Command] the policy the pass runs under
+    # @param repos [Array<String>] the "owner/repo" set this pass may touch —
+    #   its GH_TOKEN is downscoped to exactly this list (plans#25), so every
+    #   launch site declares its blast radius explicitly
     # @param force [Boolean] allow file edits/commands without approval (used
     #   by /edit-on-PR and /build, which work in disposable worktrees)
     # @param policy_root [String] the checkout whose .github/ai-flow.yml
@@ -77,10 +80,16 @@ module AiFlow
     # @return [String] the agent's result text
     # @raise [Error] when the agent fails
     sig do
-      params(prompt: String, workdir: String, command: Command, force: T::Boolean, policy_root: String)
-        .returns(String)
+      params(
+        prompt: String,
+        workdir: String,
+        command: Command,
+        repos: T::Array[String],
+        force: T::Boolean,
+        policy_root: String,
+      ).returns(String)
     end
-    def launch(prompt:, workdir:, command:, force: false, policy_root: workdir)
+    def launch(prompt:, workdir:, command:, repos:, force: false, policy_root: workdir)
       # --trust: headless runs can't answer the workspace-trust prompt, and the
       # workdir is always a CI checkout of a repo we dispatched for.
       argv = [binary, "-p", "--output-format", "stream-json", "--trust"]
@@ -103,11 +112,16 @@ module AiFlow
       argv << "--force" if force
 
       log_group("ai-flow agent prompt (/#{word})", prompt)
+      $stdout.puts "ai-flow agent token scope (/#{word}): #{repos.join(", ")}"
       result = T.let(nil, T.nilable(String))
       assistant_texts = T.let([], T::Array[String])
+      # The env: overlay wins over the executor's default auth injection, so
+      # this is what replaces the installation-wide token with the scoped one
+      # for the agent subprocess.
+      scoped_env = @executor.scoped_auth_env(repositories: repos)
       # T.unsafe: splatting a runtime-built argv into stream's rest param is
       # beyond Sorbet's static splat support (srb.help/7019).
-      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir) do |line|
+      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir, env: scoped_env) do |line|
         event = parse_event(line)
         result = event["result"].to_s if event && event["type"] == "result"
         render_event(word, line, event, assistant_texts)

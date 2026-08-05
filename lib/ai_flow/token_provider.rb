@@ -62,7 +62,7 @@ module AiFlow
     # @param owner [String, nil] the org/user the App is installed on
     # @param static_token [String, nil] fallback token when no App key
     # @param api_url [String] GitHub API root
-    # @param http [#call, nil] transport `(method, url, headers) ->
+    # @param http [#call, nil] transport `(method, url, headers, body) ->
     #   [status, body]`, injectable for tests
     # @param clock [#call] returns the current Time, injectable for tests
     sig do
@@ -130,6 +130,28 @@ module AiFlow
       end
     end
 
+    # A token limited to the given repos — what the agent subprocess gets
+    # (plans#25): the dispatcher's own token spans the installation, but the
+    # agent runs arbitrary shell under --force, so its GH_TOKEN carries only
+    # the run's declared target set. Minted fresh per call (an agent launch
+    # is rare enough that caching would only add staleness states).
+    #
+    # Static mode answers its one token unscoped — that mode is the degraded
+    # github.token fallback, which is already single-repo by construction.
+    # Ambient answers nil, like #token.
+    #
+    # @param repositories [Array<String>] "owner/repo" names
+    # @return [String, nil]
+    sig { params(repositories: T::Array[String]).returns(T.nilable(String)) }
+    def scoped_token(repositories:)
+      case (mode = @mode)
+      when AuthMode::App then mode.scoped_token(repositories)
+      when AuthMode::Static then mode.token
+      when AuthMode::Ambient then nil
+      else T.absurd(mode)
+      end
+    end
+
     private
 
     # @param value [String, nil]
@@ -145,15 +167,18 @@ module AiFlow
     # @param method [String]
     # @param url [String]
     # @param headers [Hash{String => String}]
+    # @param body [String, nil] JSON request body (the scoped mint's
+    #   repositories list)
     # @return [Array(Integer, String)] status code and response body
     sig do
-      params(method: String, url: String, headers: T::Hash[String, String])
+      params(method: String, url: String, headers: T::Hash[String, String], body: T.nilable(String))
         .returns([Integer, String])
     end
-    def default_http(method, url, headers)
+    def default_http(method, url, headers, body = nil)
       uri = URI.parse(url)
       response = Net::HTTP.start(T.must(uri.host), uri.port, use_ssl: uri.scheme == "https") do |http|
         request = (method == "POST" ? Net::HTTP::Post : Net::HTTP::Get).new(uri, headers)
+        request.body = body if body
         http.request(request)
       end
       [response.code.to_i, response.body]
@@ -190,7 +215,7 @@ module AiFlow
         #   nilable env truth (unset outside Actions); a nil owner surfaces
         #   as an installation-lookup Error at mint time
         # @param api_url [String] GitHub API root, no trailing slash
-        # @param http [#call] transport `(method, url, headers) ->
+        # @param http [#call] transport `(method, url, headers, body) ->
         #   [status, body]`
         # @param clock [#call] returns the current Time
         sig do
@@ -235,13 +260,42 @@ module AiFlow
           @minted_at = @clock.call
         end
 
+        # A one-off token limited to the given repos (never cached — see
+        # TokenProvider#scoped_token). The mint API takes bare repo names
+        # within this installation's owner, so cross-owner entries are
+        # dropped with a warning (the agent simply won't reach them — fail
+        # closed); an empty result would silently mint installation-wide,
+        # so it raises instead.
+        #
+        # @param repositories [Array<String>] "owner/repo" names
+        # @return [String]
+        # @raise [Error] when no repository belongs to this installation
+        sig { params(repositories: T::Array[String]).returns(String) }
+        def scoped_token(repositories)
+          owned, foreign = repositories.uniq.partition do |repo|
+            repo.split("/").first.to_s.casecmp?(@owner.to_s)
+          end
+          foreign.each do |repo|
+            warn "ai-flow: #{repo} is outside the #{@owner} installation — the agent token will not cover it."
+          end
+          if owned.empty?
+            raise Error, "no repository in #{repositories.inspect} belongs to the #{@owner} installation — " \
+                         "refusing to mint an unscoped agent token"
+          end
+
+          mint(repositories: owned.map { |repo| repo.split("/").fetch(-1) })
+        end
+
         private
 
+        # @param repositories [Array<String>, nil] bare repo names to scope
+        #   the token to; nil mints installation-wide (the dispatcher's own)
         # @return [String] a fresh installation token
-        sig { returns(String) }
-        def mint
+        sig { params(repositories: T.nilable(T::Array[String])).returns(String) }
+        def mint(repositories: nil)
           jwt = app_jwt
-          response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt)
+          body = repositories && JSON.generate(repositories: repositories)
+          response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt, body: body)
           response.fetch("token")
         end
 
@@ -289,17 +343,22 @@ module AiFlow
         # @param method [String]
         # @param path [String]
         # @param jwt [String]
+        # @param body [String, nil] JSON request body
         # @return [Hash] the parsed response body
         # @raise [Error] on any non-2xx answer
-        sig { params(method: String, path: String, jwt: String).returns(T::Hash[String, T.untyped]) }
-        def request(method, path, jwt)
-          status, body = @http.call(
+        sig do
+          params(method: String, path: String, jwt: String, body: T.nilable(String))
+            .returns(T::Hash[String, T.untyped])
+        end
+        def request(method, path, jwt, body: nil)
+          status, response_body = @http.call(
             method, "#{@api_url}/#{path}",
             { "Authorization" => "Bearer #{jwt}", "Accept" => "application/vnd.github+json" },
+            body,
           )
-          raise Error, "GitHub App auth: #{method} #{path} returned #{status}: #{body.to_s[0, 200]}" unless (200..299).cover?(status)
+          raise Error, "GitHub App auth: #{method} #{path} returned #{status}: #{response_body.to_s[0, 200]}" unless (200..299).cover?(status)
 
-          JSON.parse(body)
+          JSON.parse(response_body)
         end
       end
 

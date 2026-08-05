@@ -155,7 +155,7 @@ module AiFlow
       origin = origin_ref(@github.issue(owner_repo, number).body)
       return Result::Unmarked.new unless origin
 
-      fired = rerun_retrieval(workdir, origin)
+      fired = rerun_retrieval(workdir, owner_repo, origin)
       if (slugs - fired).empty?
         Result::Pass.new(new_slugs: slugs, fired: fired)
       else
@@ -213,13 +213,16 @@ module AiFlow
     # contract line, never on prose.
     #
     # @param workdir [String]
+    # @param owner_repo [String] the proposal PR's repo, the pass's one scope
+    #   (the origin thread arrives spliced into the prompt, never fetched)
     # @param origin [OriginRef]
     # @return [Array<String>] slugs the pass declared it would load
     # @raise [Error] when the pass never declares the contract line
-    sig { params(workdir: String, origin: OriginRef).returns(T::Array[String]) }
-    def rerun_retrieval(workdir, origin)
+    sig { params(workdir: String, owner_repo: String, origin: OriginRef).returns(T::Array[String]) }
+    def rerun_retrieval(workdir, owner_repo, origin)
       result = @agent.launch(
-        prompt: retrieval_prompt(workdir, origin), workdir: workdir, command: Command::Learn.new, force: false,
+        prompt: retrieval_prompt(workdir, origin), workdir: workdir, command: Command::Learn.new,
+        repos: [owner_repo], force: false,
       )
       # The last declaration wins when the pass rambles through several.
       match = result.lines.reverse_each.filter_map { |line| FIRED_LINE.match(line) }.first

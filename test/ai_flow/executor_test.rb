@@ -24,6 +24,10 @@ class ScriptedTokenProvider < AiFlow::TokenProvider
     @refreshes += 1
     @current = @tokens[@refreshes] || @tokens.last
   end
+
+  def scoped_token(repositories:)
+    "#{@current}_scoped_to_#{repositories.join("+")}"
+  end
 end unless defined?(ScriptedTokenProvider)
 
 transform!(RSpock::AST::Transformation)
@@ -153,6 +157,55 @@ class AiFlow::ExecutorTest < Minitest::Test
 
     Then "both are present"
     out == "ghs_alpha,hello"
+
+    Cleanup
+    nil
+  end
+
+  test "scoped_auth_env carries the downscoped token in the same env shape as the default injection" do
+    Given "an executor with a token provider"
+    provider = ScriptedTokenProvider.new(["ghs_alpha"])
+    executor = AiFlow::Executor.new(token_provider: provider)
+
+    When "building the agent's scoped overlay"
+    env = executor.scoped_auth_env(repositories: ["d3mlabs/ai-flow"])
+
+    Then "GH_TOKEN and the git extraheader both carry the scoped token"
+    env.fetch("GH_TOKEN") == "ghs_alpha_scoped_to_d3mlabs/ai-flow"
+    env.fetch("GIT_CONFIG_VALUE_0") ==
+      "AUTHORIZATION: basic #{["x-access-token:ghs_alpha_scoped_to_d3mlabs/ai-flow"].pack("m0")}"
+
+    Cleanup
+    nil
+  end
+
+  test "a spawn with the scoped overlay overrides the default installation-wide injection" do
+    Given "an executor with a token provider"
+    provider = ScriptedTokenProvider.new(["ghs_alpha"])
+    executor = AiFlow::Executor.new(token_provider: provider)
+
+    When "capturing with the scoped overlay as the caller env"
+    out, = executor.capture(
+      RUBY, "-e", 'print ENV["GH_TOKEN"]',
+      env: executor.scoped_auth_env(repositories: ["d3mlabs/ai-flow"]),
+    )
+
+    Then "the child sees the scoped token, not the dispatcher's"
+    out == "ghs_alpha_scoped_to_d3mlabs/ai-flow"
+
+    Cleanup
+    nil
+  end
+
+  test "without a provider the scoped overlay is empty — ambient auth stays ambient" do
+    Given "a bare executor"
+    executor = AiFlow::Executor.new
+
+    When "building the agent's scoped overlay"
+    env = executor.scoped_auth_env(repositories: ["d3mlabs/ai-flow"])
+
+    Then
+    env.empty?
 
     Cleanup
     nil

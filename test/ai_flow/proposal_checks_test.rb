@@ -113,6 +113,9 @@ class AiFlow::ProposalChecksTest < Minitest::Test
     agent.launches.first[:command] == AiFlow::Command::Learn.new
     agent.launches.first[:force] == false
     agent.launches.first[:workdir] == dir
+    # The pass's token covers only the proposal repo — the origin thread is
+    # spliced into the prompt, never fetched by the agent (plans#25).
+    agent.launches.first[:repos] == [PROPOSAL_REPO]
     agent.prompts.first.include?("- [ruby/typed-errors] Raising an error? Use a typed class.")
     agent.prompts.first.include?("Error handling cleanup")
     agent.prompts.first.include?("Raising bare strings broke retries.")

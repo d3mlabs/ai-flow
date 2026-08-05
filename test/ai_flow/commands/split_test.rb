@@ -44,6 +44,9 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     run_split(github: github, agent: agent)
 
     Then "Client UI was created via GraphQL, Old approach closed (never deleted), Server API kept"
+    # The propose pass's token covers the command repo only — the routing
+    # menu is embedded in its prompt, never fetched (plans#25).
+    agent.launches.first[:repos] == [REPO]
     github.calls.any? { |kind, arg| kind == :graphql && arg.is_a?(Hash) && arg[:title] == "Client UI" }
     github.calls.none? { |kind, arg| kind == :graphql && arg.is_a?(Hash) && arg[:title] == "Server API" }
     github.issue(REPO, 2).state == "closed"
