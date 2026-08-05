@@ -126,6 +126,7 @@ module AiFlow
         @prefix = prefix
         @org_invariants = org_invariants
         @learn = learn
+        @provenance = T.let(Provenance.new(github: github, owner_repo: context.owner_repo), Provenance)
       end
 
       # @param segment [CommentParser::Segment]
@@ -311,20 +312,44 @@ module AiFlow
 
       # Unresolved review threads, minus those a command started (a threaded
       # /ask and its answer are a handled conversation, not outstanding
-      # feedback).
+      # feedback). Each surviving thread carries only its write-authorized
+      # comments (plans#24) — the pass runs with force, so third-party thread
+      # content is an injection surface.
       #
       # @return [Array<AiFlow::GitHub::ReviewThread>]
       sig { returns(T::Array[GitHub::ReviewThread]) }
       def sweepable_threads
         @github.unresolved_review_threads(@context.owner_repo, @context.number)
                .reject { |thread| command_comment?(thread.comments.first&.body.to_s) }
+               .filter_map { |thread| trusted_thread(thread) }
+      end
+
+      # The thread reduced to its trusted comments; nil when none remain (a
+      # fully third-party thread is never swept — and never replied to,
+      # which is the right non-engagement for drive-by content).
+      #
+      # @param thread [AiFlow::GitHub::ReviewThread]
+      # @return [AiFlow::GitHub::ReviewThread, nil]
+      sig { params(thread: GitHub::ReviewThread).returns(T.nilable(GitHub::ReviewThread)) }
+      def trusted_thread(thread)
+        kept = thread.comments.select { |comment| @provenance.trusted?(comment.author) }
+        return nil if kept.empty?
+
+        GitHub::ReviewThread.new(
+          path: thread.path,
+          diff_hunk: thread.diff_hunk,
+          first_comment_id: thread.first_comment_id,
+          comments: kept,
+        )
       end
 
       # Conversation comments have no resolved state, so "unaddressed" is a
       # heuristic: comments newer than the last ai-flow commit on the branch
       # (all of them when the bot never committed), excluding the command
       # comment itself, the bot's own comments, and earlier command comments
-      # (their own runs already handled them).
+      # (their own runs already handled them). Only write-authorized authors
+      # pass (plans#24): a trusted user includes third-party feedback by
+      # quoting it in their own comment.
       #
       # @return [Array<AiFlow::GitHub::Comment>]
       sig { params(since: T.nilable(Time)).returns(T::Array[GitHub::Comment]) }
@@ -334,6 +359,7 @@ module AiFlow
                .reject { |comment| comment.author == CommitIdentity.bot_login }
                .reject { |comment| since && comment.created_at <= since }
                .reject { |comment| command_comment?(comment.body) }
+               .select { |comment| @provenance.trusted?(comment.author) }
                .map { |comment| comment.with_body(strip_details(comment.body)) }
       end
 
@@ -386,6 +412,7 @@ module AiFlow
           #{feedback_descriptions(threads, comments)}
 
           #{org_invariants_section}Rules:
+          - #{Provenance::FENCE_RULE}
           - The instruction, when present, is the priority; the feedback items are scope and context.
           - Address each review thread on its merits — a thread may need a code change, or just an explanation of why none is needed.
           - `gh` is available: inspect failing checks with `gh pr checks #{@context.number}` and `gh run view` when CI is part of the feedback.
@@ -720,7 +747,9 @@ module AiFlow
           #{parent_context(issue)}
           #{extra_instruction.empty? ? "" : "Additional instruction: #{extra_instruction}"}
 
-          #{org_invariants_section}Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
+          #{org_invariants_section}#{Provenance::FENCE_RULE}
+
+          Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
           #{capture_section(capture)}
         PROMPT
       end
@@ -763,7 +792,9 @@ module AiFlow
       # Sub-issues are thin tracking shards — the parent plan is the spec.
       # The native parent relationship (never prose) locates it, and the
       # sibling titles bound this subtask's scope so wave-built sub-issues
-      # don't overlap.
+      # don't overlap. The parent body is auto-ingested (no human pointed the
+      # command at it), so it only splices when its author is write-authorized
+      # (plans#24); sibling titles ride the write-gated sub-issue attachment.
       #
       # @return [String] empty for parentless issues
       sig { params(issue: GitHub::Issue).returns(String) }
@@ -781,12 +812,25 @@ module AiFlow
         <<~CONTEXT
           This issue is one subtask of the parent plan #{parent_repo}##{parent.number}: #{parent.title}
           <<<PARENT PLAN>>>
-          #{PlanBody.from_issue_body(parent.body)}
+          #{parent_plan_body(parent)}
           <<<END PARENT PLAN>>>
 
           Sibling subtasks — OUT OF SCOPE here, implement only this issue's subtask:
           #{sibling_list.empty? ? "(none)" : sibling_list}
         CONTEXT
+      end
+
+      # @param parent [AiFlow::GitHub::Issue]
+      # @return [String] the parent body, or an omission marker when its
+      #   author lacks write access
+      sig { params(parent: GitHub::Issue).returns(String) }
+      def parent_plan_body(parent)
+        unless @provenance.trusted?(parent.author)
+          return "(parent plan body omitted — its author has no write access on this repo; " \
+                 "a maintainer can quote the relevant parts in the /build instruction)"
+        end
+
+        PlanBody.from_issue_body(parent.body)
       end
 
       # Commit the staged changes — the caller has already staged the tree

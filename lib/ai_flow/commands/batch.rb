@@ -142,6 +142,7 @@ module AiFlow
         @rich_diff = rich_diff
         @result_writer = result_writer
         @workdir = workdir
+        @provenance = T.let(Provenance.new(github: github, owner_repo: context.owner_repo), Provenance)
       end
 
       # @param segments [Array<CommentParser::Segment>]
@@ -266,17 +267,21 @@ module AiFlow
       end
 
       # The earliest comment containing the quote — later matches are usually
-      # re-quotes of the original.
+      # re-quotes of the original. The quote itself is trusted content (the
+      # command author chose to quote it), but expanding to the source
+      # comment's *full body* is auto-ingestion: only write-authorized
+      # authors get the expansion (plans#24); an untrusted source degrades to
+      # the verbatim quote.
       #
       # @param quote [String]
       # @param comments [Array<AiFlow::GitHub::Comment>] the thread
       #   (see #discussion_comments)
-      # @return [Anchor] DiscussionQuote when a source comment was found,
-      #   UnresolvedQuote otherwise
+      # @return [Anchor] DiscussionQuote when a trusted source comment was
+      #   found, UnresolvedQuote otherwise
       sig { params(quote: String, comments: T::Array[GitHub::Comment]).returns(Anchor) }
       def discussion_anchor(quote, comments)
         comment = comments.find { |candidate| PlanBody.locate_quote(candidate.body, quote) }
-        return Anchor::UnresolvedQuote.new(quote: quote) unless comment
+        return Anchor::UnresolvedQuote.new(quote: quote) unless comment && @provenance.trusted?(comment.author)
 
         Anchor::DiscussionQuote.new(
           quote: quote,
@@ -312,6 +317,7 @@ module AiFlow
           #{segment_descriptions}
 
           Rules:
+          - #{Provenance::FENCE_RULE}
           - /edit segments: edit `#{plan_filename}` to apply the instruction. The quote marks where the feedback points, not a boundary — apply the instruction's implications wherever the document needs them, and keep the whole document internally consistent in logic and writing style.
           - Apply ALL /edit segments holistically in one editing pass. If two segments genuinely contradict each other, apply neither, and say so in both segments' results starting with "CONFLICT:".
           - /ask segments: answer the question against the document and the repository you are checked out in. Make no changes for /ask.

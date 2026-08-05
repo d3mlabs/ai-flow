@@ -38,6 +38,9 @@ module AiFlow::OrgInvariantsTest::Then; end
 module AiFlow::PlanBodyTest::Cleanup; end
 module AiFlow::PlanBodyTest::Expect; end
 module AiFlow::ProposalChecksTest::Cleanup; end
+module AiFlow::ProvenanceTest::Cleanup; end
+module AiFlow::ProvenanceTest::Expect; end
+module AiFlow::ProvenanceTest::Where; end
 module AiFlow::RepoConfigTest::Cleanup; end
 module AiFlow::RepoConfigTest::Expect; end
 module AiFlow::ResultWriterTest::Cleanup; end
