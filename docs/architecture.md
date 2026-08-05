@@ -183,6 +183,22 @@ dispatcher's own gate stays as defense-in-depth, and the Bot-type guard on
 the job conditions keeps the bot's replies (panels quoting a command) from
 spawning runs at all — noise, and a latent self-trigger surface.
 
+**Content provenance.** The gates above decide who may *command*; the
+provenance gate (`Provenance`, plans#24) decides whose *content* the
+assembled prompts may carry. Commands splice text the command author never
+wrote — review threads, conversation comments, parent-plan bodies, the
+origin-firing replay — and the passes consuming it run with force, so a
+hostile comment on a public surface is a prompt-injection vector. Every
+auto-ingested piece filters to authors holding write/admin on the repo it
+came from (fail closed, verdicts logged in the job log). Two deliberate
+admissions: the command surface's own body is trusted because a
+write-authorized human pointed the command at it, and untrusted content
+enters when a trusted user quotes it in their own comment — quoting is the
+act of vouching. As defense-in-depth, every prompt that carries spliced
+GitHub content also carries a fence rule declaring it data, not
+instructions, and `Agent` prints each assembled prompt in the run log so
+what the model actually saw is auditable.
+
 ## Dispatcher module map
 
 Everything under `lib/ai_flow/`. The runtime gem surface is exactly

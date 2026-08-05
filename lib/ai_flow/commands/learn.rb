@@ -318,6 +318,7 @@ module AiFlow
         @workdir = workdir
         @prefix = prefix
         @org_invariants = org_invariants
+        @provenance = T.let(Provenance.new(github: github, owner_repo: context.owner_repo), Provenance)
         # Build-capture in flight; nil between build passes.
         @capture = T.let(nil, T.nilable(Capture))
       end
@@ -989,6 +990,8 @@ module AiFlow
           #{learning_definition}
 
           #{evidence_section(segment, source)}
+          #{Provenance::FENCE_RULE}
+
           #{org_invariants_section}#{shared_rubric}
 
           If nothing here generalizes into a learning, WRITE NOTHING and say so — an empty capture is a valid, common outcome.
@@ -1062,7 +1065,10 @@ module AiFlow
 
       # PR: description + unresolved review threads + conversation. Issue:
       # body + comment discussion. Comments carry the lessons; the checkout
-      # carries the code they're about.
+      # carries the code they're about. The subject body is the surface a
+      # write-authorized human pointed /learn at — trusted by that act; the
+      # threads and comments are auto-ingested, so they filter to
+      # write-authorized authors (plans#24).
       #
       # @return [String]
       sig { returns(String) }
@@ -1075,11 +1081,15 @@ module AiFlow
         blocks.join("\n\n")
       end
 
-      # @return [Array<String>]
+      # @return [Array<String>] one block per thread that retains trusted
+      #   comments — a fully third-party thread contributes nothing
       sig { returns(T::Array[String]) }
       def thread_blocks
-        @github.unresolved_review_threads(@context.owner_repo, @context.number).map do |thread|
-          conversation = thread.comments.map { |comment| "@#{comment.author}: #{comment.body}" }.join("\n")
+        @github.unresolved_review_threads(@context.owner_repo, @context.number).filter_map do |thread|
+          kept = thread.comments.select { |comment| @provenance.trusted?(comment.author) }
+          next nil if kept.empty?
+
+          conversation = kept.map { |comment| "@#{comment.author}: #{comment.body}" }.join("\n")
           "REVIEW THREAD (#{thread.path})\n#{thread.diff_hunk}\n#{conversation}"
         end
       end
@@ -1090,6 +1100,7 @@ module AiFlow
         @github.issue_comments(@context.owner_repo, @context.number)
                .reject { |comment| comment.id == @context.comment_id }
                .reject { |comment| comment.author == CommitIdentity.bot_login }
+               .select { |comment| @provenance.trusted?(comment.author) }
                .map { |comment| "Comment from @#{comment.author}:\n#{comment.body}" }
       end
 

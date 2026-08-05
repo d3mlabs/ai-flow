@@ -248,6 +248,8 @@ module AiFlow
         #{origin_evidence(origin)}
         <<<END CONTEXT>>>
 
+        #{Provenance::FENCE_RULE}
+
         Decide which learnings you would consult before working on this task: read the index cues and select every entry whose trigger matches this context — you may open skill files in this checkout to confirm relevance. Do NOT solve the task, and do NOT write any files.
 
         OUTPUT: exactly one final line — `FIRED: slug-one, slug-two` (the skill folder names you would load) or `FIRED: (none)`.
@@ -271,15 +273,29 @@ module AiFlow
     # threads — the conversation carries the lesson's trigger in practice,
     # and the issue surface has no threads at all.
     #
+    # Provenance (plans#24): this replay is fully automatic — no human
+    # pointed a command at the origin thread for this run — so both the body
+    # and the comments filter to write-authorized authors, judged against the
+    # ORIGIN repo (a knowledge-repo proposal replays a thread from the repo
+    # the lesson came from).
+    #
     # @param origin [OriginRef]
     # @return [String]
     sig { params(origin: OriginRef).returns(String) }
     def origin_evidence(origin)
+      provenance = Provenance.new(github: @github, owner_repo: origin.owner_repo)
       subject = @github.issue(origin.owner_repo, origin.number)
-      blocks = ["#{origin.owner_repo}##{origin.number}: #{subject.title}", "<<<BODY>>>\n#{subject.body}\n<<<END BODY>>>"]
+      body =
+        if provenance.trusted?(subject.author)
+          subject.body
+        else
+          "(body omitted — its author has no write access on #{origin.owner_repo})"
+        end
+      blocks = ["#{origin.owner_repo}##{origin.number}: #{subject.title}", "<<<BODY>>>\n#{body}\n<<<END BODY>>>"]
       blocks.concat(
         @github.issue_comments(origin.owner_repo, origin.number)
                .reject { |comment| comment.author == CommitIdentity.bot_login }
+               .select { |comment| provenance.trusted?(comment.author) }
                .map { |comment| "Comment from @#{comment.author}:\n#{comment.body}" },
       )
       blocks.join("\n\n")

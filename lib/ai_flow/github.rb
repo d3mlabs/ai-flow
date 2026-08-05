@@ -28,6 +28,10 @@ module AiFlow
       const :html_url, String
       prop :state, String
       const :repo, String
+      # The issue author's login, "" for ghost/deleted users — the
+      # provenance gate's input when a body is ingested without a human
+      # pointing a command at it (parent plans, origin replays).
+      const :author, String, default: ""
 
       # @return [Boolean] whether the issue is open
       sig { returns(T::Boolean) }
@@ -246,7 +250,7 @@ module AiFlow
       query($owner: String!, $name: String!, $number: Int!) {
         repository(owner: $owner, name: $name) {
           issue(number: $number) {
-            parent { number title body url state repository { nameWithOwner } }
+            parent { number title body url state author { login } repository { nameWithOwner } }
           }
         }
       }
@@ -271,6 +275,8 @@ module AiFlow
         body: parent["body"] || "",
         html_url: parent.fetch("url"),
         state: parent.fetch("state").downcase,
+        # dig: ghost/deleted users surface as a null author object.
+        author: parent.dig("author", "login").to_s,
         repo: parent.fetch("repository").fetch("nameWithOwner"),
       )
     end
@@ -469,6 +475,8 @@ module AiFlow
         body: data["body"] || "",
         html_url: data.fetch("html_url"),
         state: data.fetch("state"),
+        # dig: ghost/deleted users surface as a null user object.
+        author: data.dig("user", "login").to_s,
         repo: data.fetch("repository_url").split("/repos/").fetch(-1),
       )
     end

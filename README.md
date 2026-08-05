@@ -1,5 +1,6 @@
 # ai-flow
-[![codecov](https://codecov.io/gh/d3mlabs/ai-flow/branch/main/graph/badge.svg)](https://codecov.io/gh/d3mlabs/ai-flow)
+
+[codecov](https://codecov.io/gh/d3mlabs/ai-flow)
 
 ai-flow is the organization's learning loop: agents and humans capture
 durable lessons from the places work already happens, every lesson enters as
@@ -43,18 +44,20 @@ flowchart LR
     DEV -- "index rules + linked skills" --> IDE
 ```
 
+
+
 - **State** is the repos themselves — nothing else holds memory. Two tiers,
-  one artifact: a *learning* (an index line plus a detail skill) lives in
-  each target repo (repo tier) or in the org's knowledge repo (org tier).
+one artifact: a *learning* (an index line plus a detail skill) lives in
+each target repo (repo tier) or in the org's knowledge repo (org tier).
 - **Write path** is this repo: every memory mutation enters as a proposal PR,
-  from either surface. Capture, proposal, and verification — never admission.
+from either surface. Capture, proposal, and verification — never admission.
 - **The gate** is human merge, tiered by blast radius — the only component
-  that isn't software.
+that isn't software.
 - **Read path** is `dev`: everything that scaffolds, distributes, and
-  materializes admitted state onto machines, checkouts, and sessions.
+materializes admitted state onto machines, checkouts, and sessions.
 - **Surfaces** — GitHub comments and Cursor sessions — are twins: each is
-  both a capture entry point and a retrieval endpoint. `/learn` and the
-  capture-learning skill are the same operation on different surfaces.
+both a capture entry point and a retrieval endpoint. `/learn` and the
+capture-learning skill are the same operation on different surfaces.
 
 How the roles map onto deployment zones is in
 [docs/architecture.md](docs/architecture.md); the research argument for the
@@ -69,17 +72,19 @@ issue body or the PR description); `/build` always operates on code (open a
 PR from an issue, iterate on the branch from a PR); `/learn` always operates
 on memory (learning proposal PRs), never the surface's code.
 
-| Command | One line |
-|---|---|
-| `/ask <question>` | Read-only Q&A against the document + repo; standalone gets a reply, in a batch it lands in place. |
-| `/edit <instruction>` | Edits the document as a file through one agent pass and one guarded PATCH, with interleaved results and a collapsed diff. |
-| `/split [--dry\|--apply]` | Two-phase plan/apply over sub-issues: `--dry` stages an editable `## Subtasks` yaml spec in the plan body, `--apply` executes it deterministically (per-subtask repo routing, `existing:` adoption); bare does both. |
-| `/build` (issue) | Builds the plan into a PR on branch `ai/<n>-<slug>` — state-aware: refuses on a staged split spec, notes open sub-issues. |
-| `/build [instruction]` (PR) | Iterates on the head branch, sweeping unresolved threads + fresh comments; replies per thread with disposition + commit link. |
-| `/build --split` (issue) | Orchestrates `/build` across sub-issues in dependency waves with a live checklist; skips undrivable nodes with warnings. |
-| `/learn [statement]` | Captures durable learnings into a proposal PR — dictated, or a bare sweep of the surface's threads; never touches the surface's code. |
-| `/learn --scan [context…]` | Surveys the codebase + docs instead of a discussion: seeds/refreshes architecture digests and distills visible practices. |
-| `/learn --promote <slug>` | Promotes a repo-local learning to the org knowledge repo — paired drafts: the org addition plus the repo-local removal. |
+
+| Command                     | One line                                                                                                                                                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/ask <question>`           | Read-only Q&A against the document + repo; standalone gets a reply, in a batch it lands in place.                                                                                                                    |
+| `/edit <instruction>`       | Edits the document as a file through one agent pass and one guarded PATCH, with interleaved results and a collapsed diff.                                                                                            |
+| `/split [--dry|--apply]`    | Two-phase plan/apply over sub-issues: `--dry` stages an editable `## Subtasks` yaml spec in the plan body, `--apply` executes it deterministically (per-subtask repo routing, `existing:` adoption); bare does both. |
+| `/build` (issue)            | Builds the plan into a PR on branch `ai/<n>-<slug>` — state-aware: refuses on a staged split spec, notes open sub-issues.                                                                                            |
+| `/build [instruction]` (PR) | Iterates on the head branch, sweeping unresolved threads + fresh comments; replies per thread with disposition + commit link.                                                                                        |
+| `/build --split` (issue)    | Orchestrates `/build` across sub-issues in dependency waves with a live checklist; skips undrivable nodes with warnings.                                                                                             |
+| `/learn [statement]`        | Captures durable learnings into a proposal PR — dictated, or a bare sweep of the surface's threads; never touches the surface's code.                                                                                |
+| `/learn --scan [context…]`  | Surveys the codebase + docs instead of a discussion: seeds/refreshes architecture digests and distills visible practices.                                                                                            |
+| `/learn --promote <slug>`   | Promotes a repo-local learning to the org knowledge repo — paired drafts: the org addition plus the repo-local removal.                                                                                              |
+
 
 The normative reference — every command per surface, flags, decision
 tables, and each refusal message verbatim — is
@@ -103,11 +108,11 @@ externalized memory that re-enters the context window on demand. ai-flow closes 
 around that memory, a full learning system with the weights never moving:
 
 1. **Experience.** Learning starts with exposure, and exposure is the cheap
-   part — most of what any learner encounters teaches nothing. The loop
+  part — most of what any learner encounters teaches nothing. The loop
    doesn't manufacture experience; it taps the surfaces where the work
    already happens: review threads, build passes, codebase scans.
 2. **Credit assignment.** The learning-theory term for the step between
-   experience and memory: given a pile of raw experience and an outcome,
+  experience and memory: given a pile of raw experience and an outcome,
    decide which part of it deserves the credit — which specific thing
    caused the result, as opposed to everything that merely happened
    alongside it.[^minsky1961] In RL it's "which of my actions earned this
@@ -123,17 +128,17 @@ around that memory, a full learning system with the weights never moving:
    rubric every capture pass carries draws exactly that line: does this
    generalize beyond the diff at hand? Most passes yield nothing, by design.
 3. **Memory write.** Brains don't archive raw experience; they consolidate
-   the distilled trace into durable form while it's fresh.[^mcgaugh2000]
+  the distilled trace into durable form while it's fresh.[^mcgaugh2000]
    Same here,
    literally: capture runs while the context is hot — a
-   [`/learn`](docs/commands.md#learn) pass, or `/build`'s build-time capture
+   `[/learn](docs/commands.md#learn)` pass, or `/build`'s build-time capture
    in the very pass that held the discussion (on by default;
    `learn: { on_build: false }` in `.github/ai-flow.yml` opts out) — never
    as a cold re-ingest step. The written form is an index line (one
    sentence: the retrieval cue) plus a detail skill (the full lesson),
    landed as a proposal PR.
 4. **Behavior change.** A memory only counts if it's retrieved at the
-   moment it applies.[^tulving1973] The always-on index rides in every
+  moment it applies.[^tulving1973] The always-on index rides in every
    session's context
    as the cue list; a detail skill loads on demand when its cue fires; and
    fresh `/build` checkouts get the org's invariants injected into the
@@ -189,16 +194,18 @@ see [docs/architecture.md](docs/architecture.md).
 - `.github/workflows/ai-commands.yml` — the reusable workflow (`workflow_call`).
 - `bin/dispatch.rb` — job entry point; parses the event, gates, routes.
 - `lib/ai_flow/` — comment parsing, anchor resolution, the `Agent#launch`
-  seam (the one place that invokes the `agent` CLI — swap the backend here),
-  GitHub API access via `gh`, and the five command implementations.
+seam (the one place that invokes the `agent` CLI — swap the backend here),
+GitHub API access via `gh`, and the five command implementations.
 - `templates/caller-workflow.yml` — the ~10-line workflow each repo copies.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
-  repos using `dev plan`.
+repos using `dev plan`.
 - `docs/` — [commands.md](docs/commands.md) (the normative command
-  reference), [plan-lifecycle.md](docs/plan-lifecycle.md) (the end-to-end
-  narrative and body conventions), [architecture.md](docs/architecture.md)
-  (how it's put together), and [attribution.md](docs/attribution.md) (who
-  authors what, and why).
+reference), [plan-lifecycle.md](docs/plan-lifecycle.md) (the end-to-end
+narrative and body conventions), [architecture.md](docs/architecture.md)
+(how it's put together), and [attribution.md](docs/attribution.md) (who
+authors what, and why).
+
+
 
 ## Identity: the ai-flow GitHub App
 
@@ -206,13 +213,15 @@ All GitHub writes (pushes, PRs, comments, body PATCHes) act as the org's
 `ai-flow` GitHub App — a per-job token mint, no hosted component. The
 comparison that settled it:
 
-| | default `GITHUB_TOKEN` | dev PAT | GitHub App |
-|---|---|---|---|
-| /build PRs trigger CI | no (by design) | yes | yes |
-| Acting identity | `github-actions[bot]` | the PAT's human — overclaims authorship | `ai-flow[bot]` — truthful |
-| Expiry / rotation | per-job, automatic | 90d ceremony per dev | non-expiring key; 1h installation tokens minted lazily per call (long runs outlive any single token) |
-| Scope | the one repo | the dev's whole account | exactly the repos the App is installed on |
-| Audit trail | anonymous-ish | indistinguishable from the human | first-class bot actor |
+
+|                       | default `GITHUB_TOKEN` | dev PAT                                 | GitHub App                                                                                           |
+| --------------------- | ---------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| /build PRs trigger CI | no (by design)         | yes                                     | yes                                                                                                  |
+| Acting identity       | `github-actions[bot]`  | the PAT's human — overclaims authorship | `ai-flow[bot]` — truthful                                                                            |
+| Expiry / rotation     | per-job, automatic     | 90d ceremony per dev                    | non-expiring key; 1h installation tokens minted lazily per call (long runs outlive any single token) |
+| Scope                 | the one repo           | the dev's whole account                 | exactly the repos the App is installed on                                                            |
+| Audit trail           | anonymous-ish          | indistinguishable from the human        | first-class bot actor                                                                                |
+
 
 Setup is a one-time org task: register the App (permissions: contents,
 issues, pull requests — read/write; **never** `workflows`, a deliberate
@@ -238,25 +247,21 @@ Attribution model (who authors what, and why): see
 [docs/attribution.md](docs/attribution.md). Short form — local Cursor work is
 dev-authored; web-initiated code work (`/build` on issues and PRs) is
 authored by `ai-flow[bot]` with a `Co-authored-by` trailer crediting the
-requesting human, whose accountability lives on the PR (`Requested by
-@login`, PR assignee, merge record).
+requesting human, whose accountability lives on the PR (`Requested by @login`, PR assignee, merge record).
 
 ## Adoption checklist (per repo)
 
 1. Copy `templates/caller-workflow.yml` to `.github/workflows/ai-commands.yml`
-   (works for code repos and the org plans repo alike).
+  (works for code repos and the org plans repo alike).
 2. Ensure the org secrets are available to the repo (or add repo secrets):
-   `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
+  `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
    and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App —
    required unless the caller sets `allow_token_fallback: true`). Install
    the App on the repo. Our org secrets use `selected` visibility, so add
    the adopting repo to each secret's repository list (org settings →
-   secrets, or `gh secret set <name> --org <org> --visibility selected
-   --repos <list>`). Note `private` visibility excludes public repos
-   entirely — a public caller's job fails at the "Require the ai-flow App"
-   step until the secret is shared with it.
+   secrets, or `gh secret set <name> --org <org> --visibility selected  --repos <list>`). Note `private` visibility excludes public repos  entirely — a public caller's job fails at the "Require the ai-flow App"spl  step until the secret is shared with it.
 3. Register self-hosted runners with the per-command labels the workflow
-   routes on: `ai-ask`, `ai-edit`, `ai-split`, `ai-build`, `ai-learn`. The
+  routes on: `ai-ask`, `ai-edit`, `ai-split`, `ai-build`, `ai-learn`. The
    topology is a deployment choice — one box can carry all five labels, or a
    beefy box takes `ai-build` alone (/build runs the full agent loop
    including tests, so it needs a real dev machine, not a bare runner) while
@@ -264,13 +269,13 @@ requesting human, whose accountability lives on the PR (`Requested by
    register N instances for N parallel jobs. Repos using `dev` can run
    `dev runner-setup`.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
-   and make sure it — plus `dev`, rbenv, and shadowenv — is on the runner
+  and make sure it — plus `dev`, rbenv, and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not
    prerequisites: the workflow runs `dev install-deps` in the ai-flow
    checkout, which provisions the pinned Ruby (an rbenv install, one-time
    per box) and the locked gem set from `dependencies.rb`.
 5. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
-   model policy (`models.default`, per-command overrides — see
+  model policy (`models.default`, per-command overrides — see
    [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));
    valid names come from `agent --list-models`, which every run also prints
    in its job log. Without the file, the agent CLI's account default applies.
@@ -278,7 +283,7 @@ requesting human, whose accountability lives on the PR (`Requested by
    knowledge repo `--promote` targets) and `learn: { on_build: false }` (opt
    out of `/build`'s capture pass).
 6. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
-   auto-push via `dev plan`.
+  auto-push via `dev plan`.
 
 Configuration inputs (set in the caller workflow's `with:`): `command_prefix`
 (default none; set e.g. `ai-` if you run other slash-command bots),
@@ -321,7 +326,11 @@ guards every adopter inherits: a Bot-type filter on the job conditions
 (the bot's own replies never spawn runs) and a hosted `authorize` job that
 checks the command author's repo permission on free hosted seconds, before
 any self-hosted second — unauthorized commands die there, and the
-dispatcher's in-Ruby fail-closed gate stays as defense-in-depth. See
+dispatcher's in-Ruby fail-closed gate stays as defense-in-depth. Prompts
+are provenance-filtered too: auto-ingested context (review threads,
+discussion comments, origin replays) only carries content from
+write-authorized authors — a maintainer includes third-party feedback by
+quoting it — and every assembled prompt prints in the run log. See
 [docs/architecture.md](docs/architecture.md#public-repo-posture) for the
 threat mechanics.
 
@@ -329,22 +338,22 @@ The org/repo settings are the adopter's half, and for a public caller they
 are required, not suggested:
 
 - **Fork-PR approval: "require approval for all outside collaborators"**
-  (org or repo Actions setting). Some event types run the *head* branch's
-  workflow file, so unreviewed fork YAML must never execute.
+(org or repo Actions setting). Some event types run the *head* branch's
+workflow file, so unreviewed fork YAML must never execute.
 - **Runner group restriction**: visibility `selected` with only adopting
-  repos, and `restricted_to_workflows` pinned to
-  `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` (jobs defined
-  in a reusable workflow are checked against the reusable workflow's
-  path/ref). Even an accidentally approved malicious fork workflow then
-  gets no self-hosted runner.
+repos, and `restricted_to_workflows` pinned to
+`d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` (jobs defined
+in a reusable workflow are checked against the reusable workflow's
+path/ref). Even an accidentally approved malicious fork workflow then
+gets no self-hosted runner.
 - **CODEOWNERS + required review on the workflow path**: the pin makes
-  `ai-commands.yml@main` the runner group's root of trust, so
-  `.github/workflows/**` needs a required human review — note PR authors
-  can't approve their own PRs but *can* approve bot-authored ones, which
-  is exactly the case that matters (a `/build` proposing workflow changes
-  must not become runner-trusted on a casual merge). Mirroring the same
-  entry on adopters' own `.github/workflows/` guards the caller's
-  conditions from quiet loosening.
+`ai-commands.yml@main` the runner group's root of trust, so
+`.github/workflows/**` needs a required human review — note PR authors
+can't approve their own PRs but *can* approve bot-authored ones, which
+is exactly the case that matters (a `/build` proposing workflow changes
+must not become runner-trusted on a casual merge). Mirroring the same
+entry on adopters' own `.github/workflows/` guards the caller's
+conditions from quiet loosening.
 
 Rotation note: the App private key transits the runner host in the
 token-mint step, so treat a runner-host compromise as an App-key rotation
