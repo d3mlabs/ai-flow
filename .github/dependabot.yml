@@ -1,0 +1,11 @@
+# Keeps the SHA-pinned actions fresh (plans#23). The runner-touching
+# workflows (ai-commands.yml, origin-firing.yml) pin third-party actions to
+# commit SHAs because mutable tags are repointable — a poisoned tag would run
+# on the self-hosted runner with the App key in env. Dependabot proposes the
+# bumps as PRs, so every pin move gets review + CI instead of landing live.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
