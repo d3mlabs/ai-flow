@@ -32,13 +32,13 @@ class RecordingExecutor < AiFlow::Executor
   end
 end unless defined?(RecordingExecutor)
 
-# Overrides the scoped overlay with a recognizable marker, so the launch's
-# env plumbing is observable without real minting.
-class ScopedRecordingExecutor < RecordingExecutor
-  def scoped_auth_env(repositories:)
-    { "GH_TOKEN" => "scoped:#{repositories.join(",")}" }
+# Overrides the agent's auth overlay with a recognizable marker, so the
+# launch's env plumbing is observable without real minting.
+class ReadOnlyRecordingExecutor < RecordingExecutor
+  def agent_auth_env
+    { "GH_TOKEN" => "read-only-marker" }
   end
-end unless defined?(ScopedRecordingExecutor)
+end unless defined?(ReadOnlyRecordingExecutor)
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::AgentTest < Minitest::Test
@@ -59,7 +59,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(executor).nil?
@@ -76,8 +76,8 @@ class AiFlow::AgentTest < Minitest::Test
     ask_executor = RecordingExecutor.new
 
     When "launching /build and /ask"
-    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new, repos: ["d3mlabs/repo"])
-    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then "/build carries the model and /ask stays on the CLI default"
     model_flag(build_executor) == "opus"
@@ -95,8 +95,8 @@ class AiFlow::AgentTest < Minitest::Test
     ask_executor = RecordingExecutor.new
 
     When "launching /build and /ask"
-    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new, repos: ["d3mlabs/repo"])
-    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(build_executor) == "opus"
@@ -113,7 +113,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching /build"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then "the blank command link falls through to the default"
     model_flag(executor) == "gpt-5"
@@ -129,7 +129,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching /ask"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(executor).nil?
@@ -146,7 +146,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching /build"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then
     model_flag(executor) == "env-model"
@@ -163,7 +163,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     raises AiFlow::RepoConfig::Error
@@ -179,7 +179,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     raises AiFlow::RepoConfig::Error
@@ -196,9 +196,9 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching /ask twice and /build once"
-    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
-    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
-    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new, repos: ["d3mlabs/repo"])
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then
     agent.models_used == {
@@ -218,8 +218,8 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: RecordingExecutor.new)
 
     When "launching in the source, then in the unconfigured clone"
-    agent.launch(prompt: "p", workdir: source, command: AiFlow::Command::Learn.new, repos: ["d3mlabs/repo"])
-    agent.launch(prompt: "p", workdir: clone, command: AiFlow::Command::Learn.new, repos: ["d3mlabs/repo"])
+    agent.launch(prompt: "p", workdir: source, command: AiFlow::Command::Learn.new)
+    agent.launch(prompt: "p", workdir: clone, command: AiFlow::Command::Learn.new)
 
     Then "both selections survive, in launch order"
     agent.models_used == {
@@ -241,7 +241,7 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching /ask"
-    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     agent.models_used == { AiFlow::Command::Ask.new => [AiFlow::ModelSelection::AccountDefault.new] }
@@ -259,7 +259,7 @@ class AiFlow::AgentTest < Minitest::Test
 
     When "launching in the clone under the source's policy"
     AiFlow::Agent.new(executor: executor)
-      .launch(prompt: "p", workdir: clone, command: AiFlow::Command::Learn.new, repos: ["d3mlabs/repo"], policy_root: source)
+      .launch(prompt: "p", workdir: clone, command: AiFlow::Command::Learn.new, policy_root: source)
 
     Then "the launch carries the source's model"
     model_flag(executor) == "gpt-5"
@@ -276,7 +276,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new
 
     When "launching /ask"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     model_flag(executor).nil?
@@ -296,7 +296,7 @@ class AiFlow::AgentTest < Minitest::Test
     ])
 
     When "launching"
-    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then "the result event wins and the argv asked for the streaming format"
     answer == "THE ANSWER"
@@ -315,7 +315,7 @@ class AiFlow::AgentTest < Minitest::Test
     ])
 
     When "launching"
-    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     answer == "First.\n\nSecond."
@@ -334,7 +334,7 @@ class AiFlow::AgentTest < Minitest::Test
     ])
 
     When "launching"
-    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     answer == "ok"
@@ -369,7 +369,7 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching and capturing the progress lines"
-    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new, repos: ["d3mlabs/repo"]) }
+    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new) }
 
     Then "knowledge reads get their own line, plain reads stay generic, and the accumulator dedupes"
     output.include?("[/build] knowledge: typed-errors")
@@ -392,7 +392,7 @@ class AiFlow::AgentTest < Minitest::Test
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching"
-    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new, repos: ["d3mlabs/repo"]) }
+    output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new) }
 
     Then "no knowledge line, nothing accumulated"
     output.include?("[/build] → shell: ls ~/.cursor/skills/typed-errors/")
@@ -406,19 +406,16 @@ class AiFlow::AgentTest < Minitest::Test
   # every spawn gets HarnessEnv.scrub at the seam, asserted with real
   # subprocesses in executor_test.
 
-  test "the launch spawns the agent under the scoped auth overlay (plans#25)" do
-    Given "an executor whose scoped overlay is a recognizable marker"
+  test "the launch spawns the agent under the read-only auth overlay (plans#25)" do
+    Given "an executor whose agent overlay is a recognizable marker"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = ScopedRecordingExecutor.new
+    executor = ReadOnlyRecordingExecutor.new
 
-    When "launching with a declared repo scope"
-    AiFlow::Agent.new(executor: executor).launch(
-      prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new,
-      repos: ["d3mlabs/ai-flow", "d3mlabs/knowledge"],
-    )
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
-    Then "the spawn env carries the overlay built from exactly that scope"
-    executor.envs.fetch(0) == { "GH_TOKEN" => "scoped:d3mlabs/ai-flow,d3mlabs/knowledge" }
+    Then "the spawn env carries the agent overlay, not the dispatcher's default"
+    executor.envs.fetch(0) == { "GH_TOKEN" => "read-only-marker" }
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -430,7 +427,7 @@ class AiFlow::AgentTest < Minitest::Test
     executor = RecordingExecutor.new(lines: [], err: "boom from the CLI", ok: false)
 
     When "launching"
-    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
     raises AiFlow::Agent::Error
@@ -446,7 +443,7 @@ class AiFlow::AgentTest < Minitest::Test
 
     When "launching and capturing the failure"
     error = begin
-      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new, repos: ["d3mlabs/repo"])
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
       nil
     rescue AiFlow::Agent::Error => e
       e

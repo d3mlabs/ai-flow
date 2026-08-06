@@ -60,8 +60,6 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     agent.prompts.size == 1
     agent.prompts.first.include?("<<<SEGMENT 1: /edit>>>")
     agent.launches.first[:force] == true
-    # The batch pass's token covers the command repo only (plans#25).
-    agent.launches.first[:repos] == [REPO]
     github.calls.map(&:first).count(:update_issue_body) == 1
     github.issue(REPO, 7).body == new_body
     edited = github.comment_edits.fetch(55)

@@ -616,9 +616,6 @@ module AiFlow
           @agent.launch(
             prompt: promote_prompt(slug, knowledge_repo, skill_text, index_line),
             workdir: clone, command: Command::Learn.new,
-            # The pass drafts into the knowledge clone; the source repo stays
-            # readable for the origin context the skill's learned-from names.
-            repos: [knowledge_repo, @context.owner_repo].uniq,
             force: true, policy_root: @workdir,
           )
           @executor.refresh_auth!
@@ -934,8 +931,7 @@ module AiFlow
         outcome = in_worktree(source.branch, refine: !existing.nil?) do |worktree|
           scaffold_index(worktree)
           result = @agent.launch(
-            prompt: prompt, workdir: worktree, command: Command::Learn.new,
-            repos: [@context.owner_repo], force: true,
+            prompt: prompt, workdir: worktree, command: Command::Learn.new, force: true,
           )
           # The agent may have run close to the token's lifetime; the write
           # phase (commit, push, PR) starts on a fresh mint.

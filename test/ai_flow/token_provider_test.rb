@@ -203,82 +203,51 @@ class AiFlow::TokenProviderTest < Minitest::Test
     nil
   end
 
-  test "a scoped token mints with exactly the given repositories, as bare names" do
+  test "the agent token mints read-only — every permission in the body says read, none says write" do
     Given "App credentials"
     api = FakeAppApi.new
     provider = build_provider(http: api, clock: -> { Time.at(0) })
 
-    When "asking for a token scoped to two repos"
-    token = provider.scoped_token(repositories: ["d3mlabs/ai-flow", "d3mlabs/knowledge"])
+    When "asking for the agent's token"
+    token = provider.agent_token
 
-    Then "the mint body carries the bare repo names"
+    Then "the mint body downgrades every permission to read and never restricts repositories"
     token == "ghs_minted_1"
-    JSON.parse(T.must(api.mint_bodies.fetch(0))) == { "repositories" => ["ai-flow", "knowledge"] }
+    body = JSON.parse(T.must(api.mint_bodies.fetch(0)))
+    body.keys == ["permissions"]
+    body.fetch("permissions").values.uniq == ["read"]
 
     Cleanup
     nil
   end
 
-  test "a scoped mint is one-off — it never touches the dispatcher's cached token" do
+  test "an agent mint is one-off — it never touches the dispatcher's cached token" do
     Given "a provider with a young dispatcher token"
     api = FakeAppApi.new
     provider = build_provider(http: api, clock: -> { Time.at(0) })
     dispatcher_token = provider.token
 
-    When "minting a scoped token, then asking for the dispatcher token again"
-    scoped = provider.scoped_token(repositories: ["d3mlabs/ai-flow"])
+    When "minting an agent token, then asking for the dispatcher token again"
+    agent = provider.agent_token
     after = provider.token
 
-    Then "the scoped mint is its own, and the cached token survives untouched"
+    Then "the agent mint is its own, and the cached token survives untouched"
     dispatcher_token == "ghs_minted_1"
-    scoped == "ghs_minted_2"
+    agent == "ghs_minted_2"
     after == "ghs_minted_1"
 
     Cleanup
     nil
   end
 
-  test "repos outside the installation owner drop from the scope" do
-    Given "App credentials installed on d3mlabs"
-    api = FakeAppApi.new
-    provider = build_provider(http: api, clock: -> { Time.at(0) })
-
-    When "the scope names a foreign owner's repo"
-    capture_io { provider.scoped_token(repositories: ["d3mlabs/ai-flow", "someoneelse/thing"]) }
-
-    Then "only the owned repo reaches the mint"
-    JSON.parse(T.must(api.mint_bodies.fetch(0))) == { "repositories" => ["ai-flow"] }
-
-    Cleanup
-    nil
-  end
-
-  test "an all-foreign scope refuses to mint rather than fall back to installation-wide" do
-    Given "App credentials installed on d3mlabs"
-    api = FakeAppApi.new
-    provider = build_provider(http: api, clock: -> { Time.at(0) })
-
-    When "every repo in the scope belongs to another owner"
-    error = assert_raises(AiFlow::TokenProvider::Error) do
-      capture_io { provider.scoped_token(repositories: ["someoneelse/thing"]) }
-    end
-
-    Then "no token minted, and the error names the refusal"
-    error.message.include?("refusing to mint an unscoped agent token")
-    api.mints == 0
-
-    Cleanup
-    nil
-  end
-
-  test "static mode answers its one token for a scoped ask — github.token is repo-scoped by construction" do
+  test "static mode answers its one token for the agent ask — github.token is repo-scoped by construction" do
     Given "a static-token provider"
     provider = AiFlow::TokenProvider.new(
       app_id: nil, private_key_pem: nil, owner: "d3mlabs", static_token: "ghp_static",
     )
 
-    When "asking scoped"
-    token = provider.scoped_token(repositories: ["d3mlabs/ai-flow"])
+    When "asking for the agent's token"
+    token = provider.agent_token
 
     Then
     token == "ghp_static"
@@ -287,12 +256,12 @@ class AiFlow::TokenProviderTest < Minitest::Test
     nil
   end
 
-  test "ambient mode answers nil for a scoped ask, like the plain token" do
+  test "ambient mode answers nil for the agent ask, like the plain token" do
     Given "an empty provider"
     provider = AiFlow::TokenProvider.new(app_id: nil, private_key_pem: nil, owner: nil)
 
-    When "asking scoped"
-    token = provider.scoped_token(repositories: ["d3mlabs/ai-flow"])
+    When "asking for the agent's token"
+    token = provider.agent_token
 
     Then
     token.nil?

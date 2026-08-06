@@ -123,9 +123,6 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/other") }
     command_lines.none? { |line| line.include?("worktree add") }
     github.calls.include?([:create_pull_request, "d3mlabs/other", "ai/7-carve-system", "main"])
-    # The pass's token spans exactly the code repo and the plan's repo — the
-    # run's declared blast radius, nothing installation-wide (plans#25).
-    agent.launches.first[:repos] == ["d3mlabs/other", REPO]
 
     Cleanup
     nil
@@ -161,8 +158,6 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Then "head branch checked out, feedback in the prompt, commit pushed, thread and panel updated"
     executor.command_lines.include?("git fetch origin feature-branch")
     executor.command_lines.include?("git checkout feature-branch")
-    # PR iteration is single-repo work; the pass's token says so (plans#25).
-    agent.launches.first[:repos] == [REPO]
     agent.prompts.first.include?("INSTRUCTION: fix the failing CI")
     agent.prompts.first.include?("<<<THREAD 1>>> (lib/thing.rb)")
     agent.prompts.first.include?("this walk is O(n^2)")

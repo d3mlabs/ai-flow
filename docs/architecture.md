@@ -67,10 +67,12 @@ Division of labor, and why:
   relies on a mint-time credential. The App private key enters the Dispatch
   step's env, is read once, and is scrubbed before any subprocess spawns —
   the agent only ever sees short-lived installation tokens. The agent's own
-  token is further downscoped to the repos its pass declares (every
-  `Agent#launch` names its repo set, and the mint carries an explicit
-  `repositories:` list), so the arbitrary shell it runs under `--force`
-  never holds the dispatcher's installation-wide reach.
+  token is further downscoped to read-only (the mint carries an explicit
+  `permissions:` map with every grant at `read`): repositories stay
+  installation-wide so discovery reads across a mostly-private org keep
+  working, and the write surface is zero because every GitHub write is the
+  dispatcher's — the arbitrary shell the agent runs under `--force` can
+  never push, comment, or merge.
 
 ### Roles vs zones
 

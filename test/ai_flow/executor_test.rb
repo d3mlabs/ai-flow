@@ -25,8 +25,8 @@ class ScriptedTokenProvider < AiFlow::TokenProvider
     @current = @tokens[@refreshes] || @tokens.last
   end
 
-  def scoped_token(repositories:)
-    "#{@current}_scoped_to_#{repositories.join("+")}"
+  def agent_token
+    "#{@current}_read_only"
   end
 end unless defined?(ScriptedTokenProvider)
 
@@ -162,47 +162,44 @@ class AiFlow::ExecutorTest < Minitest::Test
     nil
   end
 
-  test "scoped_auth_env carries the downscoped token in the same env shape as the default injection" do
+  test "agent_auth_env carries the read-only token in the same env shape as the default injection" do
     Given "an executor with a token provider"
     provider = ScriptedTokenProvider.new(["ghs_alpha"])
     executor = AiFlow::Executor.new(token_provider: provider)
 
-    When "building the agent's scoped overlay"
-    env = executor.scoped_auth_env(repositories: ["d3mlabs/ai-flow"])
+    When "building the agent's auth overlay"
+    env = executor.agent_auth_env
 
-    Then "GH_TOKEN and the git extraheader both carry the scoped token"
-    env.fetch("GH_TOKEN") == "ghs_alpha_scoped_to_d3mlabs/ai-flow"
+    Then "GH_TOKEN and the git extraheader both carry the read-only token"
+    env.fetch("GH_TOKEN") == "ghs_alpha_read_only"
     env.fetch("GIT_CONFIG_VALUE_0") ==
-      "AUTHORIZATION: basic #{["x-access-token:ghs_alpha_scoped_to_d3mlabs/ai-flow"].pack("m0")}"
+      "AUTHORIZATION: basic #{["x-access-token:ghs_alpha_read_only"].pack("m0")}"
 
     Cleanup
     nil
   end
 
-  test "a spawn with the scoped overlay overrides the default installation-wide injection" do
+  test "a spawn with the agent overlay overrides the default full-permission injection" do
     Given "an executor with a token provider"
     provider = ScriptedTokenProvider.new(["ghs_alpha"])
     executor = AiFlow::Executor.new(token_provider: provider)
 
-    When "capturing with the scoped overlay as the caller env"
-    out, = executor.capture(
-      RUBY, "-e", 'print ENV["GH_TOKEN"]',
-      env: executor.scoped_auth_env(repositories: ["d3mlabs/ai-flow"]),
-    )
+    When "capturing with the agent overlay as the caller env"
+    out, = executor.capture(RUBY, "-e", 'print ENV["GH_TOKEN"]', env: executor.agent_auth_env)
 
-    Then "the child sees the scoped token, not the dispatcher's"
-    out == "ghs_alpha_scoped_to_d3mlabs/ai-flow"
+    Then "the child sees the read-only token, not the dispatcher's"
+    out == "ghs_alpha_read_only"
 
     Cleanup
     nil
   end
 
-  test "without a provider the scoped overlay is empty — ambient auth stays ambient" do
+  test "without a provider the agent overlay is empty — ambient auth stays ambient" do
     Given "a bare executor"
     executor = AiFlow::Executor.new
 
-    When "building the agent's scoped overlay"
-    env = executor.scoped_auth_env(repositories: ["d3mlabs/ai-flow"])
+    When "building the agent's auth overlay"
+    env = executor.agent_auth_env
 
     Then
     env.empty?

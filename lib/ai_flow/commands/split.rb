@@ -226,9 +226,6 @@ module AiFlow
         output = @agent.launch(
           prompt: propose_prompt(parent, existing, segment, menu, pool),
           workdir: @workdir, command: Command::Split.new,
-          # The routing menu and discovery pool are embedded in the prompt;
-          # the pass itself only reads the command repo's checkout.
-          repos: [@context.owner_repo],
         )
         entries = parse_proposal(output)
         [entries, possible_matches(entries, pool)]

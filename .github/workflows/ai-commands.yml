@@ -234,9 +234,9 @@ jobs:
       # no-App fallback. Cross-repo work (/build's Target repos, /learn's
       # promotion) happens in the dispatcher, which holds the App key and
       # mints its own reach per call (TokenProvider); the agent it launches
-      # gets a token downscoped to the run's declared repos. The public
-      # ai-flow checkout needs no scope — any valid token reads a public
-      # repo (cross-owner adopters exercise exactly that today).
+      # gets a read-only token (installation-wide reads, zero writes). The
+      # public ai-flow checkout needs no scope — any valid token reads a
+      # public repo (cross-owner adopters exercise exactly that today).
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}

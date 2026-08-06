@@ -130,22 +130,24 @@ module AiFlow
       end
     end
 
-    # A token limited to the given repos — what the agent subprocess gets
-    # (plans#25): the dispatcher's own token spans the installation, but the
-    # agent runs arbitrary shell under --force, so its GH_TOKEN carries only
-    # the run's declared target set. Minted fresh per call (an agent launch
-    # is rare enough that caching would only add staleness states).
+    # The agent subprocess's token (plans#25): installation-wide in
+    # repositories, read-only in permissions — scope the verb, not the noun.
+    # Repository scoping broke discovery in a mostly-private org (an agent
+    # digging across sibling repos hit 404s and over-generalized to "cross-
+    # repo is infeasible"); reads stay unbounded so digging works, and the
+    # write surface is zero because every GitHub write is the dispatcher's,
+    # never the agent's. Minted fresh per call (an agent launch is rare
+    # enough that caching would only add staleness states).
     #
-    # Static mode answers its one token unscoped — that mode is the degraded
-    # github.token fallback, which is already single-repo by construction.
-    # Ambient answers nil, like #token.
+    # Static mode answers its one token as-is — that mode is the degraded
+    # github.token fallback, already single-repo by construction. Ambient
+    # answers nil, like #token.
     #
-    # @param repositories [Array<String>] "owner/repo" names
     # @return [String, nil]
-    sig { params(repositories: T::Array[String]).returns(T.nilable(String)) }
-    def scoped_token(repositories:)
+    sig { returns(T.nilable(String)) }
+    def agent_token
       case (mode = @mode)
-      when AuthMode::App then mode.scoped_token(repositories)
+      when AuthMode::App then mode.read_only_token
       when AuthMode::Static then mode.token
       when AuthMode::Ambient then nil
       else T.absurd(mode)
@@ -167,8 +169,8 @@ module AiFlow
     # @param method [String]
     # @param url [String]
     # @param headers [Hash{String => String}]
-    # @param body [String, nil] JSON request body (the scoped mint's
-    #   repositories list)
+    # @param body [String, nil] JSON request body (the read-only mint's
+    #   permissions map)
     # @return [Array(Integer, String)] status code and response body
     sig do
       params(method: String, url: String, headers: T::Hash[String, String], body: T.nilable(String))
@@ -260,41 +262,42 @@ module AiFlow
           @minted_at = @clock.call
         end
 
-        # A one-off token limited to the given repos (never cached — see
-        # TokenProvider#scoped_token). The mint API takes bare repo names
-        # within this installation's owner, so cross-owner entries are
-        # dropped with a warning (the agent simply won't reach them — fail
-        # closed); an empty result would silently mint installation-wide,
-        # so it raises instead.
-        #
-        # @param repositories [Array<String>] "owner/repo" names
-        # @return [String]
-        # @raise [Error] when no repository belongs to this installation
-        sig { params(repositories: T::Array[String]).returns(String) }
-        def scoped_token(repositories)
-          owned, foreign = repositories.uniq.partition do |repo|
-            repo.split("/").first.to_s.casecmp?(@owner.to_s)
-          end
-          foreign.each do |repo|
-            warn "ai-flow: #{repo} is outside the #{@owner} installation — the agent token will not cover it."
-          end
-          if owned.empty?
-            raise Error, "no repository in #{repositories.inspect} belongs to the #{@owner} installation — " \
-                         "refusing to mint an unscoped agent token"
-          end
+        # The agent's permission set: every content surface the App holds,
+        # downgraded to read. GitHub's mint API rejects permissions the App
+        # was never granted, so this list must stay within the App's own
+        # grants (contents, issues, pull requests, plus the metadata read
+        # every installation implies).
+        READ_ONLY_PERMISSIONS = T.let(
+          {
+            contents: "read",
+            metadata: "read",
+            issues: "read",
+            pull_requests: "read",
+          }.freeze,
+          T::Hash[Symbol, String],
+        )
 
-          mint(repositories: owned.map { |repo| repo.split("/").fetch(-1) })
+        # A one-off read-only token (never cached — see
+        # TokenProvider#agent_token): installation-wide in repositories so
+        # discovery reads work across the org, write-free so the arbitrary
+        # shell holding it cannot push, comment, or merge anywhere.
+        #
+        # @return [String]
+        sig { returns(String) }
+        def read_only_token
+          mint(permissions: READ_ONLY_PERMISSIONS)
         end
 
         private
 
-        # @param repositories [Array<String>, nil] bare repo names to scope
-        #   the token to; nil mints installation-wide (the dispatcher's own)
+        # @param permissions [Hash{Symbol => String}, nil] permission map to
+        #   downscope the token to; nil mints with the App's full grants
+        #   (the dispatcher's own)
         # @return [String] a fresh installation token
-        sig { params(repositories: T.nilable(T::Array[String])).returns(String) }
-        def mint(repositories: nil)
+        sig { params(permissions: T.nilable(T::Hash[Symbol, String])).returns(String) }
+        def mint(permissions: nil)
           jwt = app_jwt
-          body = repositories && JSON.generate(repositories: repositories)
+          body = permissions && JSON.generate(permissions: permissions)
           response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt, body: body)
           response.fetch("token")
         end
