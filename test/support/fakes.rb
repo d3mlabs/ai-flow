@@ -236,6 +236,12 @@ class FakeGitHub < AiFlow::GitHub
 
   def api(path, method: nil, payload: nil)
     @calls << [:api, path, method]
+    # Payloads ride a separate log: @calls keeps its triple shape, which
+    # existing assertions match exactly.
+    if payload
+      @api_payloads ||= []
+      @api_payloads << [path, method, payload]
+    end
     # Rest-id lookups on specific issues resolve per issue (adoption needs
     # distinct ids and a real miss for unseeded refs); everything else keeps
     # the generic bot-identity shape.
@@ -247,6 +253,10 @@ class FakeGitHub < AiFlow::GitHub
     else
       { "id" => 424_242, "head" => { "ref" => "feature-branch" } }
     end
+  end
+
+  def api_payloads
+    @api_payloads || []
   end
 
   def graphql(query, variables = {})

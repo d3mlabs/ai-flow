@@ -293,7 +293,7 @@ back-references, not agent-written ones:
 
 ```mermaid
 flowchart TD
-    issueRead["Read the issue<br/>(org-wide plans: Target repos: line<br/>picks the code repo)"] --> wt["git worktree prune + add<br/>(same repo: branch off the warm checkout;<br/>cross-repo: gh clone)"]
+    issueRead["Read the issue<br/>(org-wide plans: Target repos: line<br/>declares the code repos — one checkout each)"] --> wt["git worktree prune + add<br/>(same repo: branch off the warm checkout;<br/>cross-repo: gh clone; one PR per changed target)"]
     wt --> branch["checkout -B ai/n-slug"]
     branch --> agentRun["agent implements the issue<br/>(code, tests, docs; no git)"]
     agentRun -->|no changes| noPr["Report: no PR opened"]

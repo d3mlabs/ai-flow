@@ -27,18 +27,19 @@ module AiFlow
         include Kernel # is_a? for srb without the experimental requires_ancestor
         sealed!
 
-        # /build opened a PR for the sub-issue.
+        # /build opened PRs for the sub-issue (one per changed target;
+        # multi-target sub-issues open several, plans#30).
         class Built
           extend T::Sig
           include Progress
 
-          sig { returns(String) }
-          attr_reader :url
+          sig { returns(T::Array[String]) }
+          attr_reader :urls
 
-          # @param url [String]
-          sig { params(url: String).void }
-          def initialize(url:)
-            @url = url
+          # @param urls [Array<String>] non-empty, primary first
+          sig { params(urls: T::Array[String]).void }
+          def initialize(urls:)
+            @urls = urls
           end
         end
 
@@ -108,7 +109,7 @@ module AiFlow
           wave.each do |issue|
             progress[ref_of(issue)] =
               case (outcome = @build.build_issue(issue))
-              when Build::Outcome::PrOpened then Progress::Built.new(url: outcome.url)
+              when Build::Outcome::PrOpened then Progress::Built.new(urls: outcome.urls)
               when Build::Outcome::NothingToBuild then Progress::NoChanges.new
               else T.absurd(outcome)
               end
@@ -348,7 +349,7 @@ module AiFlow
           case entry
           when nil then ["[ ]", ""]
           when Progress::NoChanges then ["[-]", " — no changes needed"]
-          when Progress::Built then ["[x]", " — #{entry.url}"]
+          when Progress::Built then ["[x]", " — #{entry.urls.join(", ")}"]
           when Progress::Skipped then ["[!]", " — #{entry.reason}"]
           when Progress::Blocked then ["[!]", " — #{entry.reason}"]
           else T.absurd(entry)

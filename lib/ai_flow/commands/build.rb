@@ -60,23 +60,25 @@ module AiFlow
           @workflows_patch = workflows_patch
         end
 
-        # The agent's changes were committed, pushed, and opened as a PR.
+        # The agent's changes were committed, pushed, and opened as PRs —
+        # one per declared target the pass actually changed (multi-target
+        # plans open several coordinated PRs, plans#30).
         class PrOpened < Outcome
           extend T::Sig
 
-          # @return [String] the created PR's html url
-          sig { returns(String) }
-          attr_reader :url
+          # @return [Array<String>] the created PRs' html urls, primary first
+          sig { returns(T::Array[String]) }
+          attr_reader :urls
 
-          # @param url [String]
+          # @param urls [Array<String>] non-empty
           # @param capture_notes [Array<String>]
           # @param workflows_patch [String, nil]
           sig do
-            params(url: String, capture_notes: T::Array[String], workflows_patch: T.nilable(String)).void
+            params(urls: T::Array[String], capture_notes: T::Array[String], workflows_patch: T.nilable(String)).void
           end
-          def initialize(url:, capture_notes:, workflows_patch:)
+          def initialize(urls:, capture_notes:, workflows_patch:)
             super(capture_notes: capture_notes, workflows_patch: workflows_patch)
-            @url = url
+            @urls = urls
           end
         end
 
@@ -142,7 +144,7 @@ module AiFlow
         outcome = build_issue(issue, extra_instruction: segment.instruction)
         headline =
           case outcome
-          when Outcome::PrOpened then "✅ **/build** — opened #{outcome.url}"
+          when Outcome::PrOpened then "✅ **/build** — opened #{outcome.urls.join(", ")}"
           when Outcome::NothingToBuild then "⚠️ **/build** — the agent made no changes, so no PR was opened."
           else T.absurd(outcome)
           end
@@ -158,25 +160,37 @@ module AiFlow
       sig { params(issue: GitHub::Issue, extra_instruction: String).returns(Outcome) }
       def build_issue(issue, extra_instruction: "")
         issue_repo = issue.repo
-        code_repo = target_repo_for(issue, issue_repo)
+        code_repos = target_repos_for(issue, issue_repo)
         branch = branch_name(issue)
 
-        in_worktree(code_repo) do |worktree|
-          create_branch(worktree, branch)
-          capture = capture_learnings?(code_repo, worktree)
-          @learn.seed_capture(worktree, issue_capture_source(issue, issue_repo)) if capture
+        in_workspaces(code_repos) do |checkouts|
+          checkouts.each_value { |checkout| create_branch(checkout, branch) }
+          # The first declared target is the primary: the agent's working
+          # directory, the capture surface, and the PR that closes the plan.
+          primary_repo, primary = T.must(checkouts.first)
+          capture = capture_learnings?(primary_repo, primary)
+          @learn.seed_capture(primary, issue_capture_source(issue, issue_repo)) if capture
           output = @agent.launch(
-            prompt: build_prompt(issue, extra_instruction, capture: capture),
-            workdir: worktree, command: Command::Build.new,
+            prompt: build_prompt(issue, extra_instruction, capture: capture, checkouts: checkouts),
+            workdir: primary, command: Command::Build.new,
             force: true,
           )
           # The agent may have run for close to the token's lifetime; the
           # write phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
-          run!(["git", "add", "-A"], chdir: worktree)
-          @learn.extract_capture(worktree) if capture
-          workflows_patch = extract_workflows_patch(worktree)
-          unless commit_staged(worktree, issue)
+          workflow_patches = T.let([], T::Array[String])
+          committed = checkouts.select do |repo, checkout|
+            run!(["git", "add", "-A"], chdir: checkout)
+            @learn.extract_capture(checkout) if capture && repo == primary_repo
+            if (patch = extract_workflows_patch(checkout))
+              # Multi-target patches carry a repo header so the human applies
+              # each hunk in the matching checkout.
+              workflow_patches << (checkouts.size == 1 ? patch : "# #{repo}\n#{patch}")
+            end
+            commit_staged(checkout, issue)
+          end
+          workflows_patch = workflow_patches.empty? ? nil : workflow_patches.join("\n")
+          if committed.empty?
             # A pass may yield learnings without code changes — land them
             # even though no code PR opens.
             next Outcome::NothingToBuild.new(
@@ -184,10 +198,14 @@ module AiFlow
             )
           end
 
-          push_branch(worktree, branch)
-          pr = open_pull_request(code_repo, issue_repo, issue, branch)
+          created = committed.map do |repo, checkout|
+            push_branch(checkout, branch)
+            pr, body = open_pull_request(repo, issue_repo, issue, branch, primary: repo == primary_repo)
+            [repo, pr, body]
+          end
+          cross_link_pull_requests(created)
           Outcome::PrOpened.new(
-            url: pr.html_url,
+            urls: created.map { |_repo, pr, _body| pr.html_url },
             capture_notes: landed_capture_notes(capture, output), workflows_patch: workflows_patch,
           )
         end
@@ -574,7 +592,7 @@ module AiFlow
         return [] unless patch
 
         case outcome
-        when Outcome::PrOpened then [workflows_apply_note(outcome.url, patch)]
+        when Outcome::PrOpened then [workflows_apply_note(outcome.urls.fetch(0), patch)]
         when Outcome::NothingToBuild then [workflows_diff_note(patch)]
         else T.absurd(outcome)
         end
@@ -668,16 +686,19 @@ module AiFlow
       # ---- Issue (plan) mode ----
 
       # Org-wide issues that target code declare it (Target repos: line);
-      # otherwise the code repo is the issue's own repo.
+      # otherwise the code repo is the issue's own repo. Every declared
+      # entry is honored (plans#30): each gets a checkout, and each the
+      # pass actually changed gets a PR. The first entry is the primary —
+      # working directory, learning capture, the Closes back-reference.
       #
-      # @return [String] "owner/repo"
-      sig { params(issue: GitHub::Issue, issue_repo: String).returns(String) }
-      def target_repo_for(issue, issue_repo)
+      # @return [Array<String>] "owner/repo" names, deduped, primary first
+      sig { params(issue: GitHub::Issue, issue_repo: String).returns(T::Array[String]) }
+      def target_repos_for(issue, issue_repo)
         target_line = issue.body[/^Target repos?:\s*(.+)$/, 1]
-        return issue_repo unless target_line
+        return [issue_repo] unless target_line
 
-        first_target = target_line.split(",").first.to_s.strip
-        first_target.empty? ? issue_repo : first_target
+        targets = target_line.split(",").map(&:strip).reject(&:empty?).uniq
+        targets.empty? ? [issue_repo] : targets
       end
 
       # @return [String] ai/<n>-<slug>
@@ -687,38 +708,49 @@ module AiFlow
         "ai/#{issue.number}-#{slug.empty? ? "build" : slug}"
       end
 
-      # An isolated worktree per build, so concurrent agents never share a
-      # workspace. Same-repo builds branch off the job checkout (warm);
-      # cross-repo builds (org-wide plans) clone via gh.
+      # Isolated checkouts per build — one per declared target, side by side
+      # under a single temp parent (an enumerable layout, the substrate
+      # plans#31's discovery detection will walk) — so concurrent agents
+      # never share a workspace. The command's own repo branches off the job
+      # checkout (warm); every other target (org-wide plans, multi-target
+      # lists) clones via gh.
       #
-      # @yieldparam worktree [String] the worktree's path
+      # @yieldparam checkouts [Hash{String => String}] "owner/repo" =>
+      #   checkout path, in declared order (primary first)
       # @return [Object] the block's value
       sig do
         type_parameters(:Result)
           .params(
-            code_repo: String,
-            blk: T.proc.params(worktree: String).returns(T.type_parameter(:Result)),
+            code_repos: T::Array[String],
+            blk: T.proc.params(checkouts: T::Hash[String, String]).returns(T.type_parameter(:Result)),
           ).returns(T.type_parameter(:Result))
       end
-      def in_worktree(code_repo, &blk)
+      def in_workspaces(code_repos, &blk)
         Dir.mktmpdir("ai-flow-build-") do |dir|
-          worktree = File.join(dir, "worktree")
-          if code_repo == @context.owner_repo
-            default = @github.default_branch(code_repo)
-            run!(["git", "fetch", "origin", default], chdir: @workdir)
-            # Long-lived runner checkouts accumulate stale worktree metadata
-            # (crashed jobs, tmpdirs GC'd from under git); prune or the add
-            # eventually fails.
-            run!(["git", "worktree", "prune"], chdir: @workdir)
-            run!(["git", "worktree", "add", "--detach", worktree, "origin/#{default}"], chdir: @workdir)
-            begin
-              yield worktree
-            ensure
+          checkouts = T.let({}, T::Hash[String, String])
+          worktrees = T.let([], T::Array[String])
+          begin
+            code_repos.each do |repo|
+              checkout = File.join(dir, repo.tr("/", "-"))
+              if repo == @context.owner_repo
+                default = @github.default_branch(repo)
+                run!(["git", "fetch", "origin", default], chdir: @workdir)
+                # Long-lived runner checkouts accumulate stale worktree
+                # metadata (crashed jobs, tmpdirs GC'd from under git); prune
+                # or the add eventually fails.
+                run!(["git", "worktree", "prune"], chdir: @workdir)
+                run!(["git", "worktree", "add", "--detach", checkout, "origin/#{default}"], chdir: @workdir)
+                worktrees << checkout
+              else
+                run!(["gh", "repo", "clone", repo, checkout], chdir: dir)
+              end
+              checkouts[repo] = checkout
+            end
+            yield checkouts
+          ensure
+            worktrees.each do |worktree|
               @executor.capture("git", "worktree", "remove", "--force", worktree, chdir: @workdir)
             end
-          else
-            run!(["gh", "repo", "clone", code_repo, worktree], chdir: dir)
-            yield worktree
           end
         end
       end
@@ -733,10 +765,15 @@ module AiFlow
 
       # @return [String] the issue-mode pass's prompt
       sig do
-        params(issue: GitHub::Issue, extra_instruction: String, capture: T::Boolean)
-          .returns(String)
+        params(
+          issue: GitHub::Issue,
+          extra_instruction: String,
+          capture: T::Boolean,
+          checkouts: T::Hash[String, String],
+        ).returns(String)
       end
-      def build_prompt(issue, extra_instruction, capture: false)
+      def build_prompt(issue, extra_instruction, capture:, checkouts:)
+        confinement = checkouts.size > 1 ? "these checkouts" : "this checkout"
         <<~PROMPT
           You are ai-flow, implementing a plan in this repository checkout.
 
@@ -745,14 +782,38 @@ module AiFlow
           #{PlanBody.from_issue_body(issue.body)}
           <<<END BODY>>>
 
-          #{parent_context(issue)}
+          #{workspaces_section(checkouts)}#{parent_context(issue)}
           #{extra_instruction.empty? ? "" : "Additional instruction: #{extra_instruction}"}
 
           #{org_invariants_section}#{Provenance::FENCE_RULE}
 
-          Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside this checkout. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
+          Implement the issue completely: code, tests, and any documentation it calls for. Follow the repository's conventions and run its test suite if one is configured. Do not create commits, branches, or PRs — the surrounding tooling owns git. Work only inside #{confinement}. In any text destined for GitHub, reference files as GitHub URLs (https://github.com/<owner>/<repo>/blob/HEAD/<path>), never as local filesystem paths.
           #{capture_section(capture)}
         PROMPT
+      end
+
+      # Multi-target plans get an explicit map of the sibling checkouts: the
+      # agent CLI only auto-loads the working directory's rules, so sibling
+      # learnings indexes must be pointed at by prompt or they'd be silently
+      # skipped (plans#30).
+      #
+      # @param checkouts [Hash{String => String}] repo => checkout path
+      # @return [String] empty for single-target builds
+      sig { params(checkouts: T::Hash[String, String]).returns(String) }
+      def workspaces_section(checkouts)
+        return "" if checkouts.size <= 1
+
+        _primary_repo, primary = T.must(checkouts.first)
+        listing = checkouts.map do |repo, checkout|
+          location = checkout == primary ? "your working directory" : "../#{File.basename(checkout)}"
+          "- #{repo} — #{location}"
+        end
+        <<~SECTION
+          WORKSPACES — this plan spans multiple repositories, each checked out side by side:
+          #{listing.join("\n")}
+          Apply each repository's changes in its own checkout. Before working in a sibling checkout, read its .cursor/rules/learnings-index.mdc (when present) and consult the skills it points to, exactly as you would for your working directory's own rules. Leave targets that need no changes untouched.
+
+        SECTION
       end
 
       # Build-time learning capture runs for same-repo builds unless the repo
@@ -865,22 +926,27 @@ module AiFlow
           "see d3mlabs/ai-flow docs/attribution.md (createCommitOnBranch upgrade path)"
       end
 
-      # Back-references always use the full `Closes owner/repo#n` form (valid
-      # same-repo too, so no branching between repo-scoped and org-wide plans).
-      # The PR is the bot's proposal; the accountable human is named in the
-      # body and assigned to the PR (see docs/attribution.md).
+      # Back-references always use the full `owner/repo#n` form (valid
+      # same-repo too, so no branching between repo-scoped and org-wide
+      # plans). Only the primary PR carries `Closes` — one PR retires the
+      # plan; sibling PRs of a multi-target build say `Part of` so merging
+      # one leg never closes an issue whose other legs are still open. The
+      # PR is the bot's proposal; the accountable human is named in the body
+      # and assigned to the PR (see docs/attribution.md).
       #
-      # @return [AiFlow::GitHub::PullRequest] the created PR
+      # @return [Array(AiFlow::GitHub::PullRequest, String)] the created PR
+      #   and its body as posted (the cross-link pass appends to it)
       sig do
-        params(code_repo: String, issue_repo: String, issue: GitHub::Issue, branch: String)
-          .returns(GitHub::PullRequest)
+        params(code_repo: String, issue_repo: String, issue: GitHub::Issue, branch: String, primary: T::Boolean)
+          .returns([GitHub::PullRequest, String])
       end
-      def open_pull_request(code_repo, issue_repo, issue, branch)
+      def open_pull_request(code_repo, issue_repo, issue, branch, primary:)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
+        back_reference = primary ? "Closes" : "Part of"
         body = <<~BODY
           Implements #{issue.html_url}.
 
-          #{requested_by}Closes #{issue_repo}##{issue.number}
+          #{requested_by}#{back_reference} #{issue_repo}##{issue.number}
 
           <!-- ai-flow:build ##{issue.number} -->
         BODY
@@ -893,7 +959,30 @@ module AiFlow
         )
         requester = @context.commenter_login
         @github.add_assignees(code_repo, pr.number, [requester]) if requester
-        pr
+        [pr, body]
+      end
+
+      # A multi-target build's PRs merge independently, so each body lists
+      # its coordinated siblings — the reviewer of one leg sees the whole
+      # set. Runs after every PR exists (the urls aren't known earlier);
+      # single-PR builds have nothing to link.
+      #
+      # @param created [Array<Array(String, GitHub::PullRequest, String)>]
+      #   repo, PR, and body-as-posted for every opened PR, primary first
+      # @return [void]
+      sig { params(created: T::Array[[String, GitHub::PullRequest, String]]).void }
+      def cross_link_pull_requests(created)
+        return if created.size < 2
+
+        created.each do |repo, pr, body|
+          siblings = created.reject { |other_repo, other_pr, _| other_repo == repo && other_pr.number == pr.number }
+          listing = siblings.map { |other_repo, other_pr, _| "- #{other_repo}##{other_pr.number}: #{other_pr.html_url}" }
+          @github.api(
+            "repos/#{repo}/pulls/#{pr.number}",
+            method: "PATCH",
+            payload: { body: "#{body.chomp}\n\nCoordinated PRs from this build:\n#{listing.join("\n")}\n" },
+          )
+        end
       end
 
       # @param argv [Array<String>] command and arguments

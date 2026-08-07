@@ -8,14 +8,16 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BuildSplitTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
-  # A build stand-in recording the order sub-issues were built in.
+  # A build stand-in recording the order sub-issues were built in;
+  # `multi_on` numbers report a second PR (a multi-target sub-issue).
   # Subclasses the real command so sorbet-runtime's sig checks accept it.
   class RecordingBuild < AiFlow::Commands::Build
     attr_reader :built
 
-    def initialize(no_changes_on: [])
+    def initialize(no_changes_on: [], multi_on: [])
       @built = []
       @no_changes_on = no_changes_on
+      @multi_on = multi_on
     end
 
     def build_issue(issue, extra_instruction: "")
@@ -23,10 +25,9 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       if @no_changes_on.include?(issue.number)
         AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_notes: [], workflows_patch: nil)
       else
-        AiFlow::Commands::Build::Outcome::PrOpened.new(
-          url: "https://github.com/d3mlabs/demo/pull/#{issue.number}",
-          capture_notes: [], workflows_patch: nil,
-        )
+        urls = ["https://github.com/d3mlabs/demo/pull/#{issue.number}"]
+        urls << "https://github.com/d3mlabs/other/pull/#{issue.number}" if @multi_on.include?(issue.number)
+        AiFlow::Commands::Build::Outcome::PrOpened.new(urls: urls, capture_notes: [], workflows_patch: nil)
       end
     end
   end
@@ -88,6 +89,34 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     Then "the checklist marks the no-changes build distinctly from a built one"
     github.comment_edits.fetch(55).include?("[-] #{REPO}#1 Server API — no changes needed")
     github.comment_edits.fetch(55).include?("[x] #{REPO}#4 Integration: Parent")
+
+    Cleanup
+    nil
+  end
+
+  test "a multi-target sub-issue's checklist line lists every opened PR" do
+    Given "a sub-issue whose build opens two coordinated PRs"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Cross-repo work", "Do it in both repos.\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1\n"),
+    ])
+    build = RecordingBuild.new(multi_on: [1])
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+
+    Then "the checklist line carries both PR urls"
+    github.comment_edits.fetch(55).include?(
+      "[x] #{REPO}#1 Cross-repo work — " \
+        "https://github.com/d3mlabs/demo/pull/1, https://github.com/d3mlabs/other/pull/1",
+    )
 
     Cleanup
     nil

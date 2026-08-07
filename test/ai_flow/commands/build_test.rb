@@ -24,13 +24,17 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     # `git apply` — the fake flips on the apply call, since the landing
     # worktree's diff must report learning files while the build worktree's
     # reports code. `fail_on` substrings make matching command lines fail,
-    # for the capture failure paths.
-    def initialize(dirty: true, workflows_patch: "", capture_patch: "", capture_staged: [], fail_on: [])
+    # for the capture failure paths. `clean_dirs` substrings make the staged
+    # diff report empty for matching chdirs — the untouched target of a
+    # multi-target build.
+    def initialize(dirty: true, workflows_patch: "", capture_patch: "", capture_staged: [], fail_on: [],
+      clean_dirs: [])
       @dirty = dirty
       @workflows_patch = workflows_patch
       @capture_patch = capture_patch
       @capture_staged = capture_staged
       @fail_on = fail_on
+      @clean_dirs = clean_dirs
       @command_lines = []
       @refreshes = 0
     end
@@ -50,7 +54,13 @@ class AiFlow::Commands::BuildTest < Minitest::Test
         elsif argv.join(" ").start_with?("git diff --cached --binary -- .cursor/")
           @capture_patch
         elsif argv.take(4) == %w[git diff --cached --name-only]
-          @applied ? "#{@capture_staged.join("\n")}\n" : (@dirty ? "lib/thing.rb\n" : "")
+          if @applied
+            "#{@capture_staged.join("\n")}\n"
+          elsif @clean_dirs.any? { |needle| chdir.to_s.include?(needle) } || !@dirty
+            ""
+          else
+            "lib/thing.rb\n"
+          end
         elsif argv.take(2) == %w[git rev-parse]
           "abc1234def5678\n"
         else
@@ -123,6 +133,108 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/other") }
     command_lines.none? { |line| line.include?("worktree add") }
     github.calls.include?([:create_pull_request, "d3mlabs/other", "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
+  test "/build on a multi-target issue opens a coordinated PR per changed repo (plans#30)" do
+    Given "an issue declaring two target repos, with the command's own repo first"
+    github = FakeGitHub.new
+    github.seed_issue(
+      REPO, 7, title: "Carve system",
+      body: "# Carve system\nTarget repos: #{REPO}, d3mlabs/other\n",
+    )
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent)
+    command_lines = executor.command_lines
+
+    Then "the primary branches off the warm checkout, the sibling clones, and each repo gets its PR"
+    command_lines.any? { |line| line.include?("worktree add") && line.include?("d3mlabs-demo") }
+    command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/other") }
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+    github.calls.include?([:create_pull_request, "d3mlabs/other", "ai/7-carve-system", "main"])
+    github.comment_edits.fetch(55).include?(
+      "opened https://github.com/#{REPO}/pull/900, https://github.com/d3mlabs/other/pull/900",
+    )
+
+    Cleanup
+    nil
+  end
+
+  test "only the primary PR of a multi-target build closes the plan; siblings say Part of and cross-link" do
+    Given "an issue declaring two target repos"
+    github = FakeGitHub.new
+    github.seed_issue(
+      REPO, 7, title: "Carve system",
+      body: "# Carve system\nTarget repos: #{REPO}, d3mlabs/other\n",
+    )
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+    patched_bodies = github.api_payloads
+                           .select { |path, method, _| method == "PATCH" && path.include?("/pulls/") }
+                           .to_h { |path, _, payload| [path, payload.fetch(:body)] }
+
+    Then "back-references split primary/sibling and each body gains the coordinated-PRs list"
+    github.pull_request_bodies.fetch(0).include?("Closes #{REPO}#7")
+    github.pull_request_bodies.fetch(1).include?("Part of #{REPO}#7")
+    !github.pull_request_bodies.fetch(1).include?("Closes")
+    patched_bodies.fetch("repos/#{REPO}/pulls/900").include?("Coordinated PRs from this build:")
+    patched_bodies.fetch("repos/#{REPO}/pulls/900").include?("d3mlabs/other#900")
+    patched_bodies.fetch("repos/d3mlabs/other/pulls/900").include?("#{REPO}#900")
+
+    Cleanup
+    nil
+  end
+
+  test "a multi-target build leaves untouched targets PR-less and skips the cross-link pass" do
+    Given "two target repos where the agent only changes the primary"
+    github = FakeGitHub.new
+    github.seed_issue(
+      REPO, 7, title: "Carve system",
+      body: "# Carve system\nTarget repos: #{REPO}, d3mlabs/other\n",
+    )
+    executor = RecordingExecutor.new(clean_dirs: ["d3mlabs-other"])
+
+    When "building"
+    run_build(github: github, executor: executor)
+
+    Then "one PR opens in the primary and no sibling PR or cross-link happens"
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+    github.calls.none? { |kind, repo, _, _| kind == :create_pull_request && repo == "d3mlabs/other" }
+    github.pull_request_bodies.size == 1
+    github.api_payloads.none? { |path, method, _| method == "PATCH" && path.include?("/pulls/") }
+
+    Cleanup
+    nil
+  end
+
+  test "the multi-target prompt maps every checkout and points at sibling learnings indexes" do
+    Given "an issue declaring two target repos, with duplicates to be deduped"
+    github = FakeGitHub.new
+    github.seed_issue(
+      REPO, 7, title: "Carve system",
+      body: "# Carve system\nTarget repos: #{REPO}, d3mlabs/other, d3mlabs/other\n",
+    )
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent)
+    prompt = agent.prompts.fetch(0)
+
+    Then "the prompt carries the WORKSPACES map and duplicates collapse to one clone"
+    prompt.include?("WORKSPACES — this plan spans multiple repositories")
+    prompt.include?("- #{REPO} — your working directory")
+    prompt.include?("- d3mlabs/other — ../d3mlabs-other")
+    prompt.include?("read its .cursor/rules/learnings-index.mdc")
+    prompt.include?("Work only inside these checkouts.")
+    executor.command_lines.count { |line| line.start_with?("gh repo clone d3mlabs/other") } == 1
 
     Cleanup
     nil

@@ -194,7 +194,7 @@ reads the split state and reacts:
 
 | Plan state | /build's reaction |
 |---|---|
-| No sub-issues, no `## Subtasks` spec | Proceed: agent in an isolated worktree on branch `ai/<n>-<slug>`, push, open the PR (body carries `Closes owner/repo#n` + the `ai-flow:build` marker). |
+| No sub-issues, no `## Subtasks` spec | Proceed: agent in isolated checkouts on branch `ai/<n>-<slug>` (one per `Target repos:` entry; no line means the issue's own repo), push, open a PR per changed target. The primary (first) target's PR carries `Closes owner/repo#n`; sibling PRs say `Part of` and every body cross-links the coordinated set. All carry the `ai-flow:build` marker. |
 | Unapplied `## Subtasks` spec staged | **Refuse** — an unapplied proposal makes the plan-of-record ambiguous; building past it would silently discard the human's own staging. |
 | Open sub-issues exist | **Proceed**, with the result panel noting them — `--split` is a scoping choice (blast radius, reviewability), never an obligation. |
 
