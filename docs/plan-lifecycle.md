@@ -85,7 +85,7 @@ Everything ai-flow reads from or writes into issue bodies, in one place:
 
 | Convention | Where | Written by | Read by |
 |---|---|---|---|
-| `Target repos: owner/a, owner/b` | plan body | human (or `dev plan new --org` scaffold) | `/split` (narrows the repo menu), `/build` on an issue (first entry picks the code repo) |
+| `Target repos: owner/a, owner/b` | plan body | human (or `dev plan new --org` scaffold) | `/split` (narrows the repo menu), `/build` on an issue (every entry gets a checkout and, when changed, a PR; the first is the primary — working directory, learning capture, the `Closes` PR) |
 | `## Subtasks` + fenced yaml spec | plan body | `/split --dry` | human (edit freely), `/split --apply` (executes it), `/build` (refuses while staged) |
 | `## Subtasks` linked map | plan body | `/split` at apply | humans; `/build --split` (adopted/referenced annotations mark undrivable nodes) |
 | `existing: owner/repo#n` | spec entry | agent or human | `/split --apply` (adopt parentless / reference parented, never create) |

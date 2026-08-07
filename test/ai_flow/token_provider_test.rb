@@ -7,17 +7,19 @@ require "openssl"
 require "socket"
 
 # In-memory GitHub App endpoints: installation lookup + token mint, counting
-# mints and handing out sequenced tokens so freshness is observable.
+# mints and handing out sequenced tokens so freshness is observable. Mint
+# request bodies are recorded so scoping is observable too.
 class FakeAppApi
-  attr_reader :mints, :requests
+  attr_reader :mints, :requests, :mint_bodies
 
   def initialize(owner_kind: "orgs")
     @owner_kind = owner_kind
     @mints = 0
     @requests = []
+    @mint_bodies = []
   end
 
-  def call(method, url, _headers)
+  def call(method, url, _headers, body = nil)
     @requests << [method, url]
     case url
     when %r{/#{@owner_kind}/[^/]+/installation\z}
@@ -26,6 +28,7 @@ class FakeAppApi
       [404, JSON.generate(message: "Not Found")]
     when %r{/app/installations/42/access_tokens\z}
       @mints += 1
+      @mint_bodies << body
       [201, JSON.generate(token: "ghs_minted_#{@mints}")]
     else
       [404, JSON.generate(message: "unexpected: #{url}")]
@@ -173,7 +176,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
   test "the mint JWT authenticates as the App and is verifiable with its key" do
     Given "an API that captures the Authorization header"
     captured = T.let(nil, T.nilable(String))
-    http = lambda do |_method, url, headers|
+    http = lambda do |_method, url, headers, _body|
       captured ||= headers.fetch("Authorization")
       if url.end_with?("/orgs/d3mlabs/installation")
         [200, JSON.generate(id: 42)]
@@ -200,9 +203,76 @@ class AiFlow::TokenProviderTest < Minitest::Test
     nil
   end
 
+  test "the agent token mints read-only — every permission in the body says read, none says write" do
+    Given "App credentials"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "asking for the agent's token"
+    token = provider.agent_token
+
+    Then "the mint body downgrades every permission to read and never restricts repositories"
+    token == "ghs_minted_1"
+    body = JSON.parse(T.must(api.mint_bodies.fetch(0)))
+    body.keys == ["permissions"]
+    body.fetch("permissions").values.uniq == ["read"]
+
+    Cleanup
+    nil
+  end
+
+  test "an agent mint is one-off — it never touches the dispatcher's cached token" do
+    Given "a provider with a young dispatcher token"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+    dispatcher_token = provider.token
+
+    When "minting an agent token, then asking for the dispatcher token again"
+    agent = provider.agent_token
+    after = provider.token
+
+    Then "the agent mint is its own, and the cached token survives untouched"
+    dispatcher_token == "ghs_minted_1"
+    agent == "ghs_minted_2"
+    after == "ghs_minted_1"
+
+    Cleanup
+    nil
+  end
+
+  test "static mode answers its one token for the agent ask — github.token is repo-scoped by construction" do
+    Given "a static-token provider"
+    provider = AiFlow::TokenProvider.new(
+      app_id: nil, private_key_pem: nil, owner: "d3mlabs", static_token: "ghp_static",
+    )
+
+    When "asking for the agent's token"
+    token = provider.agent_token
+
+    Then
+    token == "ghp_static"
+
+    Cleanup
+    nil
+  end
+
+  test "ambient mode answers nil for the agent ask, like the plain token" do
+    Given "an empty provider"
+    provider = AiFlow::TokenProvider.new(app_id: nil, private_key_pem: nil, owner: nil)
+
+    When "asking for the agent's token"
+    token = provider.agent_token
+
+    Then
+    token.nil?
+
+    Cleanup
+    nil
+  end
+
   test "a failed mint raises with the status and body" do
     Given "an API that rejects the installation lookup everywhere"
-    http = ->(_method, _url, _headers) { [401, "Bad credentials"] }
+    http = ->(_method, _url, _headers, _body) { [401, "Bad credentials"] }
     provider = build_provider(http: http, clock: -> { Time.at(0) })
 
     When "asking for the token"

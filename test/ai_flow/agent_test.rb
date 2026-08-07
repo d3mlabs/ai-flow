@@ -14,9 +14,10 @@ require "stringio"
 class RecordingExecutor < AiFlow::Executor
   DEFAULT_STREAM = [%({"type":"result","subtype":"success","is_error":false,"result":"ok"})].freeze
 
-  attr_reader :captures
+  attr_reader :captures, :envs
 
   def initialize(lines: DEFAULT_STREAM, err: "", ok: true)
+    @envs = []
     @lines = lines
     @err = err
     @ok = ok
@@ -25,10 +26,19 @@ class RecordingExecutor < AiFlow::Executor
 
   def stream(*argv, stdin: nil, chdir: nil, env: {})
     @captures << argv
+    @envs << env
     @lines.each { |line| yield "#{line}\n" }
     [@err, @ok]
   end
 end unless defined?(RecordingExecutor)
+
+# Overrides the agent's auth overlay with a recognizable marker, so the
+# launch's env plumbing is observable without real minting.
+class ReadOnlyRecordingExecutor < RecordingExecutor
+  def agent_auth_env
+    { "GH_TOKEN" => "read-only-marker" }
+  end
+end unless defined?(ReadOnlyRecordingExecutor)
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::AgentTest < Minitest::Test
@@ -395,6 +405,21 @@ class AiFlow::AgentTest < Minitest::Test
   # The agent's spawn-env hygiene (ai-flow#38) is Executor's job now (#46):
   # every spawn gets HarnessEnv.scrub at the seam, asserted with real
   # subprocesses in executor_test.
+
+  test "the launch spawns the agent under the read-only auth overlay (plans#25)" do
+    Given "an executor whose agent overlay is a recognizable marker"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = ReadOnlyRecordingExecutor.new
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the spawn env carries the agent overlay, not the dispatcher's default"
+    executor.envs.fetch(0) == { "GH_TOKEN" => "read-only-marker" }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 
   test "a failed run raises" do
     Given "a failing executor with stderr"

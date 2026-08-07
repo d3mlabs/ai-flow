@@ -90,6 +90,7 @@ jobs:
     env:
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
     steps:
+      # Scoped to the one repo the reaction lands on (plans#25).
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
@@ -98,6 +99,7 @@ jobs:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
           private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
 
       # A failed reaction must never paint a successful command run red —
       # warn and stay green (the dispatcher acks again as a backstop).
@@ -148,6 +150,7 @@ jobs:
     env:
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
     steps:
+      # Scoped to the one repo whose collaborator list gets read (plans#25).
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
@@ -156,6 +159,7 @@ jobs:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
           private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
 
       - name: Check the author's repo permission
         id: gate
@@ -225,10 +229,14 @@ jobs:
           echo "::error::ai-flow requires its GitHub App (AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets — see the README's identity section). To knowingly run degraded on github.token (writes act as github-actions[bot], /build PRs get no CI), set allow_token_fallback: true in the caller workflow."
           exit 1
 
-      # Mint the App installation token (1h). owner (without a repositories
-      # list) scopes it to every repo the App is installed on, not just the
-      # triggering repo — /build pushes to other code repos and the private
-      # ai-flow checkout below both need that reach.
+      # Mint the App installation token (1h), scoped to the triggering repo
+      # (plans#25): this token only serves the two checkouts below and the
+      # no-App fallback. Cross-repo work (/build's Target repos, /learn's
+      # promotion) happens in the dispatcher, which holds the App key and
+      # mints its own reach per call (TokenProvider); the agent it launches
+      # gets a read-only token (installation-wide reads, zero writes). The
+      # public ai-flow checkout needs no scope — any valid token reads a
+      # public repo (cross-owner adopters exercise exactly that today).
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
@@ -237,6 +245,7 @@ jobs:
           app-id: ${{ secrets.AI_FLOW_APP_ID }}
           private-key: ${{ secrets.AI_FLOW_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
 
       - name: Check out the target repo
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

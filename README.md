@@ -239,7 +239,10 @@ key enters the Dispatch step, a `TokenProvider` mints lazily with an age
 check on every subprocess spawn, and the write phase (push, comments)
 re-mints unconditionally. The key is scrubbed from the environment before
 the agent (or any subprocess) starts; the agent only ever sees short-lived
-installation tokens. Because the App lacks the `workflows` scope, `/build`
+installation tokens, and its own token is downscoped to read-only — every
+GitHub write (push, PR, comment) is the dispatcher's, so the agent's token
+covers discovery reads across the installation and nothing else. Because
+the App lacks the `workflows` scope, `/build`
 excludes `.github/workflows/**` from its commits and panels the diff as a
 suggested patch for a human — with a human's credential — to apply.
 

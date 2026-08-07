@@ -77,8 +77,13 @@ module AiFlow
     # @return [String] the agent's result text
     # @raise [Error] when the agent fails
     sig do
-      params(prompt: String, workdir: String, command: Command, force: T::Boolean, policy_root: String)
-        .returns(String)
+      params(
+        prompt: String,
+        workdir: String,
+        command: Command,
+        force: T::Boolean,
+        policy_root: String,
+      ).returns(String)
     end
     def launch(prompt:, workdir:, command:, force: false, policy_root: workdir)
       # --trust: headless runs can't answer the workspace-trust prompt, and the
@@ -103,11 +108,16 @@ module AiFlow
       argv << "--force" if force
 
       log_group("ai-flow agent prompt (/#{word})", prompt)
+      $stdout.puts "ai-flow agent token (/#{word}): read-only, installation-wide (plans#25)"
       result = T.let(nil, T.nilable(String))
       assistant_texts = T.let([], T::Array[String])
+      # The env: overlay wins over the executor's default auth injection, so
+      # this is what replaces the dispatcher's full-permission token with the
+      # read-only one for the agent subprocess.
+      agent_env = @executor.agent_auth_env
       # T.unsafe: splatting a runtime-built argv into stream's rest param is
       # beyond Sorbet's static splat support (srb.help/7019).
-      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir) do |line|
+      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir, env: agent_env) do |line|
         event = parse_event(line)
         result = event["result"].to_s if event && event["type"] == "result"
         render_event(word, line, event, assistant_texts)

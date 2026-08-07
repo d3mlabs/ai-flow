@@ -66,7 +66,13 @@ Division of labor, and why:
   checkout's git config (`persist-credentials: false`), so no git call ever
   relies on a mint-time credential. The App private key enters the Dispatch
   step's env, is read once, and is scrubbed before any subprocess spawns —
-  the agent only ever sees short-lived installation tokens.
+  the agent only ever sees short-lived installation tokens. The agent's own
+  token is further downscoped to read-only (the mint carries an explicit
+  `permissions:` map with every grant at `read`): repositories stay
+  installation-wide so discovery reads across a mostly-private org keep
+  working, and the write surface is zero because every GitHub write is the
+  dispatcher's — the arbitrary shell the agent runs under `--force` can
+  never push, comment, or merge.
 
 ### Roles vs zones
 
@@ -287,7 +293,7 @@ back-references, not agent-written ones:
 
 ```mermaid
 flowchart TD
-    issueRead["Read the issue<br/>(org-wide plans: Target repos: line<br/>picks the code repo)"] --> wt["git worktree prune + add<br/>(same repo: branch off the warm checkout;<br/>cross-repo: gh clone)"]
+    issueRead["Read the issue<br/>(org-wide plans: Target repos: line<br/>declares the code repos — one checkout each)"] --> wt["git worktree prune + add<br/>(same repo: branch off the warm checkout;<br/>cross-repo: gh clone; one PR per changed target)"]
     wt --> branch["checkout -B ai/n-slug"]
     branch --> agentRun["agent implements the issue<br/>(code, tests, docs; no git)"]
     agentRun -->|no changes| noPr["Report: no PR opened"]

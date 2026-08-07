@@ -24,6 +24,10 @@ class ScriptedTokenProvider < AiFlow::TokenProvider
     @refreshes += 1
     @current = @tokens[@refreshes] || @tokens.last
   end
+
+  def agent_token
+    "#{@current}_read_only"
+  end
 end unless defined?(ScriptedTokenProvider)
 
 transform!(RSpock::AST::Transformation)
@@ -153,6 +157,52 @@ class AiFlow::ExecutorTest < Minitest::Test
 
     Then "both are present"
     out == "ghs_alpha,hello"
+
+    Cleanup
+    nil
+  end
+
+  test "agent_auth_env carries the read-only token in the same env shape as the default injection" do
+    Given "an executor with a token provider"
+    provider = ScriptedTokenProvider.new(["ghs_alpha"])
+    executor = AiFlow::Executor.new(token_provider: provider)
+
+    When "building the agent's auth overlay"
+    env = executor.agent_auth_env
+
+    Then "GH_TOKEN and the git extraheader both carry the read-only token"
+    env.fetch("GH_TOKEN") == "ghs_alpha_read_only"
+    env.fetch("GIT_CONFIG_VALUE_0") ==
+      "AUTHORIZATION: basic #{["x-access-token:ghs_alpha_read_only"].pack("m0")}"
+
+    Cleanup
+    nil
+  end
+
+  test "a spawn with the agent overlay overrides the default full-permission injection" do
+    Given "an executor with a token provider"
+    provider = ScriptedTokenProvider.new(["ghs_alpha"])
+    executor = AiFlow::Executor.new(token_provider: provider)
+
+    When "capturing with the agent overlay as the caller env"
+    out, = executor.capture(RUBY, "-e", 'print ENV["GH_TOKEN"]', env: executor.agent_auth_env)
+
+    Then "the child sees the read-only token, not the dispatcher's"
+    out == "ghs_alpha_read_only"
+
+    Cleanup
+    nil
+  end
+
+  test "without a provider the agent overlay is empty — ambient auth stays ambient" do
+    Given "a bare executor"
+    executor = AiFlow::Executor.new
+
+    When "building the agent's auth overlay"
+    env = executor.agent_auth_env
+
+    Then
+    env.empty?
 
     Cleanup
     nil

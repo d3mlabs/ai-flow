@@ -62,7 +62,7 @@ module AiFlow
     # @param owner [String, nil] the org/user the App is installed on
     # @param static_token [String, nil] fallback token when no App key
     # @param api_url [String] GitHub API root
-    # @param http [#call, nil] transport `(method, url, headers) ->
+    # @param http [#call, nil] transport `(method, url, headers, body) ->
     #   [status, body]`, injectable for tests
     # @param clock [#call] returns the current Time, injectable for tests
     sig do
@@ -130,6 +130,30 @@ module AiFlow
       end
     end
 
+    # The agent subprocess's token (plans#25): installation-wide in
+    # repositories, read-only in permissions — scope the verb, not the noun.
+    # Repository scoping broke discovery in a mostly-private org (an agent
+    # digging across sibling repos hit 404s and over-generalized to "cross-
+    # repo is infeasible"); reads stay unbounded so digging works, and the
+    # write surface is zero because every GitHub write is the dispatcher's,
+    # never the agent's. Minted fresh per call (an agent launch is rare
+    # enough that caching would only add staleness states).
+    #
+    # Static mode answers its one token as-is — that mode is the degraded
+    # github.token fallback, already single-repo by construction. Ambient
+    # answers nil, like #token.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def agent_token
+      case (mode = @mode)
+      when AuthMode::App then mode.read_only_token
+      when AuthMode::Static then mode.token
+      when AuthMode::Ambient then nil
+      else T.absurd(mode)
+      end
+    end
+
     private
 
     # @param value [String, nil]
@@ -145,15 +169,18 @@ module AiFlow
     # @param method [String]
     # @param url [String]
     # @param headers [Hash{String => String}]
+    # @param body [String, nil] JSON request body (the read-only mint's
+    #   permissions map)
     # @return [Array(Integer, String)] status code and response body
     sig do
-      params(method: String, url: String, headers: T::Hash[String, String])
+      params(method: String, url: String, headers: T::Hash[String, String], body: T.nilable(String))
         .returns([Integer, String])
     end
-    def default_http(method, url, headers)
+    def default_http(method, url, headers, body = nil)
       uri = URI.parse(url)
       response = Net::HTTP.start(T.must(uri.host), uri.port, use_ssl: uri.scheme == "https") do |http|
         request = (method == "POST" ? Net::HTTP::Post : Net::HTTP::Get).new(uri, headers)
+        request.body = body if body
         http.request(request)
       end
       [response.code.to_i, response.body]
@@ -190,7 +217,7 @@ module AiFlow
         #   nilable env truth (unset outside Actions); a nil owner surfaces
         #   as an installation-lookup Error at mint time
         # @param api_url [String] GitHub API root, no trailing slash
-        # @param http [#call] transport `(method, url, headers) ->
+        # @param http [#call] transport `(method, url, headers, body) ->
         #   [status, body]`
         # @param clock [#call] returns the current Time
         sig do
@@ -235,13 +262,43 @@ module AiFlow
           @minted_at = @clock.call
         end
 
+        # The agent's permission set: every content surface the App holds,
+        # downgraded to read. GitHub's mint API rejects permissions the App
+        # was never granted, so this list must stay within the App's own
+        # grants (contents, issues, pull requests, plus the metadata read
+        # every installation implies).
+        READ_ONLY_PERMISSIONS = T.let(
+          {
+            contents: "read",
+            metadata: "read",
+            issues: "read",
+            pull_requests: "read",
+          }.freeze,
+          T::Hash[Symbol, String],
+        )
+
+        # A one-off read-only token (never cached — see
+        # TokenProvider#agent_token): installation-wide in repositories so
+        # discovery reads work across the org, write-free so the arbitrary
+        # shell holding it cannot push, comment, or merge anywhere.
+        #
+        # @return [String]
+        sig { returns(String) }
+        def read_only_token
+          mint(permissions: READ_ONLY_PERMISSIONS)
+        end
+
         private
 
+        # @param permissions [Hash{Symbol => String}, nil] permission map to
+        #   downscope the token to; nil mints with the App's full grants
+        #   (the dispatcher's own)
         # @return [String] a fresh installation token
-        sig { returns(String) }
-        def mint
+        sig { params(permissions: T.nilable(T::Hash[Symbol, String])).returns(String) }
+        def mint(permissions: nil)
           jwt = app_jwt
-          response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt)
+          body = permissions && JSON.generate(permissions: permissions)
+          response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt, body: body)
           response.fetch("token")
         end
 
@@ -289,17 +346,22 @@ module AiFlow
         # @param method [String]
         # @param path [String]
         # @param jwt [String]
+        # @param body [String, nil] JSON request body
         # @return [Hash] the parsed response body
         # @raise [Error] on any non-2xx answer
-        sig { params(method: String, path: String, jwt: String).returns(T::Hash[String, T.untyped]) }
-        def request(method, path, jwt)
-          status, body = @http.call(
+        sig do
+          params(method: String, path: String, jwt: String, body: T.nilable(String))
+            .returns(T::Hash[String, T.untyped])
+        end
+        def request(method, path, jwt, body: nil)
+          status, response_body = @http.call(
             method, "#{@api_url}/#{path}",
             { "Authorization" => "Bearer #{jwt}", "Accept" => "application/vnd.github+json" },
+            body,
           )
-          raise Error, "GitHub App auth: #{method} #{path} returned #{status}: #{body.to_s[0, 200]}" unless (200..299).cover?(status)
+          raise Error, "GitHub App auth: #{method} #{path} returned #{status}: #{response_body.to_s[0, 200]}" unless (200..299).cover?(status)
 
-          JSON.parse(body)
+          JSON.parse(response_body)
         end
       end
 

@@ -219,7 +219,8 @@ module AiFlow
     sig { params(workdir: String, origin: OriginRef).returns(T::Array[String]) }
     def rerun_retrieval(workdir, origin)
       result = @agent.launch(
-        prompt: retrieval_prompt(workdir, origin), workdir: workdir, command: Command::Learn.new, force: false,
+        prompt: retrieval_prompt(workdir, origin), workdir: workdir, command: Command::Learn.new,
+        force: false,
       )
       # The last declaration wins when the pass rambles through several.
       match = result.lines.reverse_each.filter_map { |line| FIRED_LINE.match(line) }.first

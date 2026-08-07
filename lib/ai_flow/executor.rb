@@ -43,6 +43,19 @@ module AiFlow
       @token_provider&.refresh!
     end
 
+    # The auth overlay for an agent launch (plans#25): same shape as the
+    # per-spawn default, but the token is read-only — installation-wide in
+    # repositories (discovery reads across the org keep working) with a
+    # zero write surface, so the arbitrary shell the agent runs under
+    # --force can never push, comment, or merge. Callers pass it as the
+    # env: overlay, which wins key-by-key over the default injection.
+    #
+    # @return [Hash{String => String}] empty without credentials (ambient)
+    sig { returns(T::Hash[String, String]) }
+    def agent_auth_env
+      auth_overlay(@token_provider&.agent_token)
+    end
+
     # @param argv [Array<String>] command and arguments
     # @param stdin [String, nil] data piped to the subprocess
     # @param chdir [String, nil] working directory
@@ -135,7 +148,13 @@ module AiFlow
     # @return [Hash{String => String}]
     sig { returns(T::Hash[String, String]) }
     def auth_env
-      token = @token_provider&.token
+      auth_overlay(@token_provider&.token)
+    end
+
+    # @param token [String, nil]
+    # @return [Hash{String => String}] empty when there is no token
+    sig { params(token: T.nilable(String)).returns(T::Hash[String, String]) }
+    def auth_overlay(token)
       return {} unless token
 
       basic = ["x-access-token:#{token}"].pack("m0")
