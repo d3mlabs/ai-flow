@@ -12,22 +12,28 @@ module AiFlow
   # nothing.
   #
   # The dispatcher runs under `bundle exec` inside the .ai-flow checkout;
-  # without the scrub, RUBYOPT/BUNDLE_GEMFILE/GEM_HOME leak into the child
-  # and it resolves the harness's pins instead of its own — the agent's
-  # `bundle` hits Bundler::RubyVersionMismatch naming a Ruby the project
-  # never declared, and `dev` crashes unable to load its vendored gems.
+  # without the scrub, RUBYOPT/BUNDLE_GEMFILE leak into the child and it
+  # resolves the harness's pins instead of its own — the agent's `bundle`
+  # hits Bundler::RubyVersionMismatch naming a Ruby the project never
+  # declared, and `dev` crashes unable to load its vendored gems.
   # Bundler.original_env is bundler's own record of the pre-activation
   # environment; the toolchain-selection keys it can't see — written before
-  # bundler started, by shadowenv activating .ai-flow or an rbenv shim in
-  # the launch chain — are force-unset on top (TOOLCHAIN_KEYS). A nil value
-  # in a spawn env hash unsets the key.
+  # bundler started, by shadowenv activating .ai-flow (GEM_HOME/GEM_PATH)
+  # or dev's command runner (RUBYLIB) or an rbenv shim in the launch chain —
+  # are recorded as "original" and faithfully restored, so they are
+  # force-unset on top (TOOLCHAIN_KEYS). The gap bit for real: a leaked
+  # GEM_HOME made an agent's `bundle install` compile Ruby 4.0 native
+  # extensions into the harness's 3.3 gem home, breaking every later run on
+  # that machine. Unlike dev's own entrypoint, where GEM_HOME/GEM_PATH are
+  # legitimate user config (dev#94), at this seam they can only be harness
+  # activation. A nil value in a spawn env hash unsets the key.
   module HarnessEnv
     extend T::Sig
 
     TOOLCHAIN_KEYS = T.let(
       [
         "__shadowenv_data", "RUBY_ROOT", "RUBY_ENGINE", "RUBY_VERSION", "GEM_ROOT",
-        "RBENV_VERSION", "RBENV_DIR"
+        "GEM_HOME", "GEM_PATH", "RUBYLIB", "RBENV_VERSION", "RBENV_DIR"
       ].freeze,
       T::Array[String],
     )

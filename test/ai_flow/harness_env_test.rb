@@ -28,4 +28,29 @@ class AiFlow::HarnessEnvTest < Minitest::Test
     Cleanup
     saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
   end
+
+  test "scrub unsets gem-resolution keys even when bundler recorded them as original" do
+    Given "GEM_HOME/GEM_PATH/RUBYLIB exactly as bundler recorded them pre-activation"
+    # A harness export written before bundler booted (shadowenv's GEM_HOME/
+    # GEM_PATH, dev's RUBYLIB) is what Bundler.original_env holds, so the
+    # restore half of the scrub has nothing to undo — only the force-unset
+    # can remove it. Aligning ENV with original_env reproduces that state.
+    keys = ["GEM_HOME", "GEM_PATH", "RUBYLIB"]
+    saved = keys.to_h { |key| [key, ENV[key]] }
+    keys.each do |key|
+      original_value = Bundler.original_env[key]
+      original_value.nil? ? ENV.delete(key) : ENV[key] = original_value
+    end
+
+    When "computing the scrub"
+    env = AiFlow::HarnessEnv.scrub
+
+    Then "the overlay force-unsets all three"
+    env.fetch("GEM_HOME", :missing).nil?
+    env.fetch("GEM_PATH", :missing).nil?
+    env.fetch("RUBYLIB", :missing).nil?
+
+    Cleanup
+    saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+  end
 end
