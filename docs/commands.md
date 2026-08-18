@@ -59,6 +59,16 @@ neither reactions nor in-place edits, so there is no 👀 ack and the ⏳
 status + results land in one bot-owned **review panel** comment quoting the
 review, posted when the run starts and edited in place thereafter.
 
+> ⚠️ **A merge-conflicted PR swallows review-surface commands.** GitHub runs
+> `pull_request_review` and `pull_request_review_comment` workflows against
+> the PR's merge ref (`refs/pull/N/merge`); while the PR is conflicted that
+> ref cannot be created and GitHub creates **no workflow run at all** — no
+> ack, no skipped run, no trace. Commands submitted with a review (the
+> summary and every line-anchored thread in it) silently vanish. The PR
+> conversation is unaffected — `issue_comment` never uses the merge ref —
+> so on a conflicted PR either resolve the conflict first or post the
+> command as a top-level conversation comment.
+
 ## /ask
 
 Read-only Q&A against the document plus the repo checkout.
