@@ -56,6 +56,13 @@ module AiFlow
       # through several.
       PROMOTE_LINE = T.let(/^PROMOTE:\s*(.+?)\s*$/, Regexp)
 
+      # The root-cause gate's escape hatch: a pass that finds a fixable
+      # cause declares `FIX: <proposal>` instead of (or alongside) drafting
+      # a coping rule. Free text, one proposal per line, every line relayed
+      # to the result panel — unlike PROMOTE nothing is routed; the humans
+      # at the gate file the fix.
+      FIX_LINE = T.let(/^FIX:\s*(.+?)\s*$/, Regexp)
+
       # Learning artifacts live under these trees — the per-repo layout, then
       # the org knowledge repo's root layout (index.md + skills/). The panel
       # names what changed by reading the staged file list, never by trusting
@@ -861,6 +868,18 @@ module AiFlow
         slugs.map { |slug| route_promotion(worktree, slug, knowledge_repo) }
       end
 
+      # @param agent_output [String] the pass's result
+      # @return [Array<String>] panel notes for the pass's declared FIX
+      #   lines (the root-cause gate's escape hatch)
+      sig { params(agent_output: String).returns(T::Array[String]) }
+      def fix_notes(agent_output)
+        agent_output.lines
+          .filter_map { |line| FIX_LINE.match(line) }
+          # T.must: the group is unconditional in FIX_LINE, so a match
+          # always carries it.
+          .map { |match| "🔧 proposed root-cause fix (for a human to file): #{T.must(match[1])}" }
+      end
+
       # @return [Array<String>] slugs the pass declared on its PROMOTE line
       sig { params(agent_output: String).returns(T::Array[String]) }
       def declared_promotions(agent_output)
@@ -928,6 +947,7 @@ module AiFlow
         existing = @github.open_pull_request_for_head(@context.owner_repo, source.branch)
 
         promotion_notes = T.let([], T::Array[String])
+        fixes = T.let([], T::Array[String])
         outcome = in_worktree(source.branch, refine: !existing.nil?) do |worktree|
           scaffold_index(worktree)
           result = @agent.launch(
@@ -936,6 +956,7 @@ module AiFlow
           # The agent may have run close to the token's lifetime; the write
           # phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
+          fixes = fix_notes(result)
           routings = route_promotions(worktree, result)
           promotion_notes = routings.map(&:note)
           slugs = commit_learnings(worktree)
@@ -962,7 +983,7 @@ module AiFlow
           DraftOutcome::Drafted.new(slugs: drafted, pr: pr, refined: !existing.nil?)
         end
 
-        @result_writer.write(@context, [[segment, learn_result(outcome, promotion_notes)]])
+        @result_writer.write(@context, [[segment, learn_result(outcome, promotion_notes, fixes)]])
       end
 
       # Unseeded repos get dev's canonical scaffold before the capture pass:
@@ -1021,6 +1042,10 @@ module AiFlow
       def shared_rubric
         <<~RUBRIC.strip
           DISTILLATION RUBRIC — only lessons that generalize beyond the immediate diff or discussion become learnings. Three kinds, one format: coding practices (style/API corrections that recur), architecture knowledge (constraints and shapes of the system — "X must never call Y directly", "this subsystem owns that lifecycle"), and process rules. Diff-local fixes (typos, renames, one-off bugs) are NOT learnings.
+
+          ROOT-CAUSE GATE: before recording how to cope with a failure, sharp edge, or confusing behavior, ask whether a code, test, or tooling change would remove it outright. If one would, the coping procedure is NOT the learning — capture the design rule the fix embodies (or nothing), and declare the fix on a line of your final output: `FIX: <where it lives> — <the one-line change>` (one line per fix). FIX lines are relayed to the humans at the gate, never applied. A workaround-shaped learning is valid only when its body names the root cause and why it stays unfixed.
+
+          WIDE ANGLE: this pass is one sample, seen from inside. Before drafting, step back: skim the recent history in this checkout (`git log --oneline -30`) and the existing index for the same friction recurring — an instance of a visible pattern becomes a learning about the class, not the instance. Then ask where the cause lives: a failure that surfaced here but is owned by another repo's code or tooling is that repo's FIX line, not this repo's coping rule.
 
           Before writing, DEDUP: read `#{INDEX_PATH}` and skills under `~/.cursor/skills/` (the org tier); if an equivalent learning exists, revise it rather than adding a duplicate; if swept feedback contradicts one, edit or remove it. Revision always beats a contradictory sibling. A contradicted ORG-tier entry is fixable from here too: draft the corrected lesson in this checkout under that entry's slug and declare it on the PROMOTE line (below) — the tooling opens a revision proposal against the knowledge repo.
 
@@ -1204,16 +1229,26 @@ module AiFlow
 
       # @param promotion_notes [Array<String>] org-routing notes appended to
       #   the repo-local outcome (see route_promotions)
+      # @param fixes [Array<String>] declared root-cause fixes relayed to
+      #   the panel (see fix_notes)
       # @return [String]
-      sig { params(outcome: DraftOutcome, promotion_notes: T::Array[String]).returns(String) }
-      def learn_result(outcome, promotion_notes = [])
+      sig do
+        params(
+          outcome: DraftOutcome,
+          promotion_notes: T::Array[String],
+          fixes: T::Array[String],
+        ).returns(String)
+      end
+      def learn_result(outcome, promotion_notes = [], fixes = [])
         lines =
           case outcome
           when DraftOutcome::Empty
-            if promotion_notes.empty?
-              ["ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change."]
-            else
+            if promotion_notes.any?
               ["✅ **/learn** — everything captured routed to the org tier."]
+            elsif fixes.any?
+              ["ℹ️ **/learn** — no learning drafted: the pass proposed a root-cause fix instead."]
+            else
+              ["ℹ️ **/learn** — no learning: nothing here generalized beyond the immediate change."]
             end
           when DraftOutcome::Drafted
             verb = outcome.refined? ? "refined" : "drafted"
@@ -1223,7 +1258,7 @@ module AiFlow
           else
             T.absurd(outcome)
           end
-        (lines + promotion_notes).join("\n")
+        (lines + promotion_notes + fixes).join("\n")
       end
 
       # @return [String]

@@ -366,6 +366,52 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     nil
   end
 
+  # ---- The FIX contract (the rubric's root-cause gate) ----
+
+  test "a pass declaring FIX instead of drafting relays the proposal to the panel" do
+    Given "a pass that found a fixable root cause and wrote no learning files"
+    dir = Dir.mktmpdir("ai-flow-learn-test-")
+    github = FakeGitHub.new
+    executor = RecordingExecutor.new(staged: [])
+    agent = FakeAgent.new(
+      ["no learning: the guard is fixable at the source\nFIX: demo — make the guard spawn its own bundler activation"],
+    )
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn the flaky guard", agent: agent, workdir: dir)
+
+    Then "no PR opens; the panel carries the fix-instead headline and the proposal"
+    github.calls.none? { |call| call.is_a?(Array) && call.first == :create_pull_request }
+    github.comment_edits.fetch(55).include?("proposed a root-cause fix instead")
+    github.comment_edits.fetch(55).include?(
+      "🔧 proposed root-cause fix (for a human to file): demo — make the guard spawn its own bundler activation",
+    )
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a drafted learning and a FIX declaration land together" do
+    Given "a pass that drafted a design rule and declared the fix embodying it"
+    dir = Dir.mktmpdir("ai-flow-learn-test-")
+    github = FakeGitHub.new
+    executor = RecordingExecutor.new(staged: [INDEX, SKILL])
+    agent = FakeAgent.new(["drafted one\nFIX: demo — inject the runner instead of stubbing Kernel"])
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn factories", agent: agent, workdir: dir)
+
+    Then "the proposal PR opens and the panel carries both the draft and the fix note"
+    github.calls.include?([:create_pull_request, REPO, "ai/learn-c55", "main"])
+    github.comment_edits.fetch(55).include?("✅ **/learn** — drafted")
+    github.comment_edits.fetch(55).include?(
+      "🔧 proposed root-cause fix (for a human to file): demo — inject the runner instead of stubbing Kernel",
+    )
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   # ---- Capture-initiated org routing (the PROMOTE contract, #35) ----
 
   # Writes a learning (skill + index entry) into the launch workdir — the

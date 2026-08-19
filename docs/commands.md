@@ -369,6 +369,21 @@ pushed clean first — instead of leaving it hollow.
 
 > 🌐 `http-retries` → org-tier proposal on d3mlabs/knowledge: https://github.com/d3mlabs/knowledge/pull/N
 
+### Root-cause fixes over coping rules (the `FIX` contract)
+
+The capture rubric gates every workaround-shaped lesson on a root-cause
+question: if a code, test, or tooling change would remove the sharp edge
+outright, the coping procedure is not the learning. The pass captures the
+design rule the fix embodies (or nothing) and declares the fix on a final
+output line, `FIX: <where it lives> — <the one-line change>` (one per
+line). `/learn` relays each declared fix as a panel note — nothing is
+applied or filed automatically; the humans at the gate own the follow-up.
+In `/build` passes the summary block already reaches the result comment,
+so a declared fix rides along there.
+
+> ℹ️ **/learn** — no learning drafted: the pass proposed a root-cause fix instead.
+> 🔧 proposed root-cause fix (for a human to file): dev — make the scrub guard spawn its own bundler activation
+
 ### Build-time capture (inside `/build`)
 
 Every `/build` pass also carries the capture rubric (on by default; switch
