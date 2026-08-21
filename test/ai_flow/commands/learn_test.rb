@@ -243,7 +243,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500",
+        repo: REPO, head_ref: "ai/learn-pr-7"))
     executor = RecordingExecutor.new(staged: [INDEX, SKILL])
     context = ContextBuilder.issue_comment(number: 7, body: "/learn", pull_request: true)
 
@@ -351,7 +352,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     Given "an open scan draft on ai/learn-scan"
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-scan",
-      AiFlow::GitHub::PullRequest.new(number: 510, html_url: "https://github.com/#{REPO}/pull/510"))
+      AiFlow::GitHub::PullRequest.new(number: 510, html_url: "https://github.com/#{REPO}/pull/510",
+        repo: REPO, head_ref: "ai/learn-scan"))
     executor = RecordingExecutor.new(staged: [INDEX])
 
     When "rescanning"
@@ -590,7 +592,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "The description.")
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
-      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500"))
+      AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500",
+        repo: REPO, head_ref: "ai/learn-pr-7"))
     # First commit: the org clone's. Second: the repo worktree's, staging
     # only the routing's prune residue (the skill's deletion, the index edit).
     executor = RecordingExecutor.new(staged_queue: [
@@ -738,7 +741,8 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     promotable_workdir(dir)
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-promote-demo-typed-errors",
-      AiFlow::GitHub::PullRequest.new(number: 12, html_url: "https://github.com/d3mlabs/knowledge/pull/12"))
+      AiFlow::GitHub::PullRequest.new(number: 12, html_url: "https://github.com/d3mlabs/knowledge/pull/12",
+        repo: "d3mlabs/knowledge", head_ref: "ai/learn-promote-demo-typed-errors"))
     executor = RecordingExecutor.new(staged: ["index.md", "skills/typed-errors/SKILL.md"])
 
     When "promoting again"

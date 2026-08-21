@@ -28,18 +28,20 @@ module AiFlow
         sealed!
 
         # /build opened PRs for the sub-issue (one per changed target;
-        # multi-target sub-issues open several, plans#30).
+        # multi-target sub-issues open several, plans#30). The PR objects
+        # (not just urls) are kept: dependents stack on their repo/head
+        # pairs.
         class Built
           extend T::Sig
           include Progress
 
-          sig { returns(T::Array[String]) }
-          attr_reader :urls
+          sig { returns(T::Array[GitHub::PullRequest]) }
+          attr_reader :prs
 
-          # @param urls [Array<String>] non-empty, primary first
-          sig { params(urls: T::Array[String]).void }
-          def initialize(urls:)
-            @urls = urls
+          # @param prs [Array<GitHub::PullRequest>] non-empty, primary first
+          sig { params(prs: T::Array[GitHub::PullRequest]).void }
+          def initialize(prs:)
+            @prs = prs
           end
         end
 
@@ -108,8 +110,8 @@ module AiFlow
         waves.each do |wave|
           wave.each do |issue|
             progress[ref_of(issue)] =
-              case (outcome = @build.build_issue(issue))
-              when Build::Outcome::PrOpened then Progress::Built.new(urls: outcome.urls)
+              case (outcome = @build.build_issue(issue, base_prs: base_prs_for(issue, progress)))
+              when Build::Outcome::PrOpened then Progress::Built.new(prs: outcome.prs)
               when Build::Outcome::NothingToBuild then Progress::NoChanges.new
               else T.absurd(outcome)
               end
@@ -119,6 +121,26 @@ module AiFlow
       end
 
       private
+
+      # The dependency PRs a stacked build cuts its branches from: every
+      # already-built dependency contributes its PRs, dependency order
+      # preserved. Satisfied externals and no-change builds have no PRs —
+      # a dependent left with none forks from the default branch (Build
+      # owns that fallback, per target repo).
+      #
+      # @param issue [GitHub::Issue]
+      # @param progress [Hash{String => Progress}] ref => progress so far
+      # @return [Array<GitHub::PullRequest>]
+      sig do
+        params(issue: GitHub::Issue, progress: T::Hash[String, Progress])
+          .returns(T::Array[GitHub::PullRequest])
+      end
+      def base_prs_for(issue, progress)
+        dependencies_of(issue).flat_map do |dep|
+          entry = progress[dep]
+          entry.is_a?(Progress::Built) ? entry.prs : []
+        end
+      end
 
       # @return [String] "owner/repo#n" — the dependency key (numbers alone
       #   collide across repos now that sub-issues route cross-repo)
@@ -349,7 +371,7 @@ module AiFlow
           case entry
           when nil then ["[ ]", ""]
           when Progress::NoChanges then ["[-]", " — no changes needed"]
-          when Progress::Built then ["[x]", " — #{entry.urls.join(", ")}"]
+          when Progress::Built then ["[x]", " — #{entry.prs.map(&:html_url).join(", ")}"]
           when Progress::Skipped then ["[!]", " — #{entry.reason}"]
           when Progress::Blocked then ["[!]", " — #{entry.reason}"]
           else T.absurd(entry)

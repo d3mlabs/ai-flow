@@ -267,6 +267,35 @@ those issues close. No silent skips. Two kinds:
 A dependency on an issue outside the sub-issue set blocks the dependent
 while that issue is open; a closed one is satisfied.
 
+### Stacked PRs
+
+Dependent sub-issues build as **stacked PRs**: a sub-issue's branch is cut
+from its dependencies' PR heads (not the default branch), and its PR opens
+against that head. Each PR is therefore authored against the state its
+dependencies actually produced, its diff shows only its own delta for its
+whole life, and the integration sub-issue — which depends on every sibling
+— builds on their combined state by construction.
+
+Mechanics, per target repo of the dependent:
+
+- **One dependency PR in the repo**: the checkout starts from that PR's
+  head; the new PR opens against it.
+- **Several (fan-in)**: the checkout starts from the first head and merges
+  the rest (dependency order), so the pass sees the combined state; the PR
+  opens against the last head. Until the earlier siblings merge, such a
+  PR's diff transiently shows their commits too — bounded to actual fan-in
+  nodes, in practice mostly the integration sub-issue, which merges last
+  anyway.
+- **None** — the dependency produced no changes, is a satisfied external,
+  or lives in another repo (a branch cannot be based across repos): the
+  checkout forks from the default branch, as before.
+
+Merging is meant to follow the dependency order, and GitHub makes that
+mechanical: when a base branch is deleted on merge, GitHub retargets the
+PRs stacked on it to the default branch. Enable **delete branch on merge**
+(or delete merged `ai/*` branches promptly) so stacked PRs never sit on a
+stale base.
+
 Refusals, verbatim:
 
 > /build --split runs on plan issues, not pull requests.

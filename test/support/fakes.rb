@@ -197,7 +197,10 @@ class FakeGitHub < AiFlow::GitHub
     @pull_request_titles << title
     @pull_request_drafts ||= []
     @pull_request_drafts << draft
-    AiFlow::GitHub::PullRequest.new(number: 900, html_url: "https://github.com/#{owner_repo}/pull/900")
+    AiFlow::GitHub::PullRequest.new(
+      number: 900, html_url: "https://github.com/#{owner_repo}/pull/900",
+      repo: owner_repo, head_ref: head,
+    )
   end
 
   def pull_request_bodies
