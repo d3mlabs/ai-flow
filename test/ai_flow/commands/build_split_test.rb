@@ -8,20 +8,23 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BuildSplitTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
-  # A build stand-in recording the order sub-issues were built in;
-  # `multi_on` numbers report a second PR (a multi-target sub-issue).
-  # Subclasses the real command so sorbet-runtime's sig checks accept it.
+  # A build stand-in recording the order sub-issues were built in and the
+  # base PRs each was stacked on; `multi_on` numbers report a second PR (a
+  # multi-target sub-issue). Subclasses the real command so sorbet-runtime's
+  # sig checks accept it.
   class RecordingBuild < AiFlow::Commands::Build
-    attr_reader :built
+    attr_reader :built, :base_prs_by_number
 
     def initialize(no_changes_on: [], multi_on: [])
       @built = []
+      @base_prs_by_number = {}
       @no_changes_on = no_changes_on
       @multi_on = multi_on
     end
 
-    def build_issue(issue, extra_instruction: "")
+    def build_issue(issue, extra_instruction: "", base_prs: [])
       @built << issue.number
+      @base_prs_by_number[issue.number] = base_prs
       if @no_changes_on.include?(issue.number)
         AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_notes: [], workflows_patch: nil)
       else
@@ -65,10 +68,14 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       result_writer: AiFlow::ResultWriter.new(github: github),
     ).run(segment)
 
-    Then "waves respect Depends on and integration is last"
+    Then "waves respect Depends on, integration is last, and each build stacks on its dependencies' PRs"
     build.built == [1, 2, 3, 4]
     github.comment_edits.fetch(55).include?("✅ **/build --split**")
     github.comment_edits.fetch(55).include?("[x] #{REPO}#4 Integration: Parent")
+    build.base_prs_by_number.fetch(1) == []
+    build.base_prs_by_number.fetch(2) == []
+    build.base_prs_by_number.fetch(3).map(&:head_ref) == ["ai/1-branch", "ai/2-branch"]
+    build.base_prs_by_number.fetch(4).map(&:head_ref) == ["ai/1-branch", "ai/2-branch", "ai/3-branch"]
 
     Cleanup
     nil
@@ -95,6 +102,9 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     Then "the checklist marks the no-changes build distinctly from a built one"
     github.comment_edits.fetch(55).include?("[-] #{REPO}#1 Server API — no changes needed")
     github.comment_edits.fetch(55).include?("[x] #{REPO}#4 Integration: Parent")
+    # A no-changes dependency has no PR to stack on — the dependent forks
+    # from the default branch.
+    build.base_prs_by_number.fetch(4) == []
 
     Cleanup
     nil
@@ -226,6 +236,9 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
 
     Then "the closed dependency is satisfied; the open one blocks its dependent and the integration"
     build.built == [2]
+    # A satisfied external dependency has no PR in the set — nothing to
+    # stack on.
+    build.base_prs_by_number.fetch(2) == []
     checklist = github.comment_edits.fetch(55)
     checklist.include?("[!] #{REPO}#1 Gated — blocked until d3mlabs/other#42 is resolved")
     checklist.include?("[x] #{REPO}#2 Cleared")
