@@ -66,20 +66,30 @@ module AiFlow
         class PrOpened < Outcome
           extend T::Sig
 
-          # @return [Array<String>] the created PRs' html urls, primary first
-          sig { returns(T::Array[String]) }
-          attr_reader :urls
+          # @return [Array<GitHub::PullRequest>] the created PRs, primary
+          #   first — the --split orchestrator stacks dependent builds on
+          #   their repo/head pairs
+          sig { returns(T::Array[GitHub::PullRequest]) }
+          attr_reader :prs
 
-          # @param urls [Array<String>] non-empty
+          # @param prs [Array<GitHub::PullRequest>] non-empty, primary first
           # @param capture_notes [Array<String>]
           # @param workflows_patch [String, nil]
           sig do
-            params(urls: T::Array[String], capture_notes: T::Array[String], workflows_patch: T.nilable(String)).void
+            params(
+              prs: T::Array[GitHub::PullRequest],
+              capture_notes: T::Array[String],
+              workflows_patch: T.nilable(String),
+            ).void
           end
-          def initialize(urls:, capture_notes:, workflows_patch:)
+          def initialize(prs:, capture_notes:, workflows_patch:)
             super(capture_notes: capture_notes, workflows_patch: workflows_patch)
-            @urls = urls
+            @prs = prs
           end
+
+          # @return [Array<String>] the created PRs' html urls, primary first
+          sig { returns(T::Array[String]) }
+          def urls = prs.map(&:html_url)
         end
 
         # The agent changed nothing committable — possibly only workflow
@@ -205,7 +215,7 @@ module AiFlow
           end
           cross_link_pull_requests(created)
           Outcome::PrOpened.new(
-            urls: created.map { |_repo, pr, _body| pr.html_url },
+            prs: created.map { |_repo, pr, _body| pr },
             capture_notes: landed_capture_notes(capture, output), workflows_patch: workflows_patch,
           )
         end

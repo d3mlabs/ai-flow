@@ -25,9 +25,15 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       if @no_changes_on.include?(issue.number)
         AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_notes: [], workflows_patch: nil)
       else
-        urls = ["https://github.com/d3mlabs/demo/pull/#{issue.number}"]
-        urls << "https://github.com/d3mlabs/other/pull/#{issue.number}" if @multi_on.include?(issue.number)
-        AiFlow::Commands::Build::Outcome::PrOpened.new(urls: urls, capture_notes: [], workflows_patch: nil)
+        repos = ["d3mlabs/demo"]
+        repos << "d3mlabs/other" if @multi_on.include?(issue.number)
+        prs = repos.map do |repo|
+          AiFlow::GitHub::PullRequest.new(
+            number: issue.number, html_url: "https://github.com/#{repo}/pull/#{issue.number}",
+            repo: repo, head_ref: "ai/#{issue.number}-branch",
+          )
+        end
+        AiFlow::Commands::Build::Outcome::PrOpened.new(prs: prs, capture_notes: [], workflows_patch: nil)
       end
     end
   end

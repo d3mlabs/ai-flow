@@ -27,7 +27,11 @@ class AiFlow::GitHubTest < Minitest::Test
 
   test "open_pull_request_for_head filters by owner:branch and returns the first open PR" do
     Given "one open PR on the branch"
-    executor = CannedExecutor.new(out: JSON.generate([{ "number" => 12, "html_url" => "u" }]))
+    executor = CannedExecutor.new(out: JSON.generate([{
+      "number" => 12, "html_url" => "u",
+      "head" => { "ref" => "ai/learn-pr-7" },
+      "base" => { "repo" => { "full_name" => "d3mlabs/demo" } },
+    }]))
     github = AiFlow::GitHub.new(executor: executor)
 
     When "looking the branch up"
@@ -37,6 +41,8 @@ class AiFlow::GitHubTest < Minitest::Test
     executor.command_lines.first == "gh api repos/d3mlabs/demo/pulls?state=open&head=d3mlabs:ai/learn-pr-7"
     T.must(pr).number == 12
     T.must(pr).html_url == "u"
+    T.must(pr).repo == "d3mlabs/demo"
+    T.must(pr).head_ref == "ai/learn-pr-7"
 
     Cleanup
     nil
@@ -71,7 +77,11 @@ class AiFlow::GitHubTest < Minitest::Test
 
   test "create_pull_request POSTs the branch pair and returns the created PR" do
     Given "an API that answers with the created PR"
-    executor = CannedExecutor.new(out: JSON.generate({ "number" => 7, "html_url" => "u" }))
+    executor = CannedExecutor.new(out: JSON.generate({
+      "number" => 7, "html_url" => "u",
+      "head" => { "ref" => "ai/7-x" },
+      "base" => { "repo" => { "full_name" => "d3mlabs/demo" } },
+    }))
     github = AiFlow::GitHub.new(executor: executor)
 
     When "opening a PR"
@@ -84,6 +94,8 @@ class AiFlow::GitHubTest < Minitest::Test
     executor.stdins.first ==
       JSON.generate({ title: "t", body: "b", head: "ai/7-x", base: "main", draft: false })
     pr.number == 7
+    pr.repo == "d3mlabs/demo"
+    pr.head_ref == "ai/7-x"
 
     Cleanup
     nil

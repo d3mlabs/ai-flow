@@ -28,18 +28,20 @@ module AiFlow
         sealed!
 
         # /build opened PRs for the sub-issue (one per changed target;
-        # multi-target sub-issues open several, plans#30).
+        # multi-target sub-issues open several, plans#30). The PR objects
+        # (not just urls) are kept: dependents stack on their repo/head
+        # pairs.
         class Built
           extend T::Sig
           include Progress
 
-          sig { returns(T::Array[String]) }
-          attr_reader :urls
+          sig { returns(T::Array[GitHub::PullRequest]) }
+          attr_reader :prs
 
-          # @param urls [Array<String>] non-empty, primary first
-          sig { params(urls: T::Array[String]).void }
-          def initialize(urls:)
-            @urls = urls
+          # @param prs [Array<GitHub::PullRequest>] non-empty, primary first
+          sig { params(prs: T::Array[GitHub::PullRequest]).void }
+          def initialize(prs:)
+            @prs = prs
           end
         end
 
@@ -109,7 +111,7 @@ module AiFlow
           wave.each do |issue|
             progress[ref_of(issue)] =
               case (outcome = @build.build_issue(issue))
-              when Build::Outcome::PrOpened then Progress::Built.new(urls: outcome.urls)
+              when Build::Outcome::PrOpened then Progress::Built.new(prs: outcome.prs)
               when Build::Outcome::NothingToBuild then Progress::NoChanges.new
               else T.absurd(outcome)
               end
@@ -349,7 +351,7 @@ module AiFlow
           case entry
           when nil then ["[ ]", ""]
           when Progress::NoChanges then ["[-]", " — no changes needed"]
-          when Progress::Built then ["[x]", " — #{entry.urls.join(", ")}"]
+          when Progress::Built then ["[x]", " — #{entry.prs.map(&:html_url).join(", ")}"]
           when Progress::Skipped then ["[!]", " — #{entry.reason}"]
           when Progress::Blocked then ["[!]", " — #{entry.reason}"]
           else T.absurd(entry)

@@ -81,10 +81,14 @@ module AiFlow
     end
 
     # A pull request, as the commands consume it: the number anchors API
-    # calls (close, assign), the URL lands in result comments.
+    # calls (close, assign), the URL lands in result comments, and the
+    # repo/head pair is what a stacked follow-up build cuts its branch from
+    # (--split builds dependents on their dependencies' PR heads).
     class PullRequest < T::Struct
       const :number, Integer
       const :html_url, String
+      const :repo, String
+      const :head_ref, String
     end
 
     # @param executor [AiFlow::Executor]
@@ -448,7 +452,14 @@ module AiFlow
     # @return [PullRequest]
     sig { params(data: T::Hash[String, T.untyped]).returns(PullRequest) }
     def to_pull_request(data)
-      PullRequest.new(number: data.fetch("number"), html_url: data.fetch("html_url"))
+      PullRequest.new(
+        number: data.fetch("number"),
+        html_url: data.fetch("html_url"),
+        # The base side names the repo the PR lives in — the head side may
+        # be a fork.
+        repo: data.fetch("base").fetch("repo").fetch("full_name"),
+        head_ref: data.fetch("head").fetch("ref"),
+      )
     end
 
     # @param data [Hash] a REST issue-comment object
