@@ -254,6 +254,13 @@ over their `Depends on:` lines, a final integration sub-issue ensured
 (created if the split didn't), and a live per-wave checklist edited in
 place — one comment for the whole orchestration.
 
+A created integration sub-issue declares its `Target repos:` — the
+parent's own line when the plan declares one, else the sub-issues'
+distinct repos when they differ from the parent's. Its build therefore
+checks out the code the siblings actually landed in (a plans-repo
+integration issue gets a real code-repo workspace, not a code-less
+planning checkout), stacked on every sibling head.
+
 Non-buildable nodes — the ones the orchestrator cannot drive — are skipped
 with an explicit warning, and their dependents are reported blocked until
 those issues close. No silent skips. Two kinds:
