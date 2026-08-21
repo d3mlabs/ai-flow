@@ -19,7 +19,7 @@ class AiFlow::Commands::LearnTest < Minitest::Test
   class RecordingExecutor < AiFlow::Executor
     extend T::Sig
 
-    attr_reader :command_lines, :refreshes
+    attr_reader :command_lines, :refreshes, :shared_workspaces
 
     # `fail_on` substrings make matching command lines fail, for the
     # best-effort routing paths.
@@ -29,10 +29,19 @@ class AiFlow::Commands::LearnTest < Minitest::Test
       @fail_on = fail_on
       @command_lines = []
       @refreshes = 0
+      @shared_workspaces = []
     end
 
     def refresh_auth!
       @refreshes += 1
+    end
+
+    # Recorded alongside the command lines so ordering against the worktree
+    # add (the share must come first, while the parent is still empty) is
+    # assertable.
+    def share_workspace(dir)
+      @command_lines << "share_workspace"
+      @shared_workspaces << dir
     end
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
@@ -124,6 +133,25 @@ class AiFlow::Commands::LearnTest < Minitest::Test
 
   SKILL = ".cursor/skills/learnings/factory-over-class-methods/SKILL.md"
   INDEX = ".cursor/rules/learnings-index.mdc"
+
+  test "the capture worktree's parent is shared with the agent before it is populated (plans#26)" do
+    Given "a dictated lesson"
+    github = FakeGitHub.new
+    executor = RecordingExecutor.new(staged: [INDEX, SKILL])
+    agent = FakeAgent.new(["drafted design/factory-over-class-methods"])
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods", agent: agent)
+    command_lines = executor.command_lines
+
+    Then "one share, ahead of the worktree add that populates the parent"
+    executor.shared_workspaces.size == 1
+    T.must(command_lines.index("share_workspace")) <
+      T.must(command_lines.index { |line| line.start_with?("git worktree add") })
+
+    Cleanup
+    nil
+  end
 
   test "a dictated /learn drafts a new learning PR on its own comment-scoped branch" do
     Given "a dictated lesson and an agent that wrote an index line + skill"

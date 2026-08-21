@@ -5,6 +5,8 @@
 # typed: false
 
 module ::Dev::Deps; end
+module AiFlow::AgentIsolationTest::Cleanup; end
+module AiFlow::AgentIsolationTest::Then; end
 module AiFlow::AgentOutputTest::Cleanup; end
 module AiFlow::AgentOutputTest::Expect; end
 module AiFlow::AgentOutputTest::Then; end
