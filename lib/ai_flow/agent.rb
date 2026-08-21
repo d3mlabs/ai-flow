@@ -109,6 +109,9 @@ module AiFlow
 
       log_group("ai-flow agent prompt (/#{word})", prompt)
       $stdout.puts "ai-flow agent token (/#{word}): read-only, installation-wide (plans#25)"
+      posture = @executor.isolation
+      $stdout.puts "ai-flow agent spawn (/#{word}): " \
+        "#{posture ? "user=#{posture.user} (plans#26)" : "user=(dispatcher)"}"
       result = T.let(nil, T.nilable(String))
       assistant_texts = T.let([], T::Array[String])
       # The env: overlay wins over the executor's default auth injection, so
@@ -117,7 +120,7 @@ module AiFlow
       agent_env = @executor.agent_auth_env
       # T.unsafe: splatting a runtime-built argv into stream's rest param is
       # beyond Sorbet's static splat support (srb.help/7019).
-      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir, env: agent_env) do |line|
+      err, ok = T.unsafe(@executor).stream(*argv, stdin: prompt, chdir: workdir, env: agent_env, isolate: true) do |line|
         event = parse_event(line)
         result = event["result"].to_s if event && event["type"] == "result"
         render_event(word, line, event, assistant_texts)

@@ -24,9 +24,16 @@ context = AiFlow::Context.from_event_file(
 # all) sees only short-lived installation tokens, never the key.
 token_provider = AiFlow::TokenProvider.from_env
 
+executor = AiFlow::Executor.new(token_provider: token_provider)
+
+# Group-rw from creation: under the OS-user split (plans#26) the dispatcher's
+# own writes into shared checkouts and workspaces must stay readable and
+# writable across the UID boundary.
+File.umask(0o002) if executor.isolation
+
 AiFlow::Dispatcher.new(
   context: context,
   workdir: ENV.fetch("AI_FLOW_WORKDIR", Dir.pwd),
   prefix: ENV.fetch("AI_FLOW_COMMAND_PREFIX", ""),
-  executor: AiFlow::Executor.new(token_provider: token_provider),
+  executor: executor,
 ).run

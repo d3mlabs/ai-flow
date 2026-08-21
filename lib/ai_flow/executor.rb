@@ -26,11 +26,34 @@ module AiFlow
   class Executor
     extend T::Sig
 
+    # The isolation posture the agent spawn runs under (plans#26), nil when
+    # the OS-user split is off. Exposed for the launch's spawn-user log line
+    # and the dispatcher's umask decision.
+    #
+    # @return [AiFlow::AgentIsolation, nil]
+    sig { returns(T.nilable(AgentIsolation)) }
+    attr_reader :isolation
+
     # @param token_provider [AiFlow::TokenProvider, nil] nil (local runs)
     #   means ambient auth — the developer's own gh/git login
-    sig { params(token_provider: T.nilable(TokenProvider)).void }
-    def initialize(token_provider: nil)
+    # @param isolation [AiFlow::AgentIsolation, nil] nil (the env default
+    #   when AI_FLOW_AGENT_USER is unset) means the agent spawns as the
+    #   dispatcher — today's behavior, local dev and tests unchanged
+    sig { params(token_provider: T.nilable(TokenProvider), isolation: T.nilable(AgentIsolation)).void }
+    def initialize(token_provider: nil, isolation: AgentIsolation.from_env)
       @token_provider = token_provider
+      @isolation = isolation
+    end
+
+    # Open a freshly created (still empty) workspace parent to both
+    # identities — the one seam commands call right after mktmpdir, before
+    # populating. A no-op when isolation is off.
+    #
+    # @param dir [String]
+    # @return [void]
+    sig { params(dir: String).void }
+    def share_workspace(dir)
+      @isolation&.share_workspace(dir)
     end
 
     # Unconditional re-mint (no-op without App credentials) — commands call
@@ -93,6 +116,9 @@ module AiFlow
     # @param chdir [String, nil] working directory
     # @param env [Hash{String => String, nil}] extra environment variables
     #   (a nil value unsets the key in the subprocess)
+    # @param isolate [Boolean] spawn under the isolation posture when one is
+    #   configured (plans#26) — only Agent#launch passes true; gh/git spawns
+    #   stay the dispatcher's own
     # @yieldparam line [String] one stdout line, as emitted
     # @return [Array(String, Boolean)] stderr, success?
     sig do
@@ -101,10 +127,16 @@ module AiFlow
         stdin: T.nilable(String),
         chdir: T.nilable(String),
         env: T::Hash[String, T.nilable(String)],
+        isolate: T::Boolean,
         on_line: T.proc.params(line: String).void,
       ).returns([String, T::Boolean])
     end
-    def stream(*argv, stdin: nil, chdir: nil, env: {}, &on_line)
+    def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false, &on_line)
+      isolation = isolate ? @isolation : nil
+      if isolation
+        argv = isolation.spawn_prefix + argv
+        env = isolation.redirect_env.merge(env)
+      end
       opts = chdir ? { chdir: chdir } : {}
       err = T.let("", String)
       # T.unsafe: same variadic forwarding as capture (srb.help/7019).

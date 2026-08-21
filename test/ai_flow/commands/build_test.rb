@@ -17,7 +17,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   # .github/workflows (the exclusion path). Subclasses the real class so
   # sorbet-runtime's sig checks accept it at the injection seam.
   class RecordingExecutor < AiFlow::Executor
-    attr_reader :command_lines, :refreshes
+    attr_reader :command_lines, :refreshes, :shared_workspaces
 
     # `capture_patch` seeds a staged diff under the learning paths (build-time
     # capture); `capture_staged` is what the landing worktree stages after
@@ -37,10 +37,19 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       @clean_dirs = clean_dirs
       @command_lines = []
       @refreshes = 0
+      @shared_workspaces = []
     end
 
     def refresh_auth!
       @refreshes += 1
+    end
+
+    # Recorded alongside the command lines so ordering against the worktree
+    # add (the share must come first, while the parent is still empty) is
+    # assertable.
+    def share_workspace(dir)
+      @command_lines << "share_workspace"
+      @shared_workspaces << dir
     end
 
     def capture(*argv, stdin: nil, chdir: nil, env: {})
@@ -110,6 +119,25 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       number: number, html_url: "https://github.com/#{repo}/pull/#{number}",
       repo: repo, head_ref: head_ref,
     )
+  end
+
+  test "the workspace parent is shared with the agent before checkouts populate (plans#26)" do
+    Given "an issue to build"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+    command_lines = executor.command_lines
+
+    Then "one share, ahead of the worktree add that populates the parent"
+    executor.shared_workspaces.size == 1
+    T.must(command_lines.index("share_workspace")) <
+      T.must(command_lines.index { |line| line.start_with?("git worktree add") })
+
+    Cleanup
+    nil
   end
 
   test "a stacked build cuts its branch from the dependency PR's head and opens against it" do

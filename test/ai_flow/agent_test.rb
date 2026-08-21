@@ -14,7 +14,7 @@ require "stringio"
 class RecordingExecutor < AiFlow::Executor
   DEFAULT_STREAM = [%({"type":"result","subtype":"success","is_error":false,"result":"ok"})].freeze
 
-  attr_reader :captures, :envs
+  attr_reader :captures, :envs, :isolates
 
   def initialize(lines: DEFAULT_STREAM, err: "", ok: true)
     @envs = []
@@ -22,15 +22,25 @@ class RecordingExecutor < AiFlow::Executor
     @err = err
     @ok = ok
     @captures = []
+    @isolates = []
   end
 
-  def stream(*argv, stdin: nil, chdir: nil, env: {})
+  def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
     @captures << argv
     @envs << env
+    @isolates << isolate
     @lines.each { |line| yield "#{line}\n" }
     [@err, @ok]
   end
 end unless defined?(RecordingExecutor)
+
+# Reports an isolation posture without real sudo or env, so the launch's
+# spawn-user log line is observable.
+class IsolationReportingExecutor < RecordingExecutor
+  def isolation
+    AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/tmp")
+  end
+end unless defined?(IsolationReportingExecutor)
 
 # Overrides the agent's auth overlay with a recognizable marker, so the
 # launch's env plumbing is observable without real minting.
@@ -431,6 +441,43 @@ class AiFlow::AgentTest < Minitest::Test
 
     Then
     raises AiFlow::Agent::Error
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "launch streams the agent through the isolation seam" do
+    Given "an agent over a recording executor"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the one stream call asked for isolation (a no-op when it is off)"
+    executor.isolates == [true]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the spawn posture line names the agent user when isolated, the dispatcher otherwise" do
+    Given "one executor reporting an isolation and one bare"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    isolated = IsolationReportingExecutor.new
+    bare = RecordingExecutor.new
+
+    When "launching under both"
+    isolated_out, = capture_io do
+      AiFlow::Agent.new(executor: isolated).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    end
+    bare_out, = capture_io do
+      AiFlow::Agent.new(executor: bare).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    end
+
+    Then "the run log states who executed the pass"
+    isolated_out.include?("ai-flow agent spawn (/ask): user=ai-agent (plans#26)")
+    bare_out.include?("ai-flow agent spawn (/ask): user=(dispatcher)")
 
     Cleanup
     FileUtils.rm_rf(dir)

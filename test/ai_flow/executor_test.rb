@@ -3,6 +3,9 @@
 
 require "test_helper"
 require "rbconfig"
+require "etc"
+require "tmpdir"
+require "fileutils"
 
 # A provider stub with a scripted token sequence — observable freshness
 # without real minting. Subclasses the real class so sorbet-runtime's sig
@@ -29,6 +32,16 @@ class ScriptedTokenProvider < AiFlow::TokenProvider
     "#{@current}_read_only"
   end
 end unless defined?(ScriptedTokenProvider)
+
+# A benign stand-in for the sudo re-exec: /usr/bin/env with a marker
+# assignment proves the prefix preceded the argv without real sudo (which
+# only the runner-box smoke test exercises). Subclasses the real class so
+# sorbet-runtime's sig checks accept it at the injection seam.
+class MarkerIsolation < AiFlow::AgentIsolation
+  def spawn_prefix
+    ["/usr/bin/env", "AI_FLOW_ISOLATION_MARKER=yes"]
+  end
+end unless defined?(MarkerIsolation)
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::ExecutorTest < Minitest::Test
@@ -223,5 +236,94 @@ class AiFlow::ExecutorTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  test "stream(isolate: true) prepends the spawn prefix and redirects toolchain writes" do
+    Given "an executor with a benign injected isolation"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(isolation: isolation)
+
+    When "streaming isolated"
+    lines = []
+    _err, ok = executor.stream(
+      RUBY, "-e", 'puts [ENV["AI_FLOW_ISOLATION_MARKER"], ENV["GEM_HOME"]].join(",")',
+      isolate: true,
+    ) { |line| lines << line.chomp }
+
+    Then "the prefix ran ahead of the argv and GEM_HOME points under the agent home"
+    ok
+    lines == ["yes,/tmp/agent-home/.gem"]
+
+    Cleanup
+    nil
+  end
+
+  test "a non-isolated stream never picks up the prefix or the redirects" do
+    Given "an executor with an isolation configured"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(isolation: isolation)
+
+    When "streaming without isolate:"
+    lines = []
+    executor.stream(
+      # The host env may legitimately carry its own GEM_HOME, so absence of
+      # the *redirect value* is the assertable signal.
+      RUBY, "-e", 'puts [ENV.key?("AI_FLOW_ISOLATION_MARKER"), ENV["GEM_HOME"] == "/tmp/agent-home/.gem"].join(",")',
+    ) { |line| lines << line.chomp }
+
+    Then "gh/git spawns stay the dispatcher's own"
+    lines == ["false,false"]
+
+    Cleanup
+    nil
+  end
+
+  test "isolate: true without configured isolation is a no-op — local runs unchanged" do
+    Given "an executor with isolation off"
+    executor = AiFlow::Executor.new(isolation: nil)
+
+    When "streaming isolated"
+    lines = []
+    _err, ok = executor.stream(RUBY, "-e", 'puts "ran"', isolate: true) { |line| lines << line.chomp }
+
+    Then
+    ok
+    lines == ["ran"]
+
+    Cleanup
+    nil
+  end
+
+  test "share_workspace applies the isolation's group share to a fresh dir" do
+    Given "an executor with a real isolation and a fresh workspace parent"
+    group = T.must(Etc.getgrgid(Process.gid)).name
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: group, home: "/tmp")
+    executor = AiFlow::Executor.new(isolation: isolation)
+    dir = Dir.mktmpdir("ai-flow-executor-share-")
+
+    When "sharing it"
+    executor.share_workspace(dir)
+
+    Then
+    format("%o", File.stat(dir).mode & 0o7777) == "2770"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "share_workspace without isolation leaves the dir alone" do
+    Given "an executor with isolation off and a fresh dir"
+    executor = AiFlow::Executor.new(isolation: nil)
+    dir = Dir.mktmpdir("ai-flow-executor-share-")
+    before = File.stat(dir).mode
+
+    When "sharing it"
+    executor.share_workspace(dir)
+
+    Then
+    File.stat(dir).mode == before
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 end

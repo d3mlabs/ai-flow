@@ -1370,6 +1370,9 @@ module AiFlow
         default = @github.default_branch(@context.owner_repo)
         base_ref = refine ? branch : default
         Dir.mktmpdir("ai-flow-learn-") do |dir|
+          # Shared while still empty: everything populated inside inherits
+          # the agent-shared group via setgid (plans#26; no-op unisolated).
+          @executor.share_workspace(dir)
           worktree = File.join(dir, "worktree")
           run!(["git", "fetch", "origin", base_ref], chdir: @workdir)
           run!(["git", "worktree", "prune"], chdir: @workdir)
@@ -1400,6 +1403,8 @@ module AiFlow
       end
       def in_clone(repo, branch, refine:, &blk)
         Dir.mktmpdir("ai-flow-learn-") do |dir|
+          # Shared while still empty, same as in_worktree (plans#26).
+          @executor.share_workspace(dir)
           clone = File.join(dir, "clone")
           run!(["gh", "repo", "clone", repo, clone], chdir: dir)
           base = refine ? ["origin/#{branch}"] : []

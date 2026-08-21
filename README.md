@@ -277,7 +277,18 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    prerequisites: the workflow runs `dev install-deps` in the ai-flow
    checkout, which provisions the pinned Ruby (an rbenv install, one-time
    per box) and the locked gem set from `dependencies.rb`.
-5. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
+5. Recommended on any box that also holds a human's credentials (a
+  workstation doubling as a runner, or a dedicated box with the owner's gh
+   login): run the agent as its own OS user. Set `AI_FLOW_AGENT_USER` in the
+   runner service's environment and the dispatcher re-executes the agent CLI
+   via a non-interactive sudo as that user (plans#26) — the agent's `--force`
+   shell then cannot read the runner user's home, gh auth state, or process
+   env. The host needs the agent user, a shared group (`AI_FLOW_AGENT_GROUP`,
+   default `ai`, spanning both users), and one sudoers rule with the `SETENV`
+   tag; on dev-managed boxes `dev runner register` converges all of it and
+   writes the variable into the service env. Unset means dispatcher and agent
+   share one user — today's behavior, and what local dev and tests use.
+6. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
   model policy (`models.default`, per-command overrides — see
    [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));
    valid names come from `agent --list-models`, which every run also prints
@@ -285,7 +296,7 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    The same file carries the learning-loop keys: `knowledge_repo:` (the org
    knowledge repo `--promote` targets) and `learn: { on_build: false }` (opt
    out of `/build`'s capture pass).
-6. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
+7. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
   auto-push via `dev plan`.
 
 Configuration inputs (set in the caller workflow's `with:`): `command_prefix`
