@@ -91,6 +91,90 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     AiFlow::OrgInvariants.new(executor: FakeInvariantsExecutor.new(ok: false))
   end
 
+  # A Build ready for direct build_issue calls — the --split orchestrator's
+  # seam, where stacked base PRs enter.
+  def build_command(github:, executor:, agent: FakeAgent.new(["done"]))
+    AiFlow::Commands::Build.new(
+      context: ContextBuilder.issue_comment(number: 7, body: "/build"),
+      github: github,
+      agent: agent,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+      executor: executor,
+      workdir: Dir.pwd,
+      org_invariants: empty_org_invariants,
+    )
+  end
+
+  def stack_base_pr(number, repo, head_ref)
+    AiFlow::GitHub::PullRequest.new(
+      number: number, html_url: "https://github.com/#{repo}/pull/#{number}",
+      repo: repo, head_ref: head_ref,
+    )
+  end
+
+  test "a stacked build cuts its branch from the dependency PR's head and opens against it" do
+    Given "an issue and a dependency PR already open in the same repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building on the dependency's head"
+    build_command(github: github, executor: executor)
+      .build_issue(github.issue(REPO, 7), base_prs: [stack_base_pr(1, REPO, "ai/1-server-api")])
+    command_lines = executor.command_lines
+
+    Then "the checkout moves to the base head before branching and the PR opens against it"
+    command_lines.include?("git fetch origin ai/1-server-api")
+    command_lines.include?("git checkout --detach origin/ai/1-server-api")
+    command_lines.index("git checkout --detach origin/ai/1-server-api") <
+      command_lines.index("git checkout -B ai/7-carve-system")
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "ai/1-server-api"])
+
+    Cleanup
+    nil
+  end
+
+  test "a fan-in build merges the remaining dependency heads and opens against the last one" do
+    Given "two dependency PRs in the same repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+    bases = [stack_base_pr(1, REPO, "ai/1-server-api"), stack_base_pr(2, REPO, "ai/2-client-ui")]
+
+    When "building on both heads"
+    build_command(github: github, executor: executor).build_issue(github.issue(REPO, 7), base_prs: bases)
+    command_lines = executor.command_lines
+    merge_line = command_lines.find { |line| line.include?(" merge ") }
+
+    Then "the checkout starts from the first head, merges the second as the bot, and the PR bases on the last"
+    command_lines.include?("git checkout --detach origin/ai/1-server-api")
+    T.must(merge_line).include?("-c user.name=ai-flow[bot]")
+    T.must(merge_line).include?("merge --no-edit origin/ai/2-client-ui")
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "ai/2-client-ui"])
+
+    Cleanup
+    nil
+  end
+
+  test "a dependency PR in another repo contributes no base — the build forks from main" do
+    Given "a dependency PR that lives outside the issue's target repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    build_command(github: github, executor: executor)
+      .build_issue(github.issue(REPO, 7), base_prs: [stack_base_pr(1, "d3mlabs/other", "ai/1-server-api")])
+    command_lines = executor.command_lines
+
+    Then "no checkout moves to a base head and the PR opens against the default branch"
+    command_lines.none? { |line| line.include?("checkout --detach origin/ai/1-server-api") }
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
   test "/build prunes worktrees, commits as the bot with the requester co-authored, and opens an attributed PR" do
     Given "an issue and a dirty agent run"
     github = FakeGitHub.new

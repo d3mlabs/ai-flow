@@ -162,19 +162,32 @@ module AiFlow
         @result_writer.write(@context, [[segment, blocks.join("\n\n")]])
       end
 
-      # Build one issue end to end. Shared with the --split orchestrator.
+      # Build one issue end to end. Shared with the --split orchestrator,
+      # which stacks dependent sub-issues by passing their dependencies'
+      # PRs: each target checkout starts from the matching base heads (and
+      # the PR opens against the last one) instead of the default branch.
       #
       # @param issue [GitHub::Issue]
       # @param extra_instruction [String]
+      # @param base_prs [Array<GitHub::PullRequest>] dependency PRs to
+      #   stack on, dependency order; repos with no matching PR fork from
+      #   the default branch
       # @return [Outcome]
-      sig { params(issue: GitHub::Issue, extra_instruction: String).returns(Outcome) }
-      def build_issue(issue, extra_instruction: "")
+      sig do
+        params(issue: GitHub::Issue, extra_instruction: String, base_prs: T::Array[GitHub::PullRequest])
+          .returns(Outcome)
+      end
+      def build_issue(issue, extra_instruction: "", base_prs: [])
         issue_repo = issue.repo
         code_repos = target_repos_for(issue, issue_repo)
         branch = branch_name(issue)
+        bases_by_repo = base_prs.group_by(&:repo)
 
         in_workspaces(code_repos) do |checkouts|
-          checkouts.each_value { |checkout| create_branch(checkout, branch) }
+          checkouts.each do |repo, checkout|
+            stack_on_bases(checkout, bases_by_repo.fetch(repo, []))
+            create_branch(checkout, branch)
+          end
           # The first declared target is the primary: the agent's working
           # directory, the capture surface, and the PR that closes the plan.
           primary_repo, primary = T.must(checkouts.first)
@@ -210,7 +223,11 @@ module AiFlow
 
           created = committed.map do |repo, checkout|
             push_branch(checkout, branch)
-            pr, body = open_pull_request(repo, issue_repo, issue, branch, primary: repo == primary_repo)
+            pr, body = open_pull_request(
+              repo, issue_repo, issue, branch,
+              primary: repo == primary_repo,
+              base: bases_by_repo.fetch(repo, []).last&.head_ref,
+            )
             [repo, pr, body]
           end
           cross_link_pull_requests(created)
@@ -773,6 +790,31 @@ module AiFlow
         run!(["git", "checkout", "-B", branch], chdir: worktree)
       end
 
+      # Move a checkout onto its stacked base before the issue branch is
+      # cut: detach on the first dependency head, then merge the rest
+      # (fan-in — several dependency PRs in one repo — hands the pass the
+      # combined state). No base PRs means today's default-branch start. A
+      # failed fetch is a hard error: building against the wrong base must
+      # never happen silently.
+      #
+      # @param checkout [String]
+      # @param base_prs [Array<GitHub::PullRequest>] dependency PRs in this
+      #   checkout's repo, dependency order
+      # @return [void]
+      sig { params(checkout: String, base_prs: T::Array[GitHub::PullRequest]).void }
+      def stack_on_bases(checkout, base_prs)
+        return if base_prs.empty?
+
+        heads = base_prs.map(&:head_ref)
+        run!(["git", "fetch", "origin", *heads], chdir: checkout)
+        run!(["git", "checkout", "--detach", "origin/#{heads.fetch(0)}"], chdir: checkout)
+        heads.drop(1).each do |head|
+          # A merge commit needs an author, same identity as every commit
+          # the bot creates.
+          run!(["git", *CommitIdentity.git_flags(@github), "merge", "--no-edit", "origin/#{head}"], chdir: checkout)
+        end
+      end
+
       # @return [String] the issue-mode pass's prompt
       sig do
         params(
@@ -944,13 +986,17 @@ module AiFlow
       # PR is the bot's proposal; the accountable human is named in the body
       # and assigned to the PR (see docs/attribution.md).
       #
+      # @param base [String, nil] the branch the PR opens against — a
+      #   stacked build's last base head; nil means the default branch
       # @return [Array(AiFlow::GitHub::PullRequest, String)] the created PR
       #   and its body as posted (the cross-link pass appends to it)
       sig do
-        params(code_repo: String, issue_repo: String, issue: GitHub::Issue, branch: String, primary: T::Boolean)
-          .returns([GitHub::PullRequest, String])
+        params(
+          code_repo: String, issue_repo: String, issue: GitHub::Issue, branch: String,
+          primary: T::Boolean, base: T.nilable(String)
+        ).returns([GitHub::PullRequest, String])
       end
-      def open_pull_request(code_repo, issue_repo, issue, branch, primary:)
+      def open_pull_request(code_repo, issue_repo, issue, branch, primary:, base: nil)
         requested_by = @context.commenter_login ? "Requested by @#{@context.commenter_login}.\n\n" : ""
         back_reference = primary ? "Closes" : "Part of"
         body = <<~BODY
@@ -965,7 +1011,7 @@ module AiFlow
           title: issue.title,
           body: body,
           head: branch,
-          base: @github.default_branch(code_repo),
+          base: base || @github.default_branch(code_repo),
         )
         requester = @context.commenter_login
         @github.add_assignees(code_repo, pr.number, [requester]) if requester
