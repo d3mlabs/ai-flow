@@ -161,6 +161,56 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     github.calls.map(&:first).include?(:add_sub_issue)
     build.built.size == 3
     build.built.last > 100
+    # Same-repo plan: the issue's own repo is the implicit target.
+    !github.issue(REPO, T.must(build.built.last)).body.include?("Target repos:")
+
+    Cleanup
+    nil
+  end
+
+  test "a created integration issue declares the sub-issues' repos as its targets" do
+    Given "a plans-style parent whose sub-issues route to a code repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    code_sub = AiFlow::GitHub::Issue.new(
+      number: 1, title: "Server API", body: "Build the API.\n",
+      html_url: "https://github.com/d3mlabs/dev/issues/1", state: "open", repo: "d3mlabs/dev",
+    )
+    github.seed_sub_issues(REPO, 7, [code_sub])
+    build = RecordingBuild.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+
+    Then "the integration issue targets the code repo, so its build gets a real checkout"
+    github.issue(REPO, T.must(build.built.last)).body.include?("Target repos: d3mlabs/dev")
+
+    Cleanup
+    nil
+  end
+
+  test "a created integration issue inherits the parent's declared Target repos line" do
+    Given "a parent plan declaring its target repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\nTarget repos: d3mlabs/dev\n")
+    github.seed_sub_issues(REPO, 7, [sub_issue(1, "Server API", "Build the API.\n")])
+    build = RecordingBuild.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+
+    Then "the integration issue carries the parent's declared targets"
+    github.issue(REPO, T.must(build.built.last)).body.include?("Target repos: d3mlabs/dev")
 
     Cleanup
     nil

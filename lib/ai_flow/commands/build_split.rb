@@ -281,11 +281,29 @@ module AiFlow
           @context.owner_repo,
           title: "#{INTEGRATION_TITLE_PREFIX} #{parent.title}",
           body: "Integrate the sub-issue builds of ##{parent.number} into a coherent whole " \
-                "(cross-cutting wiring, shared refactors, end-to-end verification).\n\n#{depends_line}\n",
+                "(cross-cutting wiring, shared refactors, end-to-end verification).\n\n" \
+                "#{integration_targets_line(parent, sub_issues)}#{depends_line}\n",
         )
         sub_issue_id = @github.api("repos/#{@context.owner_repo}/issues/#{created.number}").fetch("id")
         @github.add_sub_issue(@context.owner_repo, @context.number, sub_issue_id)
         sub_issues + [created]
+      end
+
+      # The integration build must check out the code the siblings landed
+      # in, not this (possibly code-less) planning repo: inherit the
+      # parent's Target repos: line, else declare the sub-issues' own
+      # repos. Same-repo plans keep an unadorned body — the issue's repo is
+      # the implicit target.
+      #
+      # @return [String] a "Target repos: …\n" line, "" when the parent's
+      #   repo is the only target
+      sig { params(parent: GitHub::Issue, sub_issues: T::Array[GitHub::Issue]).returns(String) }
+      def integration_targets_line(parent, sub_issues)
+        declared = parent.body[/^Target repos?:\s*(.+)$/, 1]
+        return "Target repos: #{declared.strip}\n" if declared
+
+        repos = sub_issues.map(&:repo).uniq
+        repos == [@context.owner_repo] ? "" : "Target repos: #{repos.join(", ")}\n"
       end
 
       # Kahn's algorithm over the "Depends on:" convention, yielding waves
