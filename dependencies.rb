@@ -37,4 +37,18 @@ Dev::Deps.define do
     # so they never read as coverage misses.
     gem "simplecov-sorbet", "~> 0.2", require: false
   end
+
+  # The headless Cursor agent CLI the dispatcher spawns — a runtime
+  # dependency like sorbet-runtime, hence :app (Gemfile convention: the
+  # default group is what the software needs to run). Converging this
+  # checkout (`dev up`) is what makes a box agent-capable. The CLI is
+  # dual-homed by design: the org baseline also carries it as org-wide
+  # human dev tooling. Installed via the upstream homebrew-cask package,
+  # world-readable under /opt/homebrew (the isolated agent user reads it
+  # with no extra grants); AI_FLOW_AGENT_BIN points at the Caskroom's
+  # stable bin/cursor-agent symlink. darwin-gated: agent jobs route to
+  # Mac runners.
+  group(:app, host: :darwin) do
+    brew "cursor-cli", cask: true
+  end
 end
