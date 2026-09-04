@@ -241,6 +241,28 @@ module AiFlow
 
       sig { override.returns(T::Boolean) }
       def review_summary? = true
+
+      # Synthesize the ReviewComment context a comment of this review would
+      # have arrived as, had its own webhook event dispatched. The review-unit
+      # expansion (ReviewUnit, ai-flow#73) fans a submitted review out into
+      # per-comment dispatches through here, so each comment flows down the
+      # exact pipeline (ack, parse, panels) a live per-comment event feeds —
+      # payload-shape knowledge stays inside Context.
+      #
+      # @param comment [Hash] a raw REST review-comment node
+      #   (GitHub#review_comments) — the webhook "comment" shape
+      # @return [ReviewComment]
+      sig { params(comment: T::Hash[String, T.untyped]).returns(ReviewComment) }
+      def comment_context(comment)
+        ReviewComment.new(
+          payload: {
+            "repository" => { "full_name" => owner_repo },
+            "pull_request" => { "number" => number, "head" => { "ref" => pr_head_ref } },
+            "comment" => comment,
+          },
+          env: @env,
+        )
+      end
     end
   end
 end

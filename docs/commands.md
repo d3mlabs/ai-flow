@@ -59,6 +59,19 @@ neither reactions nor in-place edits, so there is no 👀 ack and the ⏳
 status + results land in one bot-owned **review panel** comment quoting the
 review, posted when the run starts and edited in place thereafter.
 
+**A submitted review dispatches as one unit** (ai-flow#73). Submitting a
+review fires one `pull_request_review_comment` event per comment all at
+once, and the per-PR dispatch serialization (one running + one pending run)
+would silently evict all but ~two commands from the burst. So per-comment
+events never dispatch: the single `pull_request_review` (submitted) event —
+which GitHub fires for every comment shape, batch submission, single
+comment, and thread reply alike — enumerates the review's own comments and
+runs every command in them sequentially inside its one job. Each command
+comment keeps its own 👀/results panel exactly as if it had dispatched
+alone. A review is single-author by construction, so the authorization gate
+on the submitter covers every comment it enumerates; a comment by any other
+author is dropped fail-closed.
+
 > ⚠️ **A merge-conflicted PR swallows review-surface commands.** GitHub runs
 > `pull_request_review` and `pull_request_review_comment` workflows against
 > the PR's merge ref (`refs/pull/N/merge`); while the PR is conflicted that

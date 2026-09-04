@@ -74,7 +74,10 @@ jobs:
   #
   # Review summaries (pull_request_review) are deliberately absent here:
   # reviews have no reactions API, so their acknowledgment is the
-  # dispatcher's own ⏳ review-panel comment instead of a fast 👀.
+  # dispatcher's own ⏳ review-panel comment instead of a fast 👀. Review
+  # comments keep their fast 👀 here even though their dispatch rides the
+  # review-level event (ai-flow#73) — the dispatcher re-acks each command
+  # comment it reaches and the reactions API dedupes.
   ack:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
@@ -127,26 +130,37 @@ jobs:
   # and denies on any failure (fail closed). Kept separate from ack so the
   # instant-👀 job stays never-blocking.
   #
-  # pull_request_review carries the command under event.review instead of
-  # event.comment; the `||` coalescing below reads whichever surface fired
-  # (missing properties resolve to null, and contains(null, x) is false).
-  # Plain approvals with an empty body coalesce to no command — no job.
+  # Surfaces (ai-flow#73): issue_comment dispatches per comment as before —
+  # its coarse body filter runs in the workflow engine, so non-command
+  # comments never start a job. pull_request_review_comment never dispatches:
+  # every review-comment shape (batch submission, single comment, thread
+  # reply) also fires exactly one pull_request_review (submitted) event, and
+  # THAT event is the dispatch unit — one run enumerates the review's own
+  # comments and handles every command in them, so the per-PR concurrency
+  # group (one running + one pending) can no longer evict sibling commands
+  # from a batch review. The engine can't see comment bodies from the review
+  # event, so review submissions pass the coarse filter body-unseen and the
+  # scan step below detects commands on hosted seconds (free on public
+  # repos) before any self-hosted time.
   authorize:
     if: >-
-      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment' ||
-       github.event_name == 'pull_request_review') &&
-      (github.event.comment.user.type || github.event.review.user.type) != 'Bot' &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'),
-               github.event.comment.author_association || github.event.review.author_association) &&
-      (contains(github.event.comment.body || github.event.review.body, format('/{0}ask', inputs.command_prefix)) ||
-       contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) ||
-       contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) ||
-       contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) ||
-       contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)))
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
+        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
+        contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
+        contains(github.event.comment.body, format('/{0}build', inputs.command_prefix)) ||
+        contains(github.event.comment.body, format('/{0}learn', inputs.command_prefix)))) ||
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.review.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       authorized: ${{ steps.gate.outputs.authorized }}
+      commanded: ${{ steps.scan.outputs.commanded }}
+      runner: ${{ steps.scan.outputs.runner }}
     env:
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
     steps:
@@ -186,6 +200,46 @@ jobs:
           fi
           echo "authorized=$authorized" >> "$GITHUB_OUTPUT"
 
+      # Detect commands across the surface's bodies and route the runner —
+      # still the coarse contains() check (the dispatcher owns the strict
+      # line-start grammar). issue_comment surfaces already passed the
+      # engine's body filter; review submissions need this step because
+      # their commands may live only in the review's comments, which the
+      # engine can't read. A batch can mix commands but the job runs on one
+      # box, so route by the heaviest command present, precedence
+      # build > learn > split > edit > ask (a /learn --scan can be
+      # multi-repo heavy, so it routes above /split); a heavier pool can
+      # run anything lighter. Bodies ride env vars, never inline expansion —
+      # comment text must not reach the shell as code.
+      - name: Scan for commands and route the runner
+        id: scan
+        if: ${{ steps.gate.outputs.authorized == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          PREFIX: ${{ inputs.command_prefix }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+        run: |
+          bodies="$COMMENT_BODY"
+          if [ "${{ github.event_name }}" = "pull_request_review" ]; then
+            comments=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews/${{ github.event.review.id }}/comments?per_page=100" --paginate --jq '.[].body')
+            bodies="$REVIEW_BODY"$'\n'"$comments"
+          fi
+          commanded=false
+          runner="ai-ask"
+          for word in build learn split edit ask; do
+            if printf '%s' "$bodies" | grep -qF "/${PREFIX}${word}"; then
+              commanded=true
+              runner="ai-${word}"
+              break
+            fi
+          done
+          if [ "$commanded" != "true" ]; then
+            echo "ai-flow: no command in the ${{ github.event_name }} surface — nothing to dispatch"
+          fi
+          echo "commanded=$commanded" >> "$GITHUB_OUTPUT"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+
   # Gated behind authorize (above): denials never reach a self-hosted
   # runner, and the dispatcher's in-Ruby permission gate demotes to
   # defense-in-depth. The exact line-start command grammar is still the
@@ -193,25 +247,26 @@ jobs:
   # that slipped through the coarse contains() filter.
   dispatch:
     needs: authorize
-    if: needs.authorize.outputs.authorized == 'true'
+    if: >-
+      needs.authorize.outputs.authorized == 'true' &&
+      needs.authorize.outputs.commanded == 'true'
     # per_actor_runners routes to the commenter's own box; otherwise each
     # command routes to its own fixed label, ai-<command> — convention over
     # configuration (deployment decides the topology: one box can carry all
-    # five labels, or a beefy box takes ai-build alone). A batch comment can
-    # mix commands but the job runs on one box, so route by the heaviest
-    # command present, precedence build > learn > split > edit > ask (a
-    # /learn --scan can be multi-repo heavy, so it routes above /split).
-    # Coarse contains() (a prose mention of /build in an /edit comment routes
-    # heavy), which errs on the safe side: a heavier pool can run anything
-    # lighter.
+    # five labels, or a beefy box takes ai-build alone). The label comes
+    # from the authorize job's scan step, which reads every body on the
+    # surface (a review's commands may live only in its comments, which
+    # engine expressions can't see) and routes by the heaviest command
+    # present. Coarse contains() (a prose mention of /build in an /edit
+    # comment routes heavy), which errs on the safe side: a heavier pool
+    # can run anything lighter.
     runs-on: >-
       ${{ inputs.per_actor_runners && fromJSON(format('["self-hosted", "dev-{0}"]', github.event.comment.user.login || github.event.review.user.login))
-          || contains(github.event.comment.body || github.event.review.body, format('/{0}build', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-build"]')
-          || contains(github.event.comment.body || github.event.review.body, format('/{0}learn', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-learn"]')
-          || contains(github.event.comment.body || github.event.review.body, format('/{0}split', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-split"]')
-          || contains(github.event.comment.body || github.event.review.body, format('/{0}edit', inputs.command_prefix)) && fromJSON('["self-hosted", "ai-edit"]')
-          || fromJSON('["self-hosted", "ai-ask"]') }}
+          || fromJSON(format('["self-hosted", "{0}"]', needs.authorize.outputs.runner)) }}
     # Serialize runs per issue/PR: batches assume a stable body snapshot.
+    # A review's commands can't evict each other — the whole review is one
+    # run (ai-flow#73) — but distinct surfaces still race for the single
+    # pending slot; the newest queued run wins.
     concurrency:
       group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
     timeout-minutes: 120

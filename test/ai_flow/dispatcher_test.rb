@@ -167,10 +167,10 @@ class AiFlow::DispatcherTest < Minitest::Test
     agent = AiFlow::Agent.new
 
     When "dispatching"
-    build_dispatcher(github: github, agent: agent, context: context, workdir: dir).run
+    result = build_dispatcher(github: github, agent: agent, context: context, workdir: dir).run
 
-    Then "the run goes red and the comment carries the config error"
-    raises SystemExit
+    Then "the dispatch reports failure and the comment carries the config error"
+    result == false
     github.comment_edits.fetch(55).include?("ai-flow failed")
     github.comment_edits.fetch(55).include?(".github/ai-flow.yml is not valid YAML")
 
@@ -201,10 +201,10 @@ class AiFlow::DispatcherTest < Minitest::Test
     context = ContextBuilder.issue_comment(body: "/build --split", pull_request: true)
 
     When "dispatching"
-    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+    result = build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
 
-    Then "the run fails and the comment carries the reason"
-    raises SystemExit
+    Then "the dispatch reports failure and the comment carries the reason"
+    result == false
     github.comment_edits.fetch(55).include?("/build --split runs on plan issues, not pull requests")
 
     Cleanup
@@ -218,10 +218,10 @@ class AiFlow::DispatcherTest < Minitest::Test
     context = ContextBuilder.issue_comment(body: "/split --apply")
 
     When "dispatching"
-    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+    result = build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
 
-    Then "the run fails and the comment carries the guidance"
-    raises SystemExit
+    Then "the dispatch reports failure and the comment carries the guidance"
+    result == false
     github.comment_edits.fetch(55).include?("no staged `## Subtasks` spec found")
 
     Cleanup
@@ -235,10 +235,10 @@ class AiFlow::DispatcherTest < Minitest::Test
     context = ContextBuilder.issue_comment(body: "/build --split")
 
     When "dispatching"
-    build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
+    result = build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
 
-    Then "the run fails and the comment names the missing /split"
-    raises SystemExit
+    Then "the dispatch reports failure and the comment names the missing /split"
+    result == false
     github.comment_edits.fetch(55).include?("no open sub-issues — run /split first")
 
     Cleanup
@@ -265,6 +265,24 @@ class AiFlow::DispatcherTest < Minitest::Test
 
     Then "the panel names the staged proposal and the next command"
     github.comment_edits.fetch(55).include?("this plan has a staged /split proposal")
+
+    Cleanup
+    nil
+  end
+
+  test "a soft segment failure reports run failure — the caller owns the red exit" do
+    Given "an /ask whose agent pass returns no answer for the segment"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
+    context = ContextBuilder.issue_comment(body: "/ask why?")
+    agent = FakeAgent.new(["output with no segment markers at all"])
+
+    When "dispatching"
+    result = build_dispatcher(github: github, agent: agent, context: context).run
+
+    Then "the ⚠️ landed as the reply and the dispatch reports failure"
+    result == false
+    github.comments.first.include?("⚠️")
 
     Cleanup
     nil

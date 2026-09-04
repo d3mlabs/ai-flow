@@ -146,6 +146,16 @@ class FakeGitHub < AiFlow::GitHub
     (@permissions || {})[login] || "none"
   end
 
+  def seed_review_comments(owner_repo, number, review_id, comments)
+    @review_comments ||= {}
+    @review_comments[[owner_repo, number, review_id]] = comments
+  end
+
+  def review_comments(owner_repo, number, review_id)
+    @calls << [:review_comments, owner_repo, number, review_id]
+    (@review_comments || {})[[owner_repo, number, review_id]] || []
+  end
+
   def seed_review_threads(owner_repo, number, threads)
     @review_threads ||= {}
     @review_threads[[owner_repo, number]] = threads

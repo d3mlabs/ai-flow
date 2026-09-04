@@ -36,29 +36,35 @@ module AiFlow
       @result_writer = T.let(ResultWriter.new(github: github, agent: agent), ResultWriter)
     end
 
-    # @return [void]
-    sig { void }
+    # The exit decision belongs to the caller (bin/dispatch.rb), which may
+    # run several dispatches in one job — the review-unit expansion
+    # (ReviewUnit) must reach every comment even when an earlier one failed.
+    #
+    # @return [Boolean] whether this context's command(s) fully succeeded —
+    #   clean no-ops (no command, unauthorized author) count as success
+    sig { returns(T::Boolean) }
     def run
       unless authorized?
         warn "ai-flow: comment author is #{@context.author_association} — not authorized, ignoring."
-        return
+        return true
       end
 
       segments = CommentParser.new(prefix: @prefix).parse(@context.comment_body)
-      return if segments.empty?
+      return true if segments.empty?
 
       acknowledge
       announce_running(segments)
       succeeded = route(segments)
       append_knowledge_summary
-      return if succeeded
+      return true if succeeded
 
       # Soft failure: the per-segment ⚠️ is already on the comment; the run
       # itself must still go red so a failed command is visible from Actions.
       warn "ai-flow: one or more segments failed — see the command comment."
-      exit 1
+      false
     rescue CommentParser::ParseError, GitHub::Error, Agent::Error, SubtasksSection::Error, RepoConfig::Error => e
       report_failure(segments, e)
+      false
     end
 
     private
@@ -267,7 +273,6 @@ module AiFlow
         @github.post_issue_comment(@context.owner_repo, @context.number, message)
       end
       warn "ai-flow: #{error.class}: #{error.message}"
-      exit 1
     end
   end
 end

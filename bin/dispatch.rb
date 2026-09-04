@@ -31,9 +31,22 @@ executor = AiFlow::Executor.new(token_provider: token_provider)
 # writable across the UID boundary.
 File.umask(0o002) if executor.isolation
 
-AiFlow::Dispatcher.new(
-  context: context,
-  workdir: ENV.fetch("AI_FLOW_WORKDIR", Dir.pwd),
-  prefix: ENV.fetch("AI_FLOW_COMMAND_PREFIX", ""),
-  executor: executor,
-).run
+github = AiFlow::GitHub.new(executor: executor)
+prefix = ENV.fetch("AI_FLOW_COMMAND_PREFIX", "")
+
+# A submitted review is one command surface carrying N comment bodies
+# (ai-flow#73): expand it into per-comment dispatches and run them all in
+# this one job — sequential, so the per-PR concurrency group can no longer
+# evict sibling commands. Every context runs even when an earlier one
+# failed; any failure still turns the run red at the end.
+contexts = AiFlow::ReviewUnit.new(context: context, github: github, prefix: prefix).contexts
+results = contexts.map do |dispatch_context|
+  AiFlow::Dispatcher.new(
+    context: dispatch_context,
+    workdir: ENV.fetch("AI_FLOW_WORKDIR", Dir.pwd),
+    prefix: prefix,
+    executor: executor,
+    github: github,
+  ).run
+end
+exit 1 unless results.all?
