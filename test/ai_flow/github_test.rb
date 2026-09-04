@@ -48,6 +48,34 @@ class AiFlow::GitHubTest < Minitest::Test
     nil
   end
 
+  test "review_comments hits the event-sourced review endpoint and returns raw nodes" do
+    Given "one comment on the review"
+    node = { "id" => 9, "body" => "/ask why?", "user" => { "login" => "jpduchesne" } }
+    executor = CannedExecutor.new(out: JSON.generate([node]))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "listing the review's comments"
+    comments = github.review_comments("d3mlabs/demo", 3, 77)
+
+    Then "the path is keyed by the review id (never 'latest review') and nodes come back raw"
+    executor.command_lines.first == "gh api repos/d3mlabs/demo/pulls/3/reviews/77/comments?per_page=100"
+    comments == [node]
+
+    Cleanup
+    nil
+  end
+
+  test "review_comments returns [] for a review with no line comments" do
+    Given "an empty listing"
+    github = AiFlow::GitHub.new(executor: CannedExecutor.new(out: "[]"))
+
+    Expect
+    github.review_comments("d3mlabs/demo", 3, 77).empty?
+
+    Cleanup
+    nil
+  end
+
   test "open_pull_request_for_head returns nil when no PR is open on the branch" do
     Given "an empty listing"
     github = AiFlow::GitHub.new(executor: CannedExecutor.new(out: "[]"))

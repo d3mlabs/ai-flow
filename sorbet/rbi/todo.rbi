@@ -47,6 +47,8 @@ module AiFlow::RepoConfigTest::Cleanup; end
 module AiFlow::RepoConfigTest::Expect; end
 module AiFlow::ResultWriterTest::Cleanup; end
 module AiFlow::ResultWriterTest::Then; end
+module AiFlow::ReviewUnitTest::Cleanup; end
+module AiFlow::ReviewUnitTest::Then; end
 module AiFlow::RichDiffTest::Cleanup; end
 module AiFlow::RichDiffTest::Given; end
 module AiFlow::RichDiffTest::Then; end

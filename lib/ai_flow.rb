@@ -33,6 +33,7 @@ require "ai_flow/commands/build"
 require "ai_flow/commands/build_split"
 require "ai_flow/commands/learn"
 require "ai_flow/dispatcher"
+require "ai_flow/review_unit"
 
 # ai-flow: GitHub-side slash commands (/ask, /edit, /split, /build) that run
 # the headless Cursor agent on self-hosted runners. See README.md.

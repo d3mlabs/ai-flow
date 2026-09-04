@@ -218,6 +218,22 @@ module AiFlow
       )
     end
 
+    # A submitted review's own line-anchored comments, in review order —
+    # the review-unit dispatch's enumeration (ai-flow#73). Event-sourced by
+    # review id, never "the PR's latest review". Returned as raw REST nodes
+    # (the same shape the pull_request_review_comment webhook carries under
+    # "comment"): Context::ReviewComment is the coercion boundary, and it
+    # consumes exactly this shape.
+    #
+    # @return [Array<Hash>] raw review-comment payload nodes
+    sig do
+      params(owner_repo: String, pull_number: Integer, review_id: Integer)
+        .returns(T::Array[T::Hash[String, T.untyped]])
+    end
+    def review_comments(owner_repo, pull_number, review_id)
+      api("repos/#{owner_repo}/pulls/#{pull_number}/reviews/#{review_id}/comments?per_page=100") || []
+    end
+
     # Thread resolution state only exists in GraphQL, not REST.
     UNRESOLVED_THREADS_QUERY = <<~GRAPHQL
       query($owner: String!, $name: String!, $number: Int!) {
