@@ -703,6 +703,29 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "denials in rawOutput stderr collect too — the live CLI's actual shape (probed 2026-09-12)" do
+    Given "a tool_call_update carrying the denial in rawOutput, not content blocks"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call_update", "toolCallId" => "t1", "status" => "completed",
+        "rawOutput" => { "exitCode" => 1, "stdout" => "",
+                         "stderr" => "cat: /opt/blocked/file.txt: Permission denied\n" } },
+      { "sessionUpdate" => "agent_message_chunk", "content" => { "type" => "text", "text" => "done" } },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then
+    agent.wants.map(&:subject) == ["/opt/blocked/file.txt"]
+    agent.wants.map(&:channel) == [:observed]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "an observed denial never duplicates a declared want on the same subject" do
     Given "the same path denied in tool output and declared WANTED"
     dir = Dir.mktmpdir("ai-flow-agent-test-")

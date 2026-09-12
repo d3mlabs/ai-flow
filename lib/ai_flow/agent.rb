@@ -288,23 +288,34 @@ module AiFlow
       $stdout.puts "[/#{word}] wanted (#{want.channel}): #{want.subject}"
     end
 
-    # The text bodies of a tool_call_update's content items (the ACP
-    # content-block wrapper, one level deep).
+    # The text bodies of a tool_call_update: the spec's content-block
+    # wrapper (one level deep) and the live CLI's rawOutput stdout/stderr
+    # (cursor-agent 2026.08.11 sends denials there — probed 2026-09-12,
+    # a manual run the content-block-only reader missed).
     #
     # @param update [Hash] a tool_call_update payload
     # @return [Array<String>]
     sig { params(update: T::Hash[String, T.untyped]).returns(T::Array[String]) }
     def update_texts(update)
+      texts = T.let([], T::Array[String])
       content = update["content"]
-      return [] unless content.is_a?(Array)
+      if content.is_a?(Array)
+        content.each do |item|
+          next unless item.is_a?(Hash)
 
-      content.filter_map do |item|
-        next unless item.is_a?(Hash)
-
-        inner = item["content"]
-        text = inner.is_a?(Hash) ? inner["text"] : item["text"]
-        text.to_s.empty? ? nil : text.to_s
+          inner = item["content"]
+          text = inner.is_a?(Hash) ? inner["text"] : item["text"]
+          texts << text.to_s unless text.to_s.empty?
+        end
       end
+      raw = update["rawOutput"]
+      if raw.is_a?(Hash)
+        %w[stdout stderr output].each do |key|
+          value = raw[key]
+          texts << value if value.is_a?(String) && !value.empty?
+        end
+      end
+      texts
     end
 
     # The knowledge name when the update is a file read under a skill or
