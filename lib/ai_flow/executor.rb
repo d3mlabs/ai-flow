@@ -159,7 +159,93 @@ module AiFlow
       [e.message, false]
     end
 
+    # A bidirectional conversation with a subprocess — the ACP transport's
+    # seam (plans#33): the block gets the child's stdin and stdout and
+    # drives a JSON-RPC dialogue over them; stderr drains on a thread like
+    # stream. Isolation and env composition are identical to stream, so the
+    # agent's ACP spawn runs under the same sudo prefix and scrubbed env as
+    # its stream-json predecessor did.
+    #
+    # After the block returns, stdin closes (an ACP server exits on EOF);
+    # a child that lingers past reap_timeout is TERMed, then KILLed — a
+    # hung agent must never wedge the dispatcher.
+    #
+    # @param argv [Array<String>] command and arguments
+    # @param chdir [String, nil] working directory
+    # @param env [Hash{String => String, nil}] extra environment variables
+    # @param isolate [Boolean] spawn under the isolation posture (plans#26)
+    # @param reap_timeout [Numeric] seconds to wait for a clean exit after
+    #   stdin closes before escalating to signals
+    # @yieldparam to_child [IO] the child's stdin (sync)
+    # @yieldparam from_child [IO] the child's stdout
+    # @return [Array(String, Boolean)] stderr, success?
+    sig do
+      params(
+        argv: String,
+        chdir: T.nilable(String),
+        env: T::Hash[String, T.nilable(String)],
+        isolate: T::Boolean,
+        reap_timeout: Numeric,
+        blk: T.proc.params(to_child: IO, from_child: IO).void,
+      ).returns([String, T::Boolean])
+    end
+    def duplex(*argv, chdir: nil, env: {}, isolate: false, reap_timeout: 10, &blk)
+      isolation = isolate ? @isolation : nil
+      if isolation
+        argv = isolation.spawn_prefix + argv
+        env = isolation.redirect_env.merge(env)
+      end
+      opts = chdir ? { chdir: chdir } : {}
+      err = T.let("", String)
+      # T.unsafe: same variadic forwarding as capture (srb.help/7019).
+      status = T.unsafe(Open3).popen3(spawn_env(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
+        stdin_io.sync = true
+        drain = Thread.new { stderr_io.read }
+        begin
+          yield stdin_io, stdout_io
+        ensure
+          stdin_io.close unless stdin_io.closed?
+        end
+        # Reap before draining: the stderr read only finishes when the
+        # child exits, so a lingering child must be signaled first.
+        reap(wait_thread, reap_timeout)
+        err = drain.value.to_s
+        wait_thread.value
+      end
+      # success? is nil (not false) for a signaled child — coerce.
+      [err, status.success? == true]
+    rescue Errno::ENOENT => e
+      [e.message, false]
+    end
+
     private
+
+    # Escalating child reap: clean exit within the window, then TERM, then
+    # KILL. Signals go through `rescue nil` — the child may exit between
+    # the join and the kill.
+    #
+    # @param wait_thread [Process::Waiter]
+    # @param timeout [Numeric] seconds per escalation step
+    # @return [void]
+    sig { params(wait_thread: Thread, timeout: Numeric).void }
+    def reap(wait_thread, timeout)
+      return if wait_thread.join(timeout)
+
+      pid = T.unsafe(wait_thread).pid
+      begin
+        Process.kill("TERM", pid)
+      rescue StandardError
+        nil
+      end
+      return if wait_thread.join(timeout)
+
+      begin
+        Process.kill("KILL", pid)
+      rescue StandardError
+        nil
+      end
+      wait_thread.join
+    end
 
     # The full env overlay for one spawn: harness scrub as the base, auth on
     # top, the caller's explicit overrides last.

@@ -294,6 +294,81 @@ class AiFlow::ExecutorTest < Minitest::Test
     nil
   end
 
+  test "duplex round-trips: the block writes the child's stdin and reads its stdout" do
+    Given "a child that answers each stdin line"
+    executor = AiFlow::Executor.new
+
+    When "conversing through duplex"
+    answer = T.let(nil, T.nilable(String))
+    err, ok = executor.duplex(RUBY, "-e", '$stdout.sync = true; $stdout.puts "pong:" + $stdin.gets.chomp') do |to_child, from_child|
+      to_child.puts "ping"
+      to_child.flush
+      answer = from_child.gets.to_s.chomp
+    end
+
+    Then "the answer came back and the child exited clean"
+    ok
+    answer == "pong:ping"
+    err.empty?
+
+    Cleanup
+    nil
+  end
+
+  test "duplex(isolate: true) runs under the spawn prefix like stream" do
+    Given "an executor with a benign injected isolation"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(isolation: isolation)
+
+    When "reading the child's env through duplex"
+    line = T.let(nil, T.nilable(String))
+    _err, ok = executor.duplex(
+      RUBY, "-e", '$stdout.sync = true; puts ENV["AI_FLOW_ISOLATION_MARKER"].to_s',
+      isolate: true,
+    ) do |_to_child, from_child|
+      line = from_child.gets.to_s.chomp
+    end
+
+    Then
+    ok
+    line == "yes"
+
+    Cleanup
+    nil
+  end
+
+  test "duplex on a missing binary degrades to the ENOENT message, not a raise" do
+    Given "an executor"
+    executor = AiFlow::Executor.new
+
+    When "spawning a binary that does not exist"
+    err, ok = executor.duplex("/no/such/binary-#{Process.pid}") { |_to_child, _from_child| nil }
+
+    Then
+    !ok
+    err.include?("No such file")
+
+    Cleanup
+    nil
+  end
+
+  test "duplex reaps a child that ignores stdin EOF instead of hanging" do
+    Given "a child that sleeps far past the reap window"
+    executor = AiFlow::Executor.new
+
+    When "the block finishes while the child lingers"
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    _err, ok = executor.duplex(RUBY, "-e", "sleep 60", reap_timeout: 0.2) { |_to_child, _from_child| nil }
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+    Then "duplex returned promptly with the kill reflected in the status"
+    !ok
+    elapsed < 30
+
+    Cleanup
+    nil
+  end
+
   test "share_workspace applies the isolation's group share to a fresh dir" do
     Given "an executor with a real isolation and a fresh workspace parent"
     group = T.must(Etc.getgrgid(Process.gid)).name
