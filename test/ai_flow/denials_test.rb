@@ -82,6 +82,56 @@ class AiFlow::DenialsTest < Minitest::Test
     remainder == "plain answer\n"
   end
 
+  # ---- observed extraction ----
+
+  test "denial signatures in tool output become observed wants keyed by path" do
+    Given "output with a classic unix denial"
+    text = "rm: /Users/Shared/dev/cache/x: Permission denied\nall good otherwise\n"
+
+    When "scanning"
+    wants = AiFlow::Denials.observed_in(text)
+
+    Then "the touched path is the subject, channel observed"
+    wants.map(&:subject) == ["/Users/Shared/dev/cache/x"]
+    wants.map(&:channel) == [:observed]
+  end
+
+  test "EACCES and Operation not permitted match too" do
+    When "scanning both signatures"
+    wants = AiFlow::Denials.observed_in(
+      "Error: EACCES: permission denied, open '/etc/foo'\nchmod: /tmp/x: Operation not permitted\n",
+    )
+
+    Then
+    wants.map(&:subject) == ["/etc/foo", "/tmp/x"]
+  end
+
+  test "a GitHub-API 403 is by design (plans#25), never an observed want" do
+    When "scanning a read-only-token write denial"
+    wants = AiFlow::Denials.observed_in(
+      "gh: HTTP 403: Resource not accessible by integration (https://api.github.com/repos/x/y/issues)\n",
+    )
+
+    Then
+    wants.empty?
+  end
+
+  test "a pathless denial line falls back to the trimmed line as subject" do
+    When
+    wants = AiFlow::Denials.observed_in("docker: permission denied while trying to connect\n")
+
+    Then "the line itself carries the story"
+    wants.map(&:subject) == ["docker: permission denied while trying to connect"]
+  end
+
+  test "repeated denials on one path dedupe" do
+    When
+    wants = AiFlow::Denials.observed_in("cat: /etc/foo: Permission denied\ncp: /etc/foo: Permission denied\n")
+
+    Then
+    wants.length == 1
+  end
+
   # ---- Want value object ----
 
   test "wants carry value equality" do

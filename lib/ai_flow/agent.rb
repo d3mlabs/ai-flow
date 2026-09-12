@@ -162,12 +162,7 @@ module AiFlow
       # Declared wants come out of the text before anything downstream
       # parses it, so segment blocks and FIRED: lines never carry them.
       declared, final_text = Denials.extract_declared(final_text)
-      declared.each do |want|
-        next if @wants.include?(want)
-
-        @wants << want
-        $stdout.puts "[/#{word}] wanted: #{want.subject}"
-      end
+      declared.each { |want| record_want(word, want) }
       log_group("ai-flow agent stderr (/#{word})", err) unless err.strip.empty?
       raise Error, "agent CLI not found — install the Cursor agent CLI on this runner" if err.include?("No such file")
 
@@ -262,6 +257,50 @@ module AiFlow
         else
           $stdout.puts "[/#{word}] → #{tool_summary(update)}"
         end
+      when "tool_call_update"
+        # The observed denial channel (plans#33): a permission wall in a
+        # tool's output surfaces even when the agent doesn't declare it.
+        update_texts(update).each do |text|
+          Denials.observed_in(text).each { |want| record_want(word, want) }
+        end
+      end
+    end
+
+    # One want per subject, whatever the channel mix: a declared want (the
+    # agent's own articulate reason) replaces an observed pattern-match on
+    # the same subject; anything else first-seen wins.
+    #
+    # @param word [String] the command word, for the log line
+    # @param want [AiFlow::Denials::Want]
+    # @return [void]
+    sig { params(word: String, want: Denials::Want).void }
+    def record_want(word, want)
+      existing = @wants.find { |seen| seen.subject == want.subject }
+      if existing
+        return unless want.channel == :declared && existing.channel == :observed
+
+        @wants.delete(existing)
+      end
+      @wants << want
+      $stdout.puts "[/#{word}] wanted (#{want.channel}): #{want.subject}"
+    end
+
+    # The text bodies of a tool_call_update's content items (the ACP
+    # content-block wrapper, one level deep).
+    #
+    # @param update [Hash] a tool_call_update payload
+    # @return [Array<String>]
+    sig { params(update: T::Hash[String, T.untyped]).returns(T::Array[String]) }
+    def update_texts(update)
+      content = update["content"]
+      return [] unless content.is_a?(Array)
+
+      content.filter_map do |item|
+        next unless item.is_a?(Hash)
+
+        inner = item["content"]
+        text = inner.is_a?(Hash) ? inner["text"] : item["text"]
+        text.to_s.empty? ? nil : text.to_s
       end
     end
 
@@ -332,6 +371,13 @@ module AiFlow
         :allow
       else
         $stdout.puts "[/#{word}] permission: reject #{kind} (#{truncate(title)}) — non-force pass"
+        # Deny-with-context is a natural WANTED carrier (plans#33,
+        # decision 2): the request names exactly what was blocked.
+        record_want(word, Denials::Want.new(
+          subject: title.empty? ? kind : title,
+          reason: "permission request rejected (non-force pass)",
+          channel: :observed,
+        ))
         :reject
       end
     end

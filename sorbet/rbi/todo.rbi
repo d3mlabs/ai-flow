@@ -31,6 +31,8 @@ module AiFlow::CommentParserTest::Given; end
 module AiFlow::CommentParserTest::Then; end
 module AiFlow::ContextTest::Cleanup; end
 module AiFlow::ContextTest::Then; end
+module AiFlow::DenialsTest::Then; end
+module AiFlow::DenialsTest::When; end
 module AiFlow::DispatcherTest::Cleanup; end
 module AiFlow::DispatcherTest::Then; end
 module AiFlow::ExecutorTest::Cleanup; end

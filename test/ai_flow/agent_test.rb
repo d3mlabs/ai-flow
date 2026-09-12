@@ -615,4 +615,77 @@ class AiFlow::AgentTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "denial signatures in tool output collect as observed wants" do
+    Given "a tool_call_update whose output hit a permission wall"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call_update", "toolCallId" => "t1", "status" => "completed",
+        "content" => [{ "type" => "content",
+                        "content" => { "type" => "text", "text" => "ls: /Users/Shared/dev/ddc: Permission denied" } }] },
+      { "sessionUpdate" => "agent_message_chunk", "content" => { "type" => "text", "text" => "done" } },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    text = agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the denial is an observed want and the answer is untouched"
+    agent.wants.map(&:subject) == ["/Users/Shared/dev/ddc"]
+    agent.wants.map(&:channel) == [:observed]
+    text == "done"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an observed denial never duplicates a declared want on the same subject" do
+    Given "the same path denied in tool output and declared WANTED"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(
+      updates: [
+        { "sessionUpdate" => "tool_call_update", "toolCallId" => "t1", "status" => "completed",
+          "content" => [{ "type" => "content",
+                          "content" => { "type" => "text", "text" => "cat: /etc/hosts: Permission denied" } }] },
+        { "sessionUpdate" => "agent_message_chunk",
+          "content" => { "type" => "text", "text" => "WANTED: /etc/hosts — DNS overrides\ndone" } },
+      ],
+    )
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "one want per subject; the declared channel wins the slot"
+    agent.wants.map(&:subject) == ["/etc/hosts"]
+    agent.wants.map(&:channel) == [:declared]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a rejected permission request records as an observed want with the request's context" do
+    Given "a non-force launch that gets asked for a mutating tool"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(permission_requests: [
+      { "toolCall" => { "title" => "$ chmod 777 /etc", "kind" => "execute" },
+        "options" => FakeAcpServer::DEFAULT_PERMISSION_OPTIONS },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching without force"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the deny-with-context is a WANTED carrier"
+    server.permission_answers == ["reject-once"]
+    agent.wants.map(&:subject) == ["$ chmod 777 /etc"]
+    agent.wants.map(&:channel) == [:observed]
+    agent.wants.map(&:reason) == ["permission request rejected (non-force pass)"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 end

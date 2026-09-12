@@ -67,6 +67,19 @@ module AiFlow
     # ASCII fallback second.
     SEPARATORS = T.let([" — ", " -- "].freeze, T::Array[String])
 
+    # The observed channel's tool-output signatures (plans#26 WS3). The
+    # unix denial family only — a permission wall the OS put up, not an
+    # application-level 403.
+    DENIAL_LINE = /Permission denied|permission denied|Operation not permitted|EACCES|EPERM/
+
+    # GitHub-API write denials are the read-only agent token working as
+    # designed (plans#25), never a boundary want.
+    GITHUB_403 = /api\.github\.com|github\.com\/graphql|HTTP(?:\/[\d.]+)?\s*403/i
+
+    # An absolute path inside a denial line — the deduplication key when
+    # parseable.
+    TOUCHED_PATH = %r{/[A-Za-z0-9_./@+~-]+}
+
     # Subjects resolved by design rather than by widening (plans#26 access
     # categories 4–5): the shared data root (dev's DataRoot::SHARED_ROOT —
     # cross-repo constant, duplicated knowingly), DDC trees, and sockets /
@@ -122,6 +135,26 @@ module AiFlow
           true
         end
         [wants, kept.join("\n")]
+      end
+
+      # The observed channel: denial signatures in tool output, one want
+      # per touched path (the line itself when no path parses), GitHub-API
+      # 403s excluded.
+      #
+      # @param text [String] a tool call's output
+      # @return [Array<Want>] deduped observed wants
+      sig { params(text: String).returns(T::Array[Want]) }
+      def observed_in(text)
+        wants = T.let([], T::Array[Want])
+        text.split("\n").each do |line|
+          next unless DENIAL_LINE.match?(line)
+          next if GITHUB_403.match?(line)
+
+          subject = line[TOUCHED_PATH] || line.strip
+          want = Want.new(subject: subject, reason: "", channel: :observed)
+          wants << want unless wants.any? { |seen| seen.subject == subject }
+        end
+        wants
       end
 
       # Render wants for both surfaces (step summary and result panel): one
