@@ -26,7 +26,7 @@ class FakeAcpServer
     { "optionId" => "reject-once", "kind" => "reject_once" },
   ].freeze
 
-  attr_reader :requests, :set_model_ids, :prompt_texts, :permission_answers
+  attr_reader :requests, :set_model_ids, :prompt_texts, :permission_answers, :extra_answers
 
   # @param result_text [String] emitted as one agent_message_chunk update
   # @param stop_reason [String] the session/prompt response's stopReason
@@ -39,18 +39,26 @@ class FakeAcpServer
   # @param models [Array<Hash>] the session/new catalog
   # @param error_on [Hash{String => String}] method => message; the server
   #   answers those requests with a JSON-RPC error
+  # @param junk_lines [Array<String>] raw non-JSON lines emitted before the
+  #   updates (protocol-noise resilience)
+  # @param extra_requests [Array<Hash>] agent→client requests ({"method",
+  #   "params"}) sent before the permission requests, each awaiting the
+  #   client's answer (recorded in extra_answers)
   def initialize(result_text: "ok", stop_reason: "end_turn", updates: nil, permission_requests: [],
-                 models: DEFAULT_MODELS, error_on: {})
+                 models: DEFAULT_MODELS, error_on: {}, junk_lines: [], extra_requests: [])
     @result_text = result_text
     @stop_reason = stop_reason
     @updates = updates
     @permission_requests = permission_requests
     @models = models
     @error_on = error_on
+    @junk_lines = junk_lines
+    @extra_requests = extra_requests
     @requests = []
     @set_model_ids = []
     @prompt_texts = []
     @permission_answers = []
+    @extra_answers = []
     @next_server_id = 100
   end
 
@@ -95,12 +103,19 @@ class FakeAcpServer
 
   def handle_prompt(input, output, msg)
     @prompt_texts << msg.dig("params", "prompt", 0, "text")
+    @junk_lines.each { |line| output.puts(line) }
     updates = @updates || [{
       "sessionUpdate" => "agent_message_chunk",
       "content" => { "type" => "text", "text" => @result_text },
     }]
     updates.each do |update|
       notify(output, "session/update", { "sessionId" => "sess-1", "update" => update })
+    end
+    @extra_requests.each do |request|
+      id = (@next_server_id += 1)
+      send_line(output, { "jsonrpc" => "2.0", "id" => id, "method" => request.fetch("method"),
+                          "params" => request["params"] || {} })
+      @extra_answers << JSON.parse(input.gets.to_s)
     end
     @permission_requests.each do |params|
       id = (@next_server_id += 1)

@@ -232,19 +232,25 @@ module AiFlow
       return if wait_thread.join(timeout)
 
       pid = T.unsafe(wait_thread).pid
-      begin
-        Process.kill("TERM", pid)
-      rescue StandardError
-        nil
-      end
+      best_effort_kill("TERM", pid)
       return if wait_thread.join(timeout)
 
-      begin
-        Process.kill("KILL", pid)
-      rescue StandardError
-        nil
-      end
+      best_effort_kill("KILL", pid)
       wait_thread.join
+    end
+
+    # A signal that tolerates losing the race: the child may exit between
+    # the liveness check and the kill.
+    #
+    # @param signal [String]
+    # @param pid [Integer]
+    # @return [void]
+    sig { params(signal: String, pid: Integer).void }
+    def best_effort_kill(signal, pid)
+      Process.kill(signal, pid)
+      nil
+    rescue StandardError
+      nil
     end
 
     # The full env overlay for one spawn: harness scrub as the base, auth on

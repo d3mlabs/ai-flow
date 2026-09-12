@@ -369,6 +369,42 @@ class AiFlow::ExecutorTest < Minitest::Test
     nil
   end
 
+  test "duplex escalates to KILL when the child shrugs off TERM" do
+    Given "a child that traps TERM and keeps sleeping"
+    executor = AiFlow::Executor.new
+
+    When "the reap window passes twice"
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    _err, ok = executor.duplex(
+      RUBY, "-e", 'trap("TERM") {}; sleep 60',
+      reap_timeout: 0.2,
+    ) { |_to_child, _from_child| nil }
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+    Then "KILL ends it and duplex still returns promptly"
+    !ok
+    elapsed < 30
+
+    Cleanup
+    nil
+  end
+
+  test "the reap's kill tolerates a child that exited in the race window" do
+    Given "a pid that is already fully reaped"
+    executor = AiFlow::Executor.new
+    pid = Process.spawn(RUBY, "-e", "exit 0")
+    Process.wait(pid)
+
+    When "signaling it (ESRCH under the hood)"
+    executor.send(:best_effort_kill, "TERM", pid)
+
+    Then "the race loss is silent"
+    true
+
+    Cleanup
+    nil
+  end
+
   test "share_workspace applies the isolation's group share to a fresh dir" do
     Given "an executor with a real isolation and a fresh workspace parent"
     group = T.must(Etc.getgrgid(Process.gid)).name

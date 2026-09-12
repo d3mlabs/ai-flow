@@ -424,6 +424,48 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a protocol failure surfaces as an Agent::Error naming the broken method" do
+    Given "a server that errors the prompt request"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(error_on: { "session/prompt" => "session exploded" })
+    executor = AcpFakeExecutor.new(server: server)
+
+    When "launching and capturing the failure"
+    error = begin
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+      nil
+    rescue AiFlow::Agent::Error => e
+      e
+    end
+
+    Then
+    T.must(error).message.include?("session/prompt")
+    T.must(error).message.include?("session exploded")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a titleless tool call renders its kind" do
+    Given "a tool_call update with no title"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call", "kind" => "search", "title" => "" },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+
+    When "launching"
+    output = capture_agent_stdout do
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    end
+
+    Then
+    output.include?("[/ask] → search")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a missing agent CLI raises the install pointer" do
     Given "an executor that fails the spawn with ENOENT"
     dir = Dir.mktmpdir("ai-flow-agent-test-")

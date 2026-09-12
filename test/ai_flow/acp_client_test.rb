@@ -163,6 +163,60 @@ class AiFlow::AcpClientTest < Minitest::Test
     nil
   end
 
+  test "an unknown agent request gets method-not-found and the run continues" do
+    Given "a server that asks for a capability we declined"
+    server = FakeAcpServer.new(extra_requests: [
+      { "method" => "fs/read_text_file", "params" => { "path" => "/etc/hosts" } },
+    ])
+
+    When "conversing"
+    stop_reason, _updates, _permissions = converse(server)
+
+    Then "the client answered -32601 and the turn still completed"
+    stop_reason == "end_turn"
+    server.extra_answers.dig(0, "error", "code") == -32_601
+
+    Cleanup
+    nil
+  end
+
+  test "a permission request with no matching option raises rather than guessing" do
+    Given "a rejecting policy against allow-only options"
+    server = FakeAcpServer.new(permission_requests: [
+      { "toolCall" => { "title" => "$ rm -rf" },
+        "options" => [{ "optionId" => "allow-once", "kind" => "allow_once" }] },
+    ])
+
+    When
+    error = begin
+      converse(server, decision: :reject)
+      nil
+    rescue AiFlow::AcpClient::ProtocolError => e
+      e
+    end
+
+    Then "the missing reject option is loud"
+    T.must(error).message.include?("no reject option")
+
+    Cleanup
+    nil
+  end
+
+  test "non-JSON noise on the stream is skipped, never a crash" do
+    Given "a server that emits junk before its updates"
+    server = FakeAcpServer.new(junk_lines: ["not json at all", "{broken"])
+
+    When "conversing"
+    stop_reason, updates, _permissions = converse(server)
+
+    Then "the junk vanished and the conversation completed"
+    stop_reason == "end_turn"
+    updates.length == 1
+
+    Cleanup
+    nil
+  end
+
   test "a JSON-RPC error response raises ProtocolError with the method and message" do
     Given "a server that fails set_model"
     server = FakeAcpServer.new(error_on: { "session/set_model" => "model unavailable" })
