@@ -14,7 +14,7 @@ require "stringio"
 class RecordingExecutor < AiFlow::Executor
   DEFAULT_STREAM = [%({"type":"result","subtype":"success","is_error":false,"result":"ok"})].freeze
 
-  attr_reader :captures, :envs, :isolates
+  attr_reader :captures, :envs, :isolates, :stdins
 
   def initialize(lines: DEFAULT_STREAM, err: "", ok: true)
     @envs = []
@@ -23,12 +23,14 @@ class RecordingExecutor < AiFlow::Executor
     @ok = ok
     @captures = []
     @isolates = []
+    @stdins = []
   end
 
   def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
     @captures << argv
     @envs << env
     @isolates << isolate
+    @stdins << stdin
     @lines.each { |line| yield "#{line}\n" }
     [@err, @ok]
   end
@@ -498,6 +500,80 @@ class AiFlow::AgentTest < Minitest::Test
 
     Then
     T.must(error).message.include?("see the streamed agent log above")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # ---- denial surfacing (plans#33) ----
+
+  test "an isolated launch appends the WANTED contract to the prompt" do
+    Given "an isolation-reporting executor"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = IsolationReportingExecutor.new
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "do the task", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the streamed prompt carries the task and the contract"
+    T.must(executor.stdins.fetch(0)).start_with?("do the task")
+    T.must(executor.stdins.fetch(0)).include?("WANTED: <path or capability>")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a non-isolated launch streams the prompt untouched" do
+    Given "a plain executor (no isolation)"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "do the task", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the prompt is exactly the caller's"
+    executor.stdins.fetch(0) == "do the task"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "WANTED lines in the result collect as wants and are stripped from the returned text" do
+    Given "a result carrying a want between answer lines"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    result = "done the work\\nWANTED: /etc/hosts — needed to inspect DNS overrides\\nall tests pass"
+    executor = RecordingExecutor.new(
+      lines: [%({"type":"result","subtype":"success","is_error":false,"result":"#{result}"})],
+    )
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    text = agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the want is collected and the returned text no longer carries it"
+    agent.wants.map(&:subject) == ["/etc/hosts"]
+    agent.wants.map(&:reason) == ["needed to inspect DNS overrides"]
+    agent.wants.map(&:channel) == [:declared]
+    text == "done the work\nall tests pass"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "wants accumulate deduped across launches" do
+    Given "two launches declaring the same want"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = RecordingExecutor.new(
+      lines: [%({"type":"result","subtype":"success","is_error":false,"result":"WANTED: jq — parse"})],
+    )
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching twice"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "one want survives"
+    agent.wants.length == 1
 
     Cleanup
     FileUtils.rm_rf(dir)

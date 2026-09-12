@@ -39,6 +39,14 @@ module AiFlow
     sig { returns(T::Array[String]) }
     attr_reader :knowledge_applied
 
+    # Boundary wants surfaced across this run's launches (plans#33):
+    # declared WANTED lines extracted from final texts (and later, observed
+    # denials). Feeds the dispatcher's step summary and the result panel.
+    #
+    # @return [Array<AiFlow::Denials::Want>] deduped, first-seen order
+    sig { returns(T::Array[Denials::Want]) }
+    attr_reader :wants
+
     # A read under one of these paths is knowledge consumption, not generic
     # file reading: on-demand skills (installed user-globally by dev) and a
     # project's Cursor rules (learnings-index.mdc, committed conventions).
@@ -56,6 +64,7 @@ module AiFlow
       @executor = executor
       @models_used = T.let({}, T::Hash[Command, T::Array[ModelSelection]])
       @knowledge_applied = T.let([], T::Array[String])
+      @wants = T.let([], T::Array[Denials::Want])
     end
 
     # Run the headless agent to completion and return its final answer text.
@@ -107,6 +116,12 @@ module AiFlow
       end
       argv << "--force" if force
 
+      # The denial-surfacing contract (plans#33) rides every isolated
+      # launch here — the one seam all commands cross — so no command can
+      # forget it and non-split hosts see zero prompt change.
+      contract = Denials.prompt_contract(@executor.isolation)
+      prompt = "#{prompt}\n\n#{contract}" unless contract.empty?
+
       log_group("ai-flow agent prompt (/#{word})", prompt)
       $stdout.puts "ai-flow agent token (/#{word}): read-only, installation-wide (plans#25)"
       posture = @executor.isolation
@@ -130,6 +145,15 @@ module AiFlow
       # only the prompt (above), the final text, and any stderr.
       final_text = result || assistant_texts.join("\n\n")
       log_group("ai-flow agent final result (/#{word})", final_text)
+      # Declared wants come out of the text before anything downstream
+      # parses it, so segment blocks and FIRED: lines never carry them.
+      declared, final_text = Denials.extract_declared(final_text)
+      declared.each do |want|
+        next if @wants.include?(want)
+
+        @wants << want
+        $stdout.puts "[/#{word}] wanted: #{want.subject}"
+      end
       log_group("ai-flow agent stderr (/#{word})", err) unless err.strip.empty?
       raise Error, "agent CLI not found — install the Cursor agent CLI on this runner" if err.include?("No such file")
       unless ok
