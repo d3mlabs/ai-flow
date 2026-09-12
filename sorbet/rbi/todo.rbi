@@ -5,6 +5,10 @@
 # typed: false
 
 module ::Dev::Deps; end
+module AiFlow::AcpClientTest::Cleanup; end
+module AiFlow::AcpClientTest::Given; end
+module AiFlow::AcpClientTest::Then; end
+module AiFlow::AcpClientTest::When; end
 module AiFlow::AgentIsolationTest::Cleanup; end
 module AiFlow::AgentIsolationTest::Then; end
 module AiFlow::AgentOutputTest::Cleanup; end
@@ -27,6 +31,8 @@ module AiFlow::CommentParserTest::Given; end
 module AiFlow::CommentParserTest::Then; end
 module AiFlow::ContextTest::Cleanup; end
 module AiFlow::ContextTest::Then; end
+module AiFlow::DenialsTest::Then; end
+module AiFlow::DenialsTest::When; end
 module AiFlow::DispatcherTest::Cleanup; end
 module AiFlow::DispatcherTest::Then; end
 module AiFlow::ExecutorTest::Cleanup; end

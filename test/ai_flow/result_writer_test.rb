@@ -91,6 +91,44 @@ class AiFlow::ResultWriterTest < Minitest::Test
     nil
   end
 
+  test "boundary wants render as a bottom-section block above the footer (plans#33)" do
+    Given "an agent that surfaced a want and a rendered result"
+    agent = FakeAgent.new([], wants: [
+      AiFlow::Denials::Want.new(subject: "/etc/hosts", reason: "inspect DNS overrides", channel: :observed),
+    ])
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
+    body = "/edit tighten"
+    segments = AiFlow::CommentParser.new.parse(body)
+
+    When "rendering with a run url"
+    updated = writer.render(body, [[segments.fetch(0), "RESULT"]], run_url: "https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then "the bottom section carries the wants block, then the footer"
+    updated.include?("Boundary wants")
+    updated.include?("`/etc/hosts` — inspect DNS overrides _(observed)_")
+    T.must(updated.index("Boundary wants")) < T.must(updated.index("⚙️"))
+
+    Cleanup
+    nil
+  end
+
+  test "no wants block when the agent surfaced nothing" do
+    Given "a wantless agent"
+    agent = FakeAgent.new([])
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, agent: agent)
+    body = "/edit tighten"
+    segments = AiFlow::CommentParser.new.parse(body)
+
+    When "rendering"
+    updated = writer.render(body, [[segments.fetch(0), "RESULT"]], run_url: "https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then "only the footer renders in the bottom section"
+    !updated.include?("Boundary wants")
+
+    Cleanup
+    nil
+  end
+
   test "one distinct model collapses to a single footer name, whatever the command mix" do
     Given "an agent whose /ask and /edit both resolved to the same model"
     agent = FakeAgent.new(["out", "out"], model: "claude-fable-5-high")

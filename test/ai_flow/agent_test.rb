@@ -2,53 +2,34 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/acp"
 require "tmpdir"
 require "fileutils"
-require "json"
 require "stringio"
 
-# Captures every stream() argv so tests assert on the exact agent CLI
-# invocation; replays a canned NDJSON stream (default: one terminal result
-# event) line by line, like the real CLI in stream-json mode. Subclasses the
-# real class so sorbet-runtime's sig checks accept it at the injection seam.
-class RecordingExecutor < AiFlow::Executor
-  DEFAULT_STREAM = [%({"type":"result","subtype":"success","is_error":false,"result":"ok"})].freeze
-
-  attr_reader :captures, :envs, :isolates
-
-  def initialize(lines: DEFAULT_STREAM, err: "", ok: true)
-    @envs = []
-    @lines = lines
-    @err = err
-    @ok = ok
-    @captures = []
-    @isolates = []
-  end
-
-  def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
-    @captures << argv
-    @envs << env
-    @isolates << isolate
-    @lines.each { |line| yield "#{line}\n" }
-    [@err, @ok]
-  end
-end unless defined?(RecordingExecutor)
-
 # Reports an isolation posture without real sudo or env, so the launch's
-# spawn-user log line is observable.
-class IsolationReportingExecutor < RecordingExecutor
+# spawn-user log line and the prompt contract are observable.
+class IsolationReportingAcpExecutor < AcpFakeExecutor
   def isolation
     AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/tmp")
   end
-end unless defined?(IsolationReportingExecutor)
+end unless defined?(IsolationReportingAcpExecutor)
 
 # Overrides the agent's auth overlay with a recognizable marker, so the
 # launch's env plumbing is observable without real minting.
-class ReadOnlyRecordingExecutor < RecordingExecutor
+class ReadOnlyAcpExecutor < AcpFakeExecutor
   def agent_auth_env
     { "GH_TOKEN" => "read-only-marker" }
   end
-end unless defined?(ReadOnlyRecordingExecutor)
+end unless defined?(ReadOnlyAcpExecutor)
+
+# The transport-failure double: duplex fails before the conversation ever
+# starts (the popen3 ENOENT path), so the block never runs.
+class EnoentAcpExecutor < AcpFakeExecutor
+  def duplex(*argv, chdir: nil, env: {}, isolate: false, reap_timeout: 10)
+    ["No such file or directory - agent", false]
+  end
+end unless defined?(EnoentAcpExecutor)
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::AgentTest < Minitest::Test
@@ -57,22 +38,27 @@ class AiFlow::AgentTest < Minitest::Test
     File.write(File.join(dir, ".github", "ai-flow.yml"), content)
   end
 
-  def model_flag(executor)
-    argv = executor.captures.fetch(0)
-    index = argv.index("--model")
-    index && argv.fetch(index + 1)
+  # Swap $stdout for a StringIO around the launch — the progress lines are
+  # the observable behavior here, and the agent writes them directly.
+  def capture_agent_stdout
+    original = $stdout
+    $stdout = StringIO.new
+    yield
+    $stdout.string
+  ensure
+    $stdout = original
   end
 
-  test "no repo config: no --model flag (CLI account default)" do
+  test "no repo config: no session/set_model (CLI account default)" do
     Given "a workdir without .github/ai-flow.yml"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
-    Then
-    model_flag(executor).nil?
+    Then "the session rides the account default"
+    !executor.server.requests.include?("session/set_model")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -82,16 +68,16 @@ class AiFlow::AgentTest < Minitest::Test
     Given "a config with a build model and nothing else"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  build: opus\n")
-    build_executor = RecordingExecutor.new
-    ask_executor = RecordingExecutor.new
+    build_executor = AcpFakeExecutor.new
+    ask_executor = AcpFakeExecutor.new
 
     When "launching /build and /ask"
     AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
     AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
-    Then "/build carries the model and /ask stays on the CLI default"
-    model_flag(build_executor) == "opus"
-    model_flag(ask_executor).nil?
+    Then "/build selects the model through the catalog and /ask stays on the CLI default"
+    build_executor.server.set_model_ids == ["opus[test]"]
+    ask_executor.server.set_model_ids.empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -101,32 +87,32 @@ class AiFlow::AgentTest < Minitest::Test
     Given "a config with default and build models"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  default: gpt-5\n  build: opus\n")
-    build_executor = RecordingExecutor.new
-    ask_executor = RecordingExecutor.new
+    build_executor = AcpFakeExecutor.new
+    ask_executor = AcpFakeExecutor.new
 
     When "launching /build and /ask"
     AiFlow::Agent.new(executor: build_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
     AiFlow::Agent.new(executor: ask_executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
-    model_flag(build_executor) == "opus"
-    model_flag(ask_executor) == "gpt-5"
+    build_executor.server.set_model_ids == ["opus[test]"]
+    ask_executor.server.set_model_ids == ["gpt-5[test]"]
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "blank links fall through and never produce --model ''" do
+  test "blank links fall through and never select a blank model" do
     Given "a config where the command model is blank and default is set"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  default: gpt-5\n  build: \"\"\n")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching /build"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then "the blank command link falls through to the default"
-    model_flag(executor) == "gpt-5"
+    executor.server.set_model_ids == ["gpt-5[test]"]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -136,13 +122,13 @@ class AiFlow::AgentTest < Minitest::Test
     Given "a config whose only value is a blank default"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  default: \"\"\n")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching /ask"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
-    model_flag(executor).nil?
+    executor.server.set_model_ids.empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -153,13 +139,13 @@ class AiFlow::AgentTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  default: gpt-5\n  build: opus\n")
     ENV["AI_FLOW_MODEL"] = "env-model"
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching /build"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
 
     Then
-    model_flag(executor) == "env-model"
+    executor.server.set_model_ids == ["env-model[test]"]
 
     Cleanup
     ENV.delete("AI_FLOW_MODEL")
@@ -170,7 +156,7 @@ class AiFlow::AgentTest < Minitest::Test
     Given "an unparseable .github/ai-flow.yml"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models: [unclosed\n")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
@@ -186,7 +172,7 @@ class AiFlow::AgentTest < Minitest::Test
     Given "a config file that is a YAML list"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "- not\n- a\n- mapping\n")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
@@ -202,7 +188,7 @@ class AiFlow::AgentTest < Minitest::Test
     Given "a config with a default model and two launches of the same command"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models:\n  default: gpt-5\n")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching /ask twice and /build once"
@@ -225,7 +211,7 @@ class AiFlow::AgentTest < Minitest::Test
     source = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(source, "models:\n  default: gpt-5\n")
     clone = Dir.mktmpdir("ai-flow-agent-test-")
-    agent = AiFlow::Agent.new(executor: RecordingExecutor.new)
+    agent = AiFlow::Agent.new(executor: AcpFakeExecutor.new)
 
     When "launching in the source, then in the unconfigured clone"
     agent.launch(prompt: "p", workdir: source, command: AiFlow::Command::Learn.new)
@@ -247,7 +233,7 @@ class AiFlow::AgentTest < Minitest::Test
   test "models_used records AccountDefault when no policy resolved" do
     Given "a workdir without a config file"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching /ask"
@@ -265,14 +251,15 @@ class AiFlow::AgentTest < Minitest::Test
     source = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(source, "models:\n  default: gpt-5\n")
     clone = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching in the clone under the source's policy"
     AiFlow::Agent.new(executor: executor)
       .launch(prompt: "p", workdir: clone, command: AiFlow::Command::Learn.new, policy_root: source)
 
-    Then "the launch carries the source's model"
-    model_flag(executor) == "gpt-5"
+    Then "the launch carries the source's model and the session opens in the clone"
+    executor.server.set_model_ids == ["gpt-5[test]"]
+    executor.chdirs == [clone]
 
     Cleanup
     FileUtils.rm_rf(source)
@@ -283,65 +270,62 @@ class AiFlow::AgentTest < Minitest::Test
     Given "a config where models is a scalar (user's file, unknown shapes ignored)"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     write_config(dir, "models: everything-on-default\n")
-    executor = RecordingExecutor.new
+    executor = AcpFakeExecutor.new
 
     When "launching /ask"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
-    model_flag(executor).nil?
+    executor.server.set_model_ids.empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "the CLI runs in stream-json mode and the terminal result event is the answer" do
-    Given "a stream with assistant chatter, a tool call, and a result event"
+  test "the launch speaks ACP and the message chunks are the answer" do
+    Given "a server scripted with an answer"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new(lines: [
-      %({"type":"system","subtype":"init","model":"Fable 5 High","session_id":"s"}),
-      %({"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"rake test"}}}}),
-      %({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working on it."}]}}),
-      %({"type":"result","subtype":"success","is_error":false,"result":"THE ANSWER"}),
-    ])
+    executor = AcpFakeExecutor.new(server: FakeAcpServer.new(result_text: "THE ANSWER"))
 
     When "launching"
     answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
-    Then "the result event wins and the argv asked for the streaming format"
+    Then "the accumulated chunks are the answer and the argv is the ACP subcommand"
     answer == "THE ANSWER"
-    executor.captures.fetch(0).each_cons(2).include?(["--output-format", "stream-json"])
+    executor.captures == [["agent", "acp"]]
+    executor.server.prompt_texts == ["p"]
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "a stream that ends without a result event falls back to the assistant text" do
-    Given "a truncated stream (two assistant messages, no terminal event) that still exits 0"
+  test "message chunks concatenate in stream order" do
+    Given "a server streaming the answer in two chunks"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new(lines: [
-      %({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"First."}]}}),
-      %({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Second."}]}}),
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "agent_message_chunk", "content" => { "type" => "text", "text" => "First. " } },
+      { "sessionUpdate" => "agent_message_chunk", "content" => { "type" => "text", "text" => "Second." } },
     ])
+    executor = AcpFakeExecutor.new(server: server)
 
     When "launching"
     answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then
-    answer == "First.\n\nSecond."
+    answer == "First. Second."
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "non-JSON junk and unknown event types degrade to noise, never a crash" do
-    Given "a stream with a raw line, an unknown event type, and a result"
+  test "unknown update kinds degrade to nothing, never a crash" do
+    Given "a stream with an unrecognized update kind"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new(lines: [
-      "some non-json narration",
-      %({"type":"connection","subtype":"reconnecting"}),
-      %({"type":"result","subtype":"success","is_error":false,"result":"ok"}),
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "something_new", "payload" => { "x" => 1 } },
+      { "sessionUpdate" => "agent_message_chunk", "content" => { "type" => "text", "text" => "ok" } },
     ])
+    executor = AcpFakeExecutor.new(server: server)
 
     When "launching"
     answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
@@ -353,29 +337,22 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  # Swap $stdout for a StringIO around the launch — the progress lines are
-  # the observable behavior here, and the agent writes them directly.
-  def capture_agent_stdout
-    original = $stdout
-    $stdout = StringIO.new
-    yield
-    $stdout.string
-  ensure
-    $stdout = original
-  end
-
   test "skill and rule reads render as knowledge lines and accumulate deduped" do
     Given "a stream reading a skill twice, a rules file, and a plain file"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    skill_read = %({"type":"tool_call","subtype":"started","tool_call":) +
-      %({"readToolCall":{"args":{"path":"/Users/ci/.cursor/skills/typed-errors/SKILL.md"}}}})
-    executor = RecordingExecutor.new(lines: [
+    skill_read = {
+      "sessionUpdate" => "tool_call", "kind" => "read", "title" => "Read SKILL.md",
+      "locations" => [{ "path" => "/Users/ci/.cursor/skills/typed-errors/SKILL.md" }],
+    }
+    server = FakeAcpServer.new(updates: [
       skill_read,
       skill_read,
-      %({"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":".cursor/rules/learnings-index.mdc"}}}}),
-      %({"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"lib/thing.rb"}}}}),
-      %({"type":"result","subtype":"success","is_error":false,"result":"ok"}),
+      { "sessionUpdate" => "tool_call", "kind" => "read", "title" => "Read learnings-index.mdc",
+        "locations" => [{ "path" => ".cursor/rules/learnings-index.mdc" }] },
+      { "sessionUpdate" => "tool_call", "kind" => "read", "title" => "Read thing.rb",
+        "locations" => [{ "path" => "lib/thing.rb" }] },
     ])
+    executor = AcpFakeExecutor.new(server: server)
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching and capturing the progress lines"
@@ -384,28 +361,29 @@ class AiFlow::AgentTest < Minitest::Test
     Then "knowledge reads get their own line, plain reads stay generic, and the accumulator dedupes"
     output.include?("[/build] knowledge: typed-errors")
     output.include?("[/build] knowledge: learnings-index")
-    output.include?("[/build] → read: lib/thing.rb")
-    !output.include?("→ read: /Users/ci/.cursor/skills")
+    output.include?("[/build] → Read thing.rb")
     agent.knowledge_applied == ["typed-errors", "learnings-index"]
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "non-read tool calls under knowledge-looking args stay generic" do
+  test "non-read tool calls under knowledge-looking paths stay generic" do
     Given "a shell command that merely mentions a skill path"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new(lines: [
-      %({"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"ls ~/.cursor/skills/typed-errors/"}}}}),
-      %({"type":"result","subtype":"success","is_error":false,"result":"ok"}),
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call", "kind" => "execute",
+        "title" => "$ ls ~/.cursor/skills/typed-errors/",
+        "rawInput" => { "path" => "~/.cursor/skills/typed-errors/" } },
     ])
+    executor = AcpFakeExecutor.new(server: server)
     agent = AiFlow::Agent.new(executor: executor)
 
     When "launching"
     output = capture_agent_stdout { agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new) }
 
     Then "no knowledge line, nothing accumulated"
-    output.include?("[/build] → shell: ls ~/.cursor/skills/typed-errors/")
+    output.include?("[/build] → $ ls ~/.cursor/skills/typed-errors/")
     agent.knowledge_applied.empty?
 
     Cleanup
@@ -419,7 +397,7 @@ class AiFlow::AgentTest < Minitest::Test
   test "the launch spawns the agent under the read-only auth overlay (plans#25)" do
     Given "an executor whose agent overlay is a recognizable marker"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = ReadOnlyRecordingExecutor.new
+    executor = ReadOnlyAcpExecutor.new
 
     When "launching"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
@@ -431,10 +409,10 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a failed run raises" do
-    Given "a failing executor with stderr"
+  test "a turn that stops on anything but end_turn raises" do
+    Given "a server whose turn ends in refusal"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new(lines: [], err: "boom from the CLI", ok: false)
+    executor = AcpFakeExecutor.new(server: FakeAcpServer.new(stop_reason: "refusal"))
 
     When "launching"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
@@ -446,15 +424,77 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "launch streams the agent through the isolation seam" do
-    Given "an agent over a recording executor"
+  test "a protocol failure surfaces as an Agent::Error naming the broken method" do
+    Given "a server that errors the prompt request"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new
+    server = FakeAcpServer.new(error_on: { "session/prompt" => "session exploded" })
+    executor = AcpFakeExecutor.new(server: server)
+
+    When "launching and capturing the failure"
+    error = begin
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+      nil
+    rescue AiFlow::Agent::Error => e
+      e
+    end
+
+    Then
+    T.must(error).message.include?("session/prompt")
+    T.must(error).message.include?("session exploded")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a titleless tool call renders its kind" do
+    Given "a tool_call update with no title"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call", "kind" => "search", "title" => "" },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+
+    When "launching"
+    output = capture_agent_stdout do
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    end
+
+    Then
+    output.include?("[/ask] → search")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a missing agent CLI raises the install pointer" do
+    Given "an executor that fails the spawn with ENOENT"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = EnoentAcpExecutor.new
+
+    When "launching and capturing the failure"
+    error = begin
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+      nil
+    rescue AiFlow::Agent::Error => e
+      e
+    end
+
+    Then
+    T.must(error).message.include?("agent CLI not found")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "launch runs the agent through the isolation seam" do
+    Given "an agent over the fake ACP executor"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = AcpFakeExecutor.new
 
     When "launching"
     AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
-    Then "the one stream call asked for isolation (a no-op when it is off)"
+    Then "the one duplex call asked for isolation (a no-op when it is off)"
     executor.isolates == [true]
 
     Cleanup
@@ -464,29 +504,29 @@ class AiFlow::AgentTest < Minitest::Test
   test "the spawn posture line names the agent user when isolated, the dispatcher otherwise" do
     Given "one executor reporting an isolation and one bare"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    isolated = IsolationReportingExecutor.new
-    bare = RecordingExecutor.new
+    isolated = IsolationReportingAcpExecutor.new
+    bare = AcpFakeExecutor.new
 
     When "launching under both"
-    isolated_out, = capture_io do
+    isolated_out = capture_agent_stdout do
       AiFlow::Agent.new(executor: isolated).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
     end
-    bare_out, = capture_io do
+    bare_out = capture_agent_stdout do
       AiFlow::Agent.new(executor: bare).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
     end
 
     Then "the run log states who executed the pass"
-    isolated_out.include?("ai-flow agent spawn (/ask): user=ai-agent (plans#26)")
-    bare_out.include?("ai-flow agent spawn (/ask): user=(dispatcher)")
+    isolated_out.include?("ai-flow agent spawn (/ask): user=ai-agent (plans#26) transport=acp")
+    bare_out.include?("ai-flow agent spawn (/ask): user=(dispatcher) transport=acp")
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
   test "a silent failure points at the streamed log" do
-    Given "a failing executor with no stderr and an empty stream"
+    Given "a cancelled turn with no text and no stderr"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
-    executor = RecordingExecutor.new(lines: [], err: "", ok: false)
+    executor = AcpFakeExecutor.new(server: FakeAcpServer.new(result_text: "", stop_reason: "cancelled"))
 
     When "launching and capturing the failure"
     error = begin
@@ -498,6 +538,238 @@ class AiFlow::AgentTest < Minitest::Test
 
     Then
     T.must(error).message.include?("see the streamed agent log above")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # ---- permission policy (plans#33, decision 2) ----
+
+  test "a force launch answers allow to a mutating permission request" do
+    Given "a server that asks permission for an execute tool"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(permission_requests: [
+      { "toolCall" => { "title" => "$ rake test", "kind" => "execute" },
+        "options" => FakeAcpServer::DEFAULT_PERMISSION_OPTIONS },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+
+    When "launching with force"
+    AiFlow::Agent.new(executor: executor)
+      .launch(prompt: "p", workdir: dir, command: AiFlow::Command::Edit.new, force: true)
+
+    Then "the boundary is the OS user, not the tool gate"
+    server.permission_answers == ["allow-once"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a non-force launch rejects mutating kinds and allows reads" do
+    Given "a server asking for an execute and a read"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(permission_requests: [
+      { "toolCall" => { "title" => "$ rm -rf build", "kind" => "execute" },
+        "options" => FakeAcpServer::DEFAULT_PERMISSION_OPTIONS },
+      { "toolCall" => { "title" => "Read secrets.yml", "kind" => "read" },
+        "options" => FakeAcpServer::DEFAULT_PERMISSION_OPTIONS },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+
+    When "launching without force"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then
+    server.permission_answers == ["reject-once", "allow-once"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a non-force launch fails closed on unknown tool kinds" do
+    Given "a permission request whose kind the allowlist has never seen"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(permission_requests: [
+      { "toolCall" => { "title" => "Mystery operation", "kind" => "quantum_entangle" },
+        "options" => FakeAcpServer::DEFAULT_PERMISSION_OPTIONS },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching without force"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "unknown means rejected — and surfaced, not silent"
+    server.permission_answers == ["reject-once"]
+    agent.wants.map(&:subject) == ["Mystery operation"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # ---- denial surfacing (plans#33) ----
+
+  test "an isolated launch appends the WANTED contract to the prompt" do
+    Given "an isolation-reporting executor"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = IsolationReportingAcpExecutor.new
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "do the task", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the session prompt carries the task and the contract"
+    T.must(executor.server.prompt_texts.fetch(0)).start_with?("do the task")
+    T.must(executor.server.prompt_texts.fetch(0)).include?("WANTED: <path or capability>")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a non-isolated launch sends the prompt untouched" do
+    Given "a plain executor (no isolation)"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = AcpFakeExecutor.new
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "do the task", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the prompt is exactly the caller's"
+    executor.server.prompt_texts == ["do the task"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "WANTED lines in the result collect as wants and are stripped from the returned text" do
+    Given "a result carrying a want between answer lines"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(
+      result_text: "done the work\nWANTED: /etc/hosts — needed to inspect DNS overrides\nall tests pass",
+    )
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    text = agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the want is collected and the returned text no longer carries it"
+    agent.wants.map(&:subject) == ["/etc/hosts"]
+    agent.wants.map(&:reason) == ["needed to inspect DNS overrides"]
+    agent.wants.map(&:channel) == [:declared]
+    text == "done the work\nall tests pass"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "wants accumulate deduped across launches" do
+    Given "two launches declaring the same want"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = AcpFakeExecutor.new(server: FakeAcpServer.new(result_text: "WANTED: jq — parse"))
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching twice"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "one want survives"
+    agent.wants.length == 1
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "denial signatures in tool output collect as observed wants" do
+    Given "a tool_call_update whose output hit a permission wall"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call_update", "toolCallId" => "t1", "status" => "completed",
+        "content" => [{ "type" => "content",
+                        "content" => { "type" => "text", "text" => "ls: /Users/Shared/dev/ddc: Permission denied" } }] },
+      { "sessionUpdate" => "agent_message_chunk", "content" => { "type" => "text", "text" => "done" } },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    text = agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the denial is an observed want and the answer is untouched"
+    agent.wants.map(&:subject) == ["/Users/Shared/dev/ddc"]
+    agent.wants.map(&:channel) == [:observed]
+    text == "done"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "denials in rawOutput stderr collect too — the live CLI's actual shape (probed 2026-09-12)" do
+    Given "a tool_call_update carrying the denial in rawOutput, not content blocks"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call_update", "toolCallId" => "t1", "status" => "completed",
+        "rawOutput" => { "exitCode" => 1, "stdout" => "",
+                         "stderr" => "cat: /opt/blocked/file.txt: Permission denied\n" } },
+      { "sessionUpdate" => "agent_message_chunk", "content" => { "type" => "text", "text" => "done" } },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then
+    agent.wants.map(&:subject) == ["/opt/blocked/file.txt"]
+    agent.wants.map(&:channel) == [:observed]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an observed denial never duplicates a declared want on the same subject" do
+    Given "the same path denied in tool output and declared WANTED"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(
+      updates: [
+        { "sessionUpdate" => "tool_call_update", "toolCallId" => "t1", "status" => "completed",
+          "content" => [{ "type" => "content",
+                          "content" => { "type" => "text", "text" => "cat: /etc/hosts: Permission denied" } }] },
+        { "sessionUpdate" => "agent_message_chunk",
+          "content" => { "type" => "text", "text" => "WANTED: /etc/hosts — DNS overrides\ndone" } },
+      ],
+    )
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "one want per subject; the declared channel wins the slot"
+    agent.wants.map(&:subject) == ["/etc/hosts"]
+    agent.wants.map(&:channel) == [:declared]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a rejected permission request records as an observed want with the request's context" do
+    Given "a non-force launch that gets asked for a mutating tool"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(permission_requests: [
+      { "toolCall" => { "title" => "$ chmod 777 /etc", "kind" => "execute" },
+        "options" => FakeAcpServer::DEFAULT_PERMISSION_OPTIONS },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching without force"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the deny-with-context is a WANTED carrier"
+    server.permission_answers == ["reject-once"]
+    agent.wants.map(&:subject) == ["$ chmod 777 /etc"]
+    agent.wants.map(&:channel) == [:observed]
+    agent.wants.map(&:reason) == ["permission request rejected (non-force pass)"]
 
     Cleanup
     FileUtils.rm_rf(dir)
