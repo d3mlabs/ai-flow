@@ -295,14 +295,16 @@ end unless defined?(FakeGitHub)
 # plan file exactly like the real agent would. Subclasses the real class so
 # sorbet-runtime's sig checks accept it at the injection seams.
 class FakeAgent < AiFlow::Agent
-  attr_reader :prompts, :launches, :models_used, :knowledge_applied
+  attr_reader :prompts, :launches, :models_used, :knowledge_applied, :wants
 
   # @param models_by_command [Hash{AiFlow::Command => String}, nil]
   #   per-command model handles, for tests exercising which policy a pass
   #   launches under; `model` is the flat answer otherwise
   # @param knowledge_applied [Array<String>] canned skill/rule reads, for
   #   tests exercising the dispatcher's step-summary telemetry
-  def initialize(outputs, model: "fake-model", models_by_command: nil, knowledge_applied: [], &on_launch)
+  # @param wants [Array<AiFlow::Denials::Want>] canned boundary wants, for
+  #   tests exercising the two denial-surfacing render surfaces (plans#33)
+  def initialize(outputs, model: "fake-model", models_by_command: nil, knowledge_applied: [], wants: [], &on_launch)
     @outputs = outputs
     @model = model
     @models_by_command = models_by_command
@@ -311,6 +313,7 @@ class FakeAgent < AiFlow::Agent
     @launches = []
     @models_used = {}
     @knowledge_applied = knowledge_applied
+    @wants = wants
   end
 
   def launch(prompt:, workdir:, command:, force: false, policy_root: workdir)

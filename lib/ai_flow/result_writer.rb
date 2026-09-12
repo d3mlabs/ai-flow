@@ -59,7 +59,7 @@ module AiFlow
       end
 
       body = lines.join("\n").rstrip
-      bottom = [appendix, footer(run_url)].compact.join("\n\n")
+      bottom = [appendix, wants_block, footer(run_url)].compact.join("\n\n")
       body = "#{body}\n\n---\n\n#{blockquote(bottom).join("\n")}" unless bottom.empty?
       body
     end
@@ -185,7 +185,7 @@ module AiFlow
       end
 
       body = [review_panel_header(context), "", *lines].join("\n").rstrip
-      bottom = [appendix, footer(context.run_url)].compact.join("\n\n")
+      bottom = [appendix, wants_block, footer(context.run_url)].compact.join("\n\n")
       body = "#{body}\n\n---\n\n#{bottom}" unless bottom.empty?
       body
     end
@@ -207,6 +207,20 @@ module AiFlow
     end
 
     private
+
+    # The boundary-wants block for the bottom section (plans#33): every
+    # want the run surfaced, with its triage-ladder resolution — visible
+    # right where the human reads the outcome, so a boundary hit is never
+    # buried in the run log.
+    #
+    # @return [String, nil] nil when the run surfaced nothing
+    sig { returns(T.nilable(String)) }
+    def wants_block
+      wants = @agent&.wants || []
+      return nil if wants.empty?
+
+      ["🚧 **Boundary wants** — a human decides each:", *Denials.render(wants)].join("\n")
+    end
 
     # @return [String] the panel's attribution line — the panel is a bot
     #   comment, so it must name whose review it answers

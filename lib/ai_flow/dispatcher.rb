@@ -56,6 +56,7 @@ module AiFlow
       announce_running(segments)
       succeeded = route(segments)
       append_knowledge_summary
+      append_wants_summary
       return true if succeeded
 
       # Soft failure: the per-segment ⚠️ is already on the comment; the run
@@ -251,6 +252,27 @@ module AiFlow
         file.puts("### Knowledge applied")
         file.puts
         names.each { |name| file.puts("- #{name}") }
+      end
+    end
+
+    # Boundary wants (plans#33) on the run page, each with its
+    # triage-ladder resolution — the human's review queue for permission
+    # boundaries the agent hit. Renders on the comment panel too (see
+    # ResultWriter); the run page copy survives comment edits.
+    #
+    # @return [void]
+    sig { void }
+    def append_wants_summary
+      path = ENV["GITHUB_STEP_SUMMARY"].to_s
+      return if path.empty?
+
+      wants = @agent.wants
+      return if wants.empty?
+
+      File.open(path, "a") do |file|
+        file.puts("### Boundary wants")
+        file.puts
+        Denials.render(wants).each { |line| file.puts(line) }
       end
     end
 
