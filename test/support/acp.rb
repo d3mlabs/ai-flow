@@ -14,6 +14,10 @@ class FakeAcpServer
     { "modelId" => "claude-fable-5[thinking=true,effort=high]", "name" => "claude-fable-5" },
     { "modelId" => "gpt-6-nova[reasoning=high]", "name" => "gpt-6-nova" },
     { "modelId" => "gpt-6-nova-mini[reasoning=low]", "name" => "gpt-6-nova-mini" },
+    # Plain handles the agent tests configure through .github/ai-flow.yml.
+    { "modelId" => "opus[test]", "name" => "opus" },
+    { "modelId" => "gpt-5[test]", "name" => "gpt-5" },
+    { "modelId" => "env-model[test]", "name" => "env-model" },
   ].freeze
 
   DEFAULT_PERMISSION_OPTIONS = [
