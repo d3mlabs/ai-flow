@@ -115,13 +115,21 @@ class FakeAcpServer
       id = (@next_server_id += 1)
       send_line(output, { "jsonrpc" => "2.0", "id" => id, "method" => request.fetch("method"),
                           "params" => request["params"] || {} })
-      @extra_answers << JSON.parse(input.gets.to_s)
+      answer_line = input.gets
+      # A vanished client (error-path tests raise mid-exchange) ends the
+      # serve, mirroring the real server's EOF exit.
+      return unless answer_line
+
+      @extra_answers << JSON.parse(answer_line)
     end
     @permission_requests.each do |params|
       id = (@next_server_id += 1)
       send_line(output, { "jsonrpc" => "2.0", "id" => id, "method" => "session/request_permission",
                           "params" => params.merge("sessionId" => "sess-1") })
-      answer = JSON.parse(input.gets.to_s)
+      answer_line = input.gets
+      return unless answer_line
+
+      answer = JSON.parse(answer_line)
       @permission_answers << answer.dig("result", "outcome", "optionId")
     end
     respond(output, msg["id"], { "stopReason" => @stop_reason })
