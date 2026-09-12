@@ -62,10 +62,13 @@ module AiFlow
       T::Array[Regexp],
     )
 
-    # ACP tool kinds that change the world. force passes allow them (the
-    # boundary is the OS user, plans#26 — same stance as the old --force
-    # flag); non-force passes reject them per request.
-    MUTATING_TOOL_KINDS = T.let(%w[edit delete move execute].freeze, T::Array[String])
+    # The ACP tool kinds a non-force pass may allow — reads of the world,
+    # never changes to it. An allowlist, not a mutating-kinds blocklist:
+    # a kind this list has never seen (protocol additions, "other") fails
+    # closed and surfaces as a want instead of silently passing. force
+    # passes allow everything — the boundary is the OS user, plans#26 —
+    # same stance as the old --force flag.
+    READONLY_TOOL_KINDS = T.let(%w[read search fetch think].freeze, T::Array[String])
 
     # @param executor [AiFlow::Executor]
     sig { params(executor: Executor).void }
@@ -349,8 +352,8 @@ module AiFlow
 
     # The permission-request policy (plans#33, decision 2): force passes
     # allow everything — the boundary is the OS user, not the tool gate,
-    # exactly like the old --force flag; non-force passes reject mutating
-    # kinds per request and allow the rest.
+    # exactly like the old --force flag; non-force passes allow only the
+    # read-only kinds and reject the rest (unknown kinds fail closed).
     #
     # @param word [String] the command word, for the log line
     # @param params [Hash] the session/request_permission params
@@ -366,7 +369,7 @@ module AiFlow
     def decide_permission(word, params, force)
       kind = params.dig("toolCall", "kind").to_s
       title = params.dig("toolCall", "title").to_s
-      if force || !MUTATING_TOOL_KINDS.include?(kind)
+      if force || READONLY_TOOL_KINDS.include?(kind)
         $stdout.puts "[/#{word}] permission: allow #{kind.empty? ? "tool" : kind} (#{truncate(title)})"
         :allow
       else

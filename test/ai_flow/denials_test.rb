@@ -132,6 +132,39 @@ class AiFlow::DenialsTest < Minitest::Test
     wants.length == 1
   end
 
+  # ---- rendering hygiene (agent-authored text lands in GitHub comments) ----
+
+  test "rendered subjects and reasons are sanitized: no code-span breakout, bounded length" do
+    Given "a want whose subject tries to escape its backtick span"
+    want = AiFlow::Denials::Want.new(
+      subject: "x` [click me](https://evil.example) `#{"y" * 300}",
+      reason: "b`c",
+      channel: :declared,
+    )
+
+    When "rendering"
+    lines = AiFlow::Denials.render([want])
+
+    Then "backticks are gone and the line is capped"
+    !T.must(lines.first).include?("`x` [")
+    !T.must(lines.first).include?("b`c")
+    T.must(lines.first).length < 200
+  end
+
+  test "rendering caps the want count so a flood cannot drown the panel" do
+    Given "far more wants than anyone will triage"
+    wants = (1..30).map do |i|
+      AiFlow::Denials::Want.new(subject: "/opt/tool-#{i}", reason: "", channel: :observed)
+    end
+
+    When "rendering"
+    lines = AiFlow::Denials.render(wants)
+
+    Then "ten render, the rest fold into a count"
+    lines.count { |line| line.start_with?("- ") } == 11
+    T.must(lines.last).include?("20 more")
+  end
+
   # ---- Want value object ----
 
   test "wants carry value equality" do

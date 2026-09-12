@@ -157,23 +157,46 @@ module AiFlow
         wants
       end
 
+      # Wants are agent-authored text landing on GitHub surfaces, so the
+      # renderer is a boundary: at most this many render (the rest fold
+      # into a count) and each field is sanitized before markdown.
+      MAX_RENDERED = 10
+
       # Render wants for both surfaces (step summary and result panel): one
-      # want line plus its triage-ladder resolution line.
+      # want line plus its triage-ladder resolution line. Subjects and
+      # reasons are sanitized (no code-span breakout, bounded length) —
+      # the agent writes them, a human reads them, and nothing in between
+      # should be able to restyle the panel.
       #
       # @param wants [Array<Want>]
       # @return [Array<String>] markdown lines, empty for no wants
       sig { params(wants: T::Array[Want]).returns(T::Array[String]) }
       def render(wants)
-        wants.flat_map do |want|
-          reason = want.reason.empty? ? "" : " — #{want.reason}"
+        shown = T.must(wants[0, MAX_RENDERED])
+        lines = shown.flat_map do |want|
+          reason = want.reason.empty? ? "" : " — #{sanitize(want.reason)}"
           [
-            "- `#{want.subject}`#{reason} _(#{want.channel})_",
+            "- `#{sanitize(want.subject)}`#{reason} _(#{want.channel})_",
             "  - #{resolution(want)}",
           ]
         end
+        overflow = wants.length - shown.length
+        lines << "- …and #{overflow} more (see the run log)" if overflow.positive?
+        lines
       end
 
       private
+
+      # One rendered field: backticks out (they would close the code
+      # span), whitespace collapsed, length bounded.
+      #
+      # @param text [String]
+      # @return [String]
+      sig { params(text: String).returns(String) }
+      def sanitize(text)
+        clean = text.delete("`").gsub(/\s+/, " ").strip
+        clean.length > 120 ? "#{clean[0, 119]}…" : clean
+      end
 
       # @param rest [String] the WANTED line after the marker
       # @return [Want]

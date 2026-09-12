@@ -586,6 +586,27 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a non-force launch fails closed on unknown tool kinds" do
+    Given "a permission request whose kind the allowlist has never seen"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(permission_requests: [
+      { "toolCall" => { "title" => "Mystery operation", "kind" => "quantum_entangle" },
+        "options" => FakeAcpServer::DEFAULT_PERMISSION_OPTIONS },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching without force"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "unknown means rejected — and surfaced, not silent"
+    server.permission_answers == ["reject-once"]
+    agent.wants.map(&:subject) == ["Mystery operation"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   # ---- denial surfacing (plans#33) ----
 
   test "an isolated launch appends the WANTED contract to the prompt" do
