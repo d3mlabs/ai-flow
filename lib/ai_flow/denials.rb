@@ -77,7 +77,12 @@ module AiFlow
     GITHUB_403 = /api\.github\.com|github\.com\/graphql|HTTP(?:\/[\d.]+)?\s*403/i
 
     # An absolute path inside a denial line — the deduplication key when
-    # parseable.
+    # parseable. #observed_in takes the LAST match in the line:
+    # runtime errno crashes (ruby/node/python) lead with the source frame
+    # and trail with the denied path, so the first match names the code
+    # that tripped over the boundary, not the boundary (caught live at the
+    # plans#36 ceremony — the frame path also dodged the category-4/5
+    # classifier). Single-path shell denials are unaffected.
     TOUCHED_PATH = %r{/[A-Za-z0-9_./@+~-]+}
 
     # Subjects resolved by design rather than by widening (plans#26 access
@@ -150,7 +155,9 @@ module AiFlow
           next unless DENIAL_LINE.match?(line)
           next if GITHUB_403.match?(line)
 
-          subject = line[TOUCHED_PATH] || line.strip
+          # scan with a groupless regexp yields strings; Sorbet only knows
+          # the union shape, hence the cast.
+          subject = T.cast(line.scan(TOUCHED_PATH).last, T.nilable(String)) || line.strip
           want = Want.new(subject: subject, reason: "", channel: :observed)
           wants << want unless wants.any? { |seen| seen.subject == subject }
         end
