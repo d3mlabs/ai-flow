@@ -369,9 +369,12 @@ Resolution per command (blank values are unset at every link):
 `models.default` > `Agent::MODELS` (code fallback, all nil) > the CLI's
 account default. The file is optional; a malformed file fails the run
 loudly (failure panel on the command comment) rather than silently falling
-back. Valid model names come from `agent --list-models` — every run's
-`Log versions` step prints both the repo config and the current model menu,
-so a typo'd model is diagnosable from the run page alone. The resolved
+back. Valid model names come from the ACP session catalog — plain names,
+or an exact parameterized modelId to pin a thinking/effort variant. They
+are NOT `agent --list-models` ids, which are a different naming domain
+(ai-flow#84); a handle that fails to resolve dumps the session catalog
+(names + modelIds) in the run's error, so a typo'd model is diagnosable
+from the run page alone. The resolved
 model is also visible per pass — an `ai-flow model (/<command>): ...` line
 in the job log, a pre-launch prediction on the ⏳ status line, and a model
 note on the ⚙️ footer of every result comment. A job launches under one

@@ -296,8 +296,10 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
 6. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
   model policy (`models.default`, per-command overrides — see
    [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));
-   valid names come from `agent --list-models`, which every run also prints
-   in its job log. Without the file, the agent CLI's account default applies.
+   valid names come from the ACP session catalog, not `agent --list-models`
+   (a different naming domain — ai-flow#84); a handle that fails to resolve
+   dumps the catalog (names + modelIds) in the run's error. Without the
+   file, the agent CLI's account default applies.
    The same file carries the learning-loop keys: `knowledge_repo:` (the org
    knowledge repo `--promote` targets) and `learn: { on_build: false }` (opt
    out of `/build`'s capture pass).

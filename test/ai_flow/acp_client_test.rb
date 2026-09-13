@@ -89,9 +89,12 @@ class AiFlow::AcpClientTest < Minitest::Test
       e
     end
 
-    Then "the error names the handle and the available names"
+    Then "the error names the handle, the available names, and their modelIds — " \
+         "the catalog dump is the only discovery surface (ai-flow#84: --list-models " \
+         "ids are a different naming domain), so effort variants must be visible in it"
     T.must(error).message.include?("no-such-model")
     T.must(error).message.include?("claude-fable-5")
+    T.must(error).message.include?("claude-fable-5[thinking=true,effort=high]")
 
     Cleanup
     nil

@@ -3,8 +3,10 @@
 # no model opinion and the agent CLI's account default applies.
 #
 # models: command name => agent model, plus an optional `default` blanket
-# covering unlisted commands. Valid names come from `agent --list-models`
-# on the runner (every ai-flow run also prints the list in its job log).
+# covering unlisted commands. Valid names come from the ACP session
+# catalog, NOT from `agent --list-models` — that is a different naming
+# domain (ai-flow#84). A handle that fails to resolve dumps the catalog
+# (names + modelIds) in the run's error.
 # Precedence per command: models.<command> > models.default > CLI default.
 models:
   default: claude-fable-5
