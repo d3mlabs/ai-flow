@@ -102,10 +102,14 @@ module AiFlow
       ["sudo", "-n", "-H", "-u", @user, "--preserve-env=#{preserved.join(",")}", "--"]
     end
 
-    # Toolchain-write redirection: installs against shared read-only
-    # toolchains (e.g. `bundle install` under the shared ruby) land in
-    # agent-owned disposable space instead of failing on the read-only
-    # store or widening it.
+    # Write redirection for the agent's side of the split: installs against
+    # shared read-only toolchains (e.g. `bundle install` under the shared
+    # ruby) land in agent-owned disposable space instead of failing on the
+    # read-only store or widening it, and the agent CLI stores credentials
+    # in an owner-only file under the agent's home instead of the macOS
+    # keychain — a hidden, never-logged-in user has no login keychain, and
+    # securityd raises its "Keychain Not Found" dialog in the *runner
+    # user's* GUI session (caught live at the plans#36 ceremony).
     #
     # @return [Hash{String => String}]
     sig { returns(T::Hash[String, String]) }
@@ -113,6 +117,7 @@ module AiFlow
       {
         "GEM_HOME" => File.join(@home, ".gem"),
         "BUNDLE_PATH" => File.join(@home, ".bundle"),
+        "AGENT_CLI_CREDENTIAL_STORE" => "file",
       }
     end
 
