@@ -7,9 +7,11 @@
 # on the runner (every ai-flow run also prints the list in its job log).
 # Precedence per command: models.<command> > models.default > CLI default.
 models:
-  default: claude-fable-5-high
-  # Per-command overrides, e.g. a heavier model for the code-writing pass:
-  # build: claude-fable-5-thinking-high
+  default: claude-fable-5
+  # Per-command overrides, e.g. a heavier model for the code-writing pass.
+  # An exact catalog modelId also matches — that is how a thinking-effort
+  # variant is pinned:
+  # build: claude-fable-5[thinking=true,effort=high]
 
 # The org knowledge repo /learn --promote moves learnings into. Unset means
 # promotion refuses with a pointer here.

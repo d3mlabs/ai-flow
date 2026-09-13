@@ -360,7 +360,7 @@ reviewable, read from the checkout by `RepoConfig` (probot-style, like
 
 ```yaml
 models:
-  default: claude-fable-5-high
+  default: claude-fable-5
   # build: <heavier model>   # optional per-command override
 ```
 
