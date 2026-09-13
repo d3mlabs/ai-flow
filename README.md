@@ -264,13 +264,18 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    the adopting repo to each secret's repository list (org settings →
    secrets, or `gh secret set <name> --org <org> --visibility selected  --repos <list>`). Note `private` visibility excludes public repos  entirely — a public caller's job fails at the "Require the ai-flow App"spl  step until the secret is shared with it.
 3. Register self-hosted runners with the per-command labels the workflow
-  routes on: `ai-ask`, `ai-edit`, `ai-split`, `ai-build`, `ai-learn`. The
-   topology is a deployment choice — one box can carry all five labels, or a
-   beefy box takes `ai-build` alone (/build runs the full agent loop
-   including tests, so it needs a real dev machine, not a bare runner) while
-   a light box takes the rest. One registered runner instance = one concurrent job;
-   register N instances for N parallel jobs. Repos using `dev` can run
-   `dev runner-setup`.
+  routes on — the **ai-flow label vocabulary**: `ai-ask`, `ai-edit`,
+   `ai-split`, `ai-build`, `ai-learn`. This list is the defining source of
+   the vocabulary (the reusable workflow's authorize job routes each
+   command to `ai-<command>`); tooling that enrolls runners mirrors it as a
+   documented cross-repo literal (dev's
+   `Dev::LabelContracts::AI_FLOW_LABELS`, behind
+   `dev runner register --org --ai-flow`). The topology is a deployment
+   choice — one box can carry all five labels, or a beefy box takes
+   `ai-build` alone (/build runs the full agent loop including tests, so it
+   needs a real dev machine, not a bare runner) while a light box takes the
+   rest. One registered runner instance = one concurrent job; register N
+   instances for N parallel jobs.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
   and make sure it — plus `dev`, rbenv, and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not
