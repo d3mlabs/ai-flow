@@ -106,6 +106,20 @@ class AiFlow::DenialsTest < Minitest::Test
     wants.map(&:subject) == ["/etc/foo", "/tmp/x"]
   end
 
+  test "a ruby errno crash names the denied path, not the backtrace frame" do
+    Given "a ruby EACCES crash line: the source frame leads, the denied path trails after the dash"
+    text = "/opt/homebrew/Cellar/dev-core/0.2.82/libexec/dev/lib/dev/deps/gh_integration.rb:44:in " \
+      "'symlink': Permission denied @ rb_file_s_symlink - /Users/Shared/dev/engines/ue5-mac/current " \
+      "(Errno::EACCES)\n"
+
+    When "scanning"
+    wants = AiFlow::Denials.observed_in(text)
+
+    Then "the subject is what the OS denied — not the code that tripped over it (caught live at the " \
+         "plans#36 ceremony: the frame path dodged the category-4/5 classifier and rendered the wrong menu)"
+    wants.map(&:subject) == ["/Users/Shared/dev/engines/ue5-mac/current"]
+  end
+
   test "a GitHub-API 403 is by design (plans#25), never an observed want" do
     When "scanning a read-only-token write denial"
     wants = AiFlow::Denials.observed_in(
