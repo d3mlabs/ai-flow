@@ -56,6 +56,17 @@ module AiFlow
       @isolation&.share_workspace(dir)
     end
 
+    # The base directory for fresh workspaces — commands pass this to
+    # Dir.mktmpdir. Isolation picks a world-traversable base (the agent
+    # user must be able to reach the shared leaf); nil when isolation is
+    # off, keeping mktmpdir's default.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def workspace_base
+      @isolation&.workspace_base
+    end
+
     # Unconditional re-mint (no-op without App credentials) — commands call
     # this entering their write phase so the final burst of pushes and
     # comment edits never runs on a token about to age out.

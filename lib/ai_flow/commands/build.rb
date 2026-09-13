@@ -753,9 +753,11 @@ module AiFlow
           ).returns(T.type_parameter(:Result))
       end
       def in_workspaces(code_repos, &blk)
-        Dir.mktmpdir("ai-flow-build-") do |dir|
+        Dir.mktmpdir("ai-flow-build-", @executor.workspace_base) do |dir|
           # Shared while still empty: everything populated inside inherits
           # the agent-shared group via setgid (plans#26; no-op unisolated).
+          # The base comes from the executor too — the agent user must be
+          # able to traverse to the leaf (nil = mktmpdir default).
           @executor.share_workspace(dir)
           checkouts = T.let({}, T::Hash[String, String])
           worktrees = T.let([], T::Array[String])

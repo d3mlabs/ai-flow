@@ -422,6 +422,24 @@ class AiFlow::ExecutorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "workspace_base delegates to the isolation" do
+    Given "an executor with a real isolation"
+    group = T.must(Etc.getgrgid(Process.gid)).name
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: group, home: "/tmp")
+    executor = AiFlow::Executor.new(isolation: isolation)
+
+    Expect "the isolation's world-traversable base"
+    executor.workspace_base == "/tmp"
+  end
+
+  test "workspace_base is nil without isolation — mktmpdir keeps its default" do
+    Given "an executor with isolation off"
+    executor = AiFlow::Executor.new(isolation: nil)
+
+    Expect "nil — mktmpdir's default base stands"
+    executor.workspace_base.nil?
+  end
+
   test "share_workspace without isolation leaves the dir alone" do
     Given "an executor with isolation off and a fresh dir"
     executor = AiFlow::Executor.new(isolation: nil)

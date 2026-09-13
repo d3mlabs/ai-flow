@@ -116,6 +116,20 @@ module AiFlow
       }
     end
 
+    # Where fresh workspaces are created when the agent is another user.
+    # Dir.mktmpdir's default base is the dispatcher's per-user tempdir,
+    # which macOS creates 0700 (/var/folders/...) — the group share on the
+    # workspace leaf is worthless when the agent user cannot traverse the
+    # parents to reach it (uv_cwd EACCES at agent startup, caught live at
+    # the plans#36 ceremony). /tmp is world-traversable on every platform;
+    # the 2770 leaf from #share_workspace stays the actual boundary.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def workspace_base
+      "/tmp"
+    end
+
     # Open a freshly created (still empty) workspace parent to both
     # identities: group-owned, setgid, group-writable — everything
     # populated inside inherits the shared group, and the dispatcher's
