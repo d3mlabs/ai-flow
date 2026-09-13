@@ -88,10 +88,14 @@ class AiFlow::AgentIsolationTest < Minitest::Test
     When "building the redirect overlay"
     env = isolation.redirect_env
 
-    Then "gem and bundler installs land in agent-owned disposable space"
+    Then "gem and bundler installs land in agent-owned disposable space, " \
+         "and the agent CLI stores credentials in a file — a headless user " \
+         "has no login keychain, and securityd's prompt lands in the " \
+         "runner user's GUI session"
     env == {
       "GEM_HOME" => "/Users/ai-agent/.gem",
       "BUNDLE_PATH" => "/Users/ai-agent/.bundle",
+      "AGENT_CLI_CREDENTIAL_STORE" => "file",
     }
 
     Cleanup
