@@ -97,9 +97,14 @@ module AiFlow
         prefixed = available.select { |entry| entry["name"].to_s.start_with?(handle) }
         return prefixed.fetch(0)["modelId"].to_s if prefixed.length == 1
 
-        names = available.map { |entry| entry["name"] }.join(", ")
+        # The session catalog is the only naming domain that matters here —
+        # `agent --list-models` ids are a different dialect (ai-flow#84) —
+        # so the failure dumps names *and* modelIds: the modelId is where
+        # thinking/effort variants live, and this error is how an operator
+        # discovers the exact string to pin in .github/ai-flow.yml.
+        catalog = available.map { |entry| "#{entry["name"]} (#{entry["modelId"]})" }.join(", ")
         detail = prefixed.empty? ? "not in the agent's catalog" : "ambiguous (#{prefixed.map { |entry| entry["name"] }.join(", ")})"
-        raise ProtocolError, "model '#{handle}' is #{detail} — available: #{names}"
+        raise ProtocolError, "model '#{handle}' is #{detail} — available: #{catalog}"
       end
     end
 
