@@ -98,6 +98,15 @@ class AiFlow::AgentIsolationTest < Minitest::Test
     nil
   end
 
+  test "workspace_base is a world-traversable root — the agent user must reach the shared leaf" do
+    Given "an isolation"
+    isolation = AiFlow::AgentIsolation.new(user: CURRENT_USER, group: PRIMARY_GROUP, home: "/tmp")
+
+    Expect "the base escapes the dispatcher's private per-user tempdir (0700 on macOS): " \
+           "the group share on the leaf is worthless when the sidecar user cannot traverse to it"
+    isolation.workspace_base == "/tmp"
+  end
+
   test "share_workspace makes a fresh dir group-owned, setgid, and group-writable" do
     Given "a freshly created empty workspace parent"
     dir = Dir.mktmpdir("ai-flow-isolation-test-")

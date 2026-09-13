@@ -44,6 +44,11 @@ class AiFlow::Commands::LearnTest < Minitest::Test
       @shared_workspaces << dir
     end
 
+    # nil = unisolated: mktmpdir keeps its default base.
+    def workspace_base
+      nil
+    end
+
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
       return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
