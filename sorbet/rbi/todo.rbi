@@ -43,6 +43,8 @@ module AiFlow::HarnessEnvTest::Cleanup; end
 module AiFlow::ModelSelectionTest::Where; end
 module AiFlow::OrgInvariantsTest::Cleanup; end
 module AiFlow::OrgInvariantsTest::Then; end
+module AiFlow::PersistentWorkspaceTest::Cleanup; end
+module AiFlow::PersistentWorkspaceTest::When; end
 module AiFlow::PlanBodyTest::Cleanup; end
 module AiFlow::PlanBodyTest::Expect; end
 module AiFlow::ProposalChecksTest::Cleanup; end

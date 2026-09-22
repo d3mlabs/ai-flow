@@ -740,7 +740,10 @@ module AiFlow
       # plans#31's discovery detection will walk) — so concurrent agents
       # never share a workspace. The command's own repo branches off the job
       # checkout (warm); every other target (org-wide plans, multi-target
-      # lists) clones via gh.
+      # lists) clones via gh. Repos with `workspace: persistent` in their
+      # ai-flow.yml instead reuse one durable flock-guarded checkout for the
+      # primary target (PersistentWorkspace), keeping ignored build state
+      # warm across runs.
       #
       # @yieldparam checkouts [Hash{String => String}] "owner/repo" =>
       #   checkout path, in declared order (primary first)
@@ -753,6 +756,31 @@ module AiFlow
           ).returns(T.type_parameter(:Result))
       end
       def in_workspaces(code_repos, &blk)
+        primary = T.must(code_repos.first)
+        # Persistent mode applies only when the primary target is the job's
+        # own repo: the opt-in is read from the job checkout (the workspace
+        # doesn't exist yet), and only the own-repo path has a local git
+        # dir for the durable worktree to attach to.
+        if primary == @context.owner_repo && RepoConfig.load(@workdir).persistent_workspace?
+          in_persistent_workspace(primary, code_repos, &blk)
+        else
+          in_disposable_workspaces(code_repos, &blk)
+        end
+      end
+
+      # The default workspace shape: everything in one disposable tmpdir,
+      # gone when the run ends.
+      #
+      # @yieldparam checkouts [Hash{String => String}]
+      # @return [Object] the block's value
+      sig do
+        type_parameters(:Result)
+          .params(
+            code_repos: T::Array[String],
+            blk: T.proc.params(checkouts: T::Hash[String, String]).returns(T.type_parameter(:Result)),
+          ).returns(T.type_parameter(:Result))
+      end
+      def in_disposable_workspaces(code_repos, &blk)
         Dir.mktmpdir("ai-flow-build-", @executor.workspace_base) do |dir|
           # Shared while still empty: everything populated inside inherits
           # the agent-shared group via setgid (plans#26; no-op unisolated).
@@ -783,6 +811,41 @@ module AiFlow
             worktrees.each do |worktree|
               @executor.capture("git", "worktree", "remove", "--force", worktree, chdir: @workdir)
             end
+          end
+        end
+      end
+
+      # The opt-in shape (workspace: persistent): the primary repo reuses
+      # one durable flock-guarded checkout (PersistentWorkspace — warm
+      # ignored build state survives across runs; no ensure-removal, the
+      # persistence is the point), while secondary targets keep disposable
+      # tmpdir clones.
+      #
+      # @yieldparam checkouts [Hash{String => String}]
+      # @return [Object] the block's value
+      sig do
+        type_parameters(:Result)
+          .params(
+            primary: String,
+            code_repos: T::Array[String],
+            blk: T.proc.params(checkouts: T::Hash[String, String]).returns(T.type_parameter(:Result)),
+          ).returns(T.type_parameter(:Result))
+      end
+      def in_persistent_workspace(primary, code_repos, &blk)
+        workspace = PersistentWorkspace.new(repo: primary, job_checkout: @workdir, executor: @executor)
+        workspace.acquire(default_branch: @github.default_branch(primary)) do |workspace_path|
+          checkouts = T.let({ primary => workspace_path }, T::Hash[String, String])
+          secondaries = code_repos - [primary]
+          next yield checkouts if secondaries.empty?
+
+          Dir.mktmpdir("ai-flow-build-", @executor.workspace_base) do |dir|
+            @executor.share_workspace(dir)
+            secondaries.each do |repo|
+              checkout = File.join(dir, repo.tr("/", "-"))
+              run!(["gh", "repo", "clone", repo, checkout], chdir: dir)
+              checkouts[repo] = checkout
+            end
+            yield checkouts
           end
         end
       end

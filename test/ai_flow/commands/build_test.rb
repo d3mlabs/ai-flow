@@ -235,6 +235,33 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "/build in a workspace: persistent repo reuses the durable checkout and still opens the PR" do
+    Given "a workdir whose ai-flow.yml opts into the persistent workspace"
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    root = Dir.mktmpdir("ai-flow-build-test-root-")
+    ENV["AI_FLOW_WORKSPACE_ROOT"] = root
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "workspace: persistent\n")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor, workdir: dir)
+    command_lines = executor.command_lines
+
+    Then "the checkout is the durable flock-guarded path, never removed after the run; the PR opens"
+    command_lines.include?("git worktree add --detach #{File.join(root, "d3mlabs-demo")} origin/main")
+    command_lines.none? { |line| line.include?("worktree remove") }
+    File.exist?(File.join(root, "d3mlabs-demo.lock"))
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+
+    Cleanup
+    ENV.delete("AI_FLOW_WORKSPACE_ROOT")
+    FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
+  end
+
   test "/build on an issue targeting another repo clones it instead of adding a worktree" do
     Given "an org-wide issue declaring a Target repos: line for a different repo"
     github = FakeGitHub.new
