@@ -51,6 +51,7 @@ module AiFlow::ProvenanceTest::Expect; end
 module AiFlow::ProvenanceTest::Where; end
 module AiFlow::RepoConfigTest::Cleanup; end
 module AiFlow::RepoConfigTest::Expect; end
+module AiFlow::RepoConfigTest::Where; end
 module AiFlow::ResultWriterTest::Cleanup; end
 module AiFlow::ResultWriterTest::Then; end
 module AiFlow::ReviewUnitTest::Cleanup; end

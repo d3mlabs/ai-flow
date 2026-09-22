@@ -1,4 +1,4 @@
-# typed: true
+# typed: false — rspock Where tables are load-time rewritten and have no static typing.
 # frozen_string_literal: true
 
 require "test_helper"
@@ -74,5 +74,72 @@ class AiFlow::RepoConfigTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  test "mcp and workspace defaults: deny-all, no session hooks, disposable tmpdirs" do
+    Given "no ai-flow.yml at all"
+    config = load_config(nil)
+
+    Expect "the closed defaults"
+    config.mcp_allowlist == []
+    config.mcp_session_start.nil?
+    config.mcp_session_stop.nil?
+    config.persistent_workspace? == false
+
+    Cleanup
+    nil
+  end
+
+  test "a full mcp + workspace section reads through" do
+    Given "the cb3d-shaped opt-in"
+    config = load_config(<<~YAML)
+      workspace: persistent
+      mcp:
+        allow: [unreal-mcp]
+        session:
+          start: bin/agent-editor start
+          stop: bin/agent-editor stop
+    YAML
+
+    Expect
+    config.mcp_allowlist == ["unreal-mcp"]
+    config.mcp_session_start == "bin/agent-editor start"
+    config.mcp_session_stop == "bin/agent-editor stop"
+    config.persistent_workspace? == true
+
+    Cleanup
+    nil
+  end
+
+  test "mcp junk coerces closed: #{name}" do
+    Given "a config with a malformed mcp value"
+    config = load_config(yaml)
+
+    Expect "deny-all / unset rather than a crash or an accidental grant"
+    config.mcp_allowlist == allowlist
+    config.mcp_session_start.nil?
+    config.mcp_session_stop.nil?
+
+    Where
+    name                      | yaml                                            | allowlist
+    "allow is a string"       | "mcp:\n  allow: unreal-mcp\n"                   | []
+    "allow mixes junk"        | "mcp:\n  allow: [unreal-mcp, \"\", 3, null]\n"  | ["unreal-mcp"]
+    "mcp is a scalar"         | "mcp: yes\n"                                    | []
+    "session is a scalar"     | "mcp:\n  session: bin/start\n"                  | []
+    "session values blank"    | "mcp:\n  session:\n    start: \"\"\n"           | []
+  end
+
+  test "workspace junk never opts in: #{name}" do
+    Given "a workspace value that is not the literal opt-in"
+    config = load_config(yaml)
+
+    Expect
+    config.persistent_workspace? == false
+
+    Where
+    name             | yaml
+    "a boolean"      | "workspace: true\n"
+    "another word"   | "workspace: shared\n"
+    "a mapping"      | "workspace:\n  mode: persistent\n"
   end
 end
