@@ -110,6 +110,20 @@ module AiFlow
       learn["on_build"] != false
     end
 
+    # Whether the repo declares MCP policy at all. Gates the launch-time
+    # converge pass: approval already defaults closed (an unapproved
+    # server is "not loaded"), so repos without a section skip the
+    # enumeration entirely — no new latency or failure surface for them.
+    # A repo retiring MCP keeps `mcp: {allow: []}` to actively revoke
+    # previously approved servers (approval state persists per user +
+    # project slug).
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def mcp_configured?
+      @config.key?("mcp")
+    end
+
     # The MCP servers an agent pass may use in this repo's checkouts
     # (issue #11): names matching the repo's own MCP config
     # (.cursor/mcp.json). Deny-all by default — absent section, absent

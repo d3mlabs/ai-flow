@@ -81,6 +81,7 @@ class AiFlow::RepoConfigTest < Minitest::Test
     config = load_config(nil)
 
     Expect "the closed defaults"
+    config.mcp_configured? == false
     config.mcp_allowlist == []
     config.mcp_session_start.nil?
     config.mcp_session_stop.nil?
@@ -102,6 +103,7 @@ class AiFlow::RepoConfigTest < Minitest::Test
     YAML
 
     Expect
+    config.mcp_configured? == true
     config.mcp_allowlist == ["unreal-mcp"]
     config.mcp_session_start == "bin/agent-editor start"
     config.mcp_session_stop == "bin/agent-editor stop"
