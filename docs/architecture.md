@@ -288,8 +288,11 @@ flowchart TD
 ## The /build flow
 
 On an issue, `/build` runs the agent in a disposable worktree so concurrent
-builds never share a workspace, then authors the PR itself — deterministic
-back-references, not agent-written ones:
+builds never share a workspace (repos with `workspace: persistent` reuse a
+durable flock-guarded checkout instead — see
+[Persistent workspaces](#persistent-workspaces-workspace-persistent)), then
+authors the PR itself — deterministic back-references, not agent-written
+ones:
 
 ```mermaid
 flowchart TD
@@ -356,12 +359,19 @@ Knobs split by consumer: values read by workflow-engine expressions
 inputs, which are scalar-only; values read by the Ruby dispatcher live in
 `.github/ai-flow.yml` in the target repo — real nested YAML, versioned and
 reviewable, read from the checkout by `RepoConfig` (probot-style, like
-`dependabot.yml` / `labeler.yml`). Today it holds model policy:
+`dependabot.yml` / `labeler.yml`). It holds model policy, the learning-loop
+keys, and the agent-lane opt-ins (workspace mode, MCP policy):
 
 ```yaml
 models:
   default: claude-fable-5
   # build: <heavier model>   # optional per-command override
+workspace: persistent        # optional: durable warm checkout for /build
+mcp:                         # optional: agent MCP policy + session hooks
+  allow: [unreal-mcp]
+  session:
+    start: bin/agent-editor start
+    stop: bin/agent-editor stop
 ```
 
 Resolution per command (blank values are unset at every link):
@@ -391,3 +401,63 @@ The run page is live, not just post-hoc: the agent CLI runs in stream-json
 mode and every event prints as it happens (`[/build] → shell: rake test`,
 `[/build] assistant: …`), so "follow the run" shows the agent working in
 real time. The prompt and final result stay as collapsed groups.
+
+## Persistent workspaces (workspace: persistent)
+
+Disposable tmpdir worktrees are the default and stay right for code-only
+repos: cold checkouts are cheap and hygiene is free. Repos whose builds
+carry heavy incremental state (a UE game's `Intermediate/`, `Binaries/`,
+saved editor state) opt in to one durable checkout per repo
+(`PersistentWorkspace`), reused across /build runs so gitignored build
+state stays warm — a cold game build per run is counter to the
+warm-machine philosophy the self-hosted contract exists for.
+
+Reuse is safe because git state is never trusted across runs: every entry
+resyncs cold (fetch, `reset --hard`, detach on `origin/<default>`,
+`clean -fd` — deliberately not `-x`; ignored files are the warmth). Git
+rewrites only content-changed files, so incremental builds rebuild only
+what the branch touches, and the stable absolute path keeps build tools'
+embedded-path records (UBT makefiles/action history) valid. A non-blocking
+flock beside the workspace is the "one workspace, one writer" correctness
+mechanism — a caller-workflow `concurrency` group is queueing politeness,
+the lock is what actually prevents interleaving (including a manual
+on-box reset mid-run). The busy failure names the lockfile and how to
+find the holder (`lsof`); children never inherit the lock (FD_CLOEXEC),
+so its lifetime is exactly the dispatcher process's.
+
+The workspace root is durable by design: `AI_FLOW_WORKSPACE_ROOT`, default
+`/Users/Shared/ai-flow/workspaces` under isolation — never `/tmp`, which
+macOS purges on reboot and after ~3 days without access.
+
+## MCP policy: per-identity, per-workdir
+
+`Agent#apply_mcp_policy` converges the servers the CLI sees from the
+workdir (the project's `.cursor/mcp.json` merged with the spawn user's
+global config) onto the repo's `mcp.allow` list before the pass: `agent
+mcp enable` for allowed names — enable IS the approval, "add to the local
+approved list" — and `agent mcp disable` for everything else. Approval
+state lives per OS user and per project slug, which forces two properties:
+the commands must run under the same isolation seam as the agent spawn
+itself (same sudo user, same workdir — approval granted as the dispatcher
+would land on the wrong identity), and the converge must re-run per
+workdir (memoized within a run).
+
+The pass is gated on the repo declaring an `mcp:` section at all:
+approval already defaults closed (an unapproved server reports "not
+loaded (needs approval)" and exposes nothing), so undeclared repos skip
+the enumeration entirely — no added latency or failure surface. The
+active disable matters for the persistent-workspace case: the project
+slug is stable there, so an approval granted under yesterday's policy
+would survive into today's run unless revoked. Failures warn and proceed
+(the pass runs tool-less); policy must never turn a build away.
+
+Session hooks (`mcp.session.start` / `stop`) are the lifecycle half: some
+MCP servers are served by a process that must be running (cb3d's Unreal
+editor serves its toolsets on a localhost port). The dispatcher runs the
+start hook in the primary checkout before the launch — dispatcher-side,
+never sudo, because what it manages (a GUI editor) lives in the
+dispatcher's session — and the stop hook in an `ensure`. A failed start
+refuses the pass (`Build::McpSessionError`) rather than launching
+half-equipped; a failed stop warns without masking the pass's outcome.
+ai-flow never learns what the hooks do — they are opaque repo-owned
+commands, the same posture as every other repo-owned surface.

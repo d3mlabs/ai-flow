@@ -22,6 +22,7 @@ module AiFlow::Commands::BatchTest::Then; end
 module AiFlow::Commands::BuildSplitTest::Cleanup; end
 module AiFlow::Commands::BuildSplitTest::Then; end
 module AiFlow::Commands::BuildTest::Cleanup; end
+module AiFlow::Commands::BuildTest::Then; end
 module AiFlow::Commands::LearnTest::Cleanup; end
 module AiFlow::Commands::SplitTest::Cleanup; end
 module AiFlow::Commands::SplitTest::Then; end
@@ -43,6 +44,8 @@ module AiFlow::HarnessEnvTest::Cleanup; end
 module AiFlow::ModelSelectionTest::Where; end
 module AiFlow::OrgInvariantsTest::Cleanup; end
 module AiFlow::OrgInvariantsTest::Then; end
+module AiFlow::PersistentWorkspaceTest::Cleanup; end
+module AiFlow::PersistentWorkspaceTest::When; end
 module AiFlow::PlanBodyTest::Cleanup; end
 module AiFlow::PlanBodyTest::Expect; end
 module AiFlow::ProposalChecksTest::Cleanup; end
@@ -51,6 +54,7 @@ module AiFlow::ProvenanceTest::Expect; end
 module AiFlow::ProvenanceTest::Where; end
 module AiFlow::RepoConfigTest::Cleanup; end
 module AiFlow::RepoConfigTest::Expect; end
+module AiFlow::RepoConfigTest::Where; end
 module AiFlow::ResultWriterTest::Cleanup; end
 module AiFlow::ResultWriterTest::Then; end
 module AiFlow::ReviewUnitTest::Cleanup; end

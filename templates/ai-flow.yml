@@ -25,3 +25,25 @@ models:
 #   for quiet repos.
 # learn:
 #   on_build: true
+
+# Workspace mode (optional): `persistent` gives /build one durable reused
+# checkout instead of a disposable tmpdir worktree — gitignored build state
+# (Unreal Intermediate/, Binaries/, …) stays warm across runs. Git state
+# still resyncs cold on every entry, and a flock serializes writers. Only
+# for repos whose builds are too expensive to start cold; leave unset
+# otherwise.
+# workspace: persistent
+
+# MCP policy (optional; deny-all when the section is absent — unapproved
+# servers never load). `allow` names servers from the repo's .cursor/mcp.json
+# the agent pass may use; everything else visible to the CLI is actively
+# disabled. `session.start`/`session.stop` are opaque repo-owned commands
+# the dispatcher runs around the agent pass (e.g. boot/quit the editor that
+# serves the MCP port) — stop runs in an ensure and must be idempotent.
+# A repo retiring MCP should keep `allow: []` one release to actively
+# revoke previously approved servers.
+# mcp:
+#   allow: [unreal-mcp]
+#   session:
+#     start: bin/agent-editor start
+#     stop: bin/agent-editor stop

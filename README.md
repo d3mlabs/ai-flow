@@ -302,7 +302,11 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    file, the agent CLI's account default applies.
    The same file carries the learning-loop keys: `knowledge_repo:` (the org
    knowledge repo `--promote` targets) and `learn: { on_build: false }` (opt
-   out of `/build`'s capture pass).
+   out of `/build`'s capture pass) — plus the agent-lane opt-ins:
+   `workspace: persistent` (one durable warm checkout for /build instead of
+   a disposable tmpdir) and `mcp:` (server allowlist + session start/stop
+   hooks); see
+   [docs/architecture.md](docs/architecture.md#mcp-policy-per-identity-per-workdir).
 7. Optional: copy `templates/hooks.json` to `.cursor/hooks.json` for plan
   auto-push via `dev plan`.
 

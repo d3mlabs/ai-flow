@@ -31,6 +31,28 @@ class EnoentAcpExecutor < AcpFakeExecutor
   end
 end unless defined?(EnoentAcpExecutor)
 
+# Scripts the `agent mcp` CLI surface for the policy pass: `mcp list`
+# yields the seeded "name: status" lines, enable/disable record. `fail_on`
+# substrings make matching stream calls fail — the warn-and-proceed paths.
+class McpAcpExecutor < AcpFakeExecutor
+  attr_reader :stream_calls
+
+  def initialize(list_lines: [], fail_on: [], **kwargs)
+    super(**kwargs)
+    @list_lines = list_lines
+    @fail_on = fail_on
+    @stream_calls = []
+  end
+
+  def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false, &blk)
+    @stream_calls << { argv: argv, chdir: chdir, isolate: isolate }
+    return ["simulated mcp failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
+
+    @list_lines.each(&blk) if argv.include?("list")
+    ["", true]
+  end
+end unless defined?(McpAcpExecutor)
+
 transform!(RSpock::AST::Transformation)
 class AiFlow::AgentTest < Minitest::Test
   def write_config(dir, content)
@@ -770,6 +792,125 @@ class AiFlow::AgentTest < Minitest::Test
     agent.wants.map(&:subject) == ["$ chmod 777 /etc"]
     agent.wants.map(&:channel) == [:observed]
     agent.wants.map(&:reason) == ["permission request rejected (non-force pass)"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "no mcp: section: no policy commands at all" do
+    Given "a workdir whose config never mentions mcp"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = McpAcpExecutor.new(list_lines: ["unreal-mcp: not loaded (needs approval)\n"])
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+
+    Then "the launch never shells to the mcp CLI — approval already defaults closed"
+    executor.stream_calls.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an explicit empty allowlist actively disables every visible server (deny-all)" do
+    Given "mcp: {allow: []} and two visible servers"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(dir, "mcp:\n  allow: []\n")
+    executor = McpAcpExecutor.new(
+      list_lines: ["unreal-mcp: not loaded (needs approval)\n", "other: Error: Connection failed\n"],
+    )
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    actions = executor.stream_calls.map { |call| call[:argv][1..] }
+
+    Then "every server is disabled — status colons never confuse the name parse"
+    actions == [%w[mcp list], %w[mcp disable unreal-mcp], %w[mcp disable other]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "allowlisted servers are enabled (= approved), the rest disabled, under the agent's own seam" do
+    Given "an allowlist naming one of two servers"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(dir, "mcp:\n  allow: [unreal-mcp]\n")
+    executor = McpAcpExecutor.new(
+      list_lines: ["unreal-mcp: not loaded (needs approval)\n", "other: ready\n"],
+    )
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    actions = executor.stream_calls.map { |call| call[:argv][1..] }
+
+    Then "enable for the allowed, disable for the rest — all isolated, all in the workdir"
+    actions == [%w[mcp list], %w[mcp enable unreal-mcp], %w[mcp disable other]]
+    executor.stream_calls.all? { |call| call[:isolate] == true }
+    executor.stream_calls.all? { |call| call[:chdir] == dir }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failed mcp list warns and proceeds — the pass still runs, tool-less" do
+    Given "an mcp-configured repo whose list call fails"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(dir, "mcp:\n  allow: [unreal-mcp]\n")
+    executor = McpAcpExecutor.new(fail_on: ["mcp list"])
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    output = capture_agent_stdout do
+      agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    end
+
+    Then "no enable/disable is attempted, the warn line lands, the launch completes"
+    executor.stream_calls.size == 1
+    output.include?("mcp list failed")
+    output.include?("proceeding without policy")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failed enable warns and the remaining servers still converge" do
+    Given "two servers where the first one's enable fails"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(dir, "mcp:\n  allow: [unreal-mcp]\n")
+    executor = McpAcpExecutor.new(
+      list_lines: ["unreal-mcp: not loaded\n", "other: ready\n"],
+      fail_on: ["mcp enable"],
+    )
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching"
+    output = capture_agent_stdout do
+      agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    end
+
+    Then "the failure is named and the disable still happens"
+    output.include?("enable unreal-mcp failed — proceeding without it")
+    executor.stream_calls.map { |call| call[:argv][1..] }.include?(%w[mcp disable other])
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "policy memoizes per workdir: a second launch issues no mcp commands" do
+    Given "one agent, two launches in the same workdir"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    write_config(dir, "mcp:\n  allow: [unreal-mcp]\n")
+    executor = McpAcpExecutor.new(list_lines: ["unreal-mcp: not loaded\n"])
+    agent = AiFlow::Agent.new(executor: executor)
+
+    When "launching twice"
+    agent.launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    first_pass = executor.stream_calls.size
+    agent.launch(prompt: "q", workdir: dir, command: AiFlow::Command::Build.new)
+
+    Then "the converge ran once"
+    first_pass == 2
+    executor.stream_calls.size == 2
 
     Cleanup
     FileUtils.rm_rf(dir)

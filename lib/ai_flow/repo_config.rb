@@ -110,7 +110,97 @@ module AiFlow
       learn["on_build"] != false
     end
 
+    # Whether the repo declares MCP policy at all. Gates the launch-time
+    # converge pass: approval already defaults closed (an unapproved
+    # server is "not loaded"), so repos without a section skip the
+    # enumeration entirely — no new latency or failure surface for them.
+    # A repo retiring MCP keeps `mcp: {allow: []}` to actively revoke
+    # previously approved servers (approval state persists per user +
+    # project slug).
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def mcp_configured?
+      @config.key?("mcp")
+    end
+
+    # The MCP servers an agent pass may use in this repo's checkouts
+    # (issue #11): names matching the repo's own MCP config
+    # (.cursor/mcp.json). Deny-all by default — absent section, absent
+    # key, or a non-array value all coerce to [] (an agent lane must never
+    # gain a tool surface because of a typo). Same lenient element
+    # coercion as models: only non-blank strings survive.
+    #
+    # @return [Array<String>] server names, [] = deny all
+    sig { returns(T::Array[String]) }
+    def mcp_allowlist
+      allow = mcp["allow"]
+      return [] unless allow.is_a?(Array)
+
+      allow.filter_map { |value| value.strip if value.is_a?(String) && !value.strip.empty? }
+    end
+
+    # The repo-owned session-start hook (mcp.session.start): an opaque
+    # command the dispatcher runs in the primary checkout before the agent
+    # launches (e.g. cb3d boots the editor that serves its MCP port).
+    # ai-flow never learns what the command does.
+    #
+    # @return [String, nil] nil when unset
+    sig { returns(T.nilable(String)) }
+    def mcp_session_start
+      presence(mcp_session["start"])
+    end
+
+    # The repo-owned session-stop hook (mcp.session.stop), run in an
+    # ensure after the agent pass — it must be safe when start
+    # half-succeeded (idempotent teardown is the adopter's contract).
+    #
+    # @return [String, nil] nil when unset
+    sig { returns(T.nilable(String)) }
+    def mcp_session_stop
+      presence(mcp_session["stop"])
+    end
+
+    # Whether /build reuses one durable named workspace for this repo
+    # instead of a disposable tmpdir, keeping gitignored build state warm
+    # across runs (the warm-machine philosophy applied to agent lanes).
+    # Default off: disposable tmpdirs stay the posture for code-only repos
+    # — only explicit `workspace: persistent` opts in.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def persistent_workspace?
+      @config["workspace"].to_s.strip == "persistent"
+    end
+
     private
+
+    # A string value coerced at this boundary: blank or non-string is nil.
+    #
+    # @param value [Object]
+    # @return [String, nil]
+    sig { params(value: T.untyped).returns(T.nilable(String)) }
+    def presence(value)
+      value.is_a?(String) && !value.strip.empty? ? value.strip : nil
+    end
+
+    # The optional `mcp:` section (or empty when absent/non-mapping).
+    #
+    # @return [Hash]
+    sig { returns(T::Hash[T.untyped, T.untyped]) }
+    def mcp
+      section = @config["mcp"]
+      section.is_a?(Hash) ? section : {}
+    end
+
+    # The optional `mcp.session:` sub-mapping (or empty).
+    #
+    # @return [Hash]
+    sig { returns(T::Hash[T.untyped, T.untyped]) }
+    def mcp_session
+      section = mcp["session"]
+      section.is_a?(Hash) ? section : {}
+    end
 
     # The raw models: mapping (or empty when absent/non-mapping).
     #

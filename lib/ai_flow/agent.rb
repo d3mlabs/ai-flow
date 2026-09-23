@@ -77,6 +77,7 @@ module AiFlow
       @models_used = T.let({}, T::Hash[Command, T::Array[ModelSelection]])
       @knowledge_applied = T.let([], T::Array[String])
       @wants = T.let([], T::Array[Denials::Want])
+      @mcp_policy_applied = T.let([], T::Array[String])
     end
 
     # Run the agent to completion over ACP and return its final answer text.
@@ -116,6 +117,7 @@ module AiFlow
       # Ungrouped so the effective model is scannable on the run page next
       # to the config printout from the Log versions step.
       $stdout.puts "ai-flow model (/#{word}): #{log_label(selection)}"
+      apply_mcp_policy(workdir, policy_root)
       # The handle crosses into the session via the ACP catalog — the
       # global --model flag does not apply to ACP sessions.
       handle = case selection
@@ -203,6 +205,61 @@ module AiFlow
     end
 
     private
+
+    # MCP policy for the pass (issue #11): enumerate the servers the CLI
+    # sees from the workdir (the project's .cursor/mcp.json merged with
+    # the spawn user's global config) and converge each onto the repo's
+    # allowlist. `mcp enable` IS the approval ("add to the local approved
+    # list"), and approval state lives per user + per project slug — so
+    # every command here runs under the same isolation seam as the agent
+    # spawn itself (same sudo user, same workdir), or the approval would
+    # land on the wrong identity. Gated on the policy root declaring an
+    # mcp: section (see RepoConfig#mcp_configured?); failures warn and
+    # proceed — the pass still runs, the agent just lacks the tools — and
+    # the outcome memoizes per workdir so multi-launch passes converge
+    # once.
+    #
+    # @param workdir [String] the checkout the agent will spawn in
+    # @param policy_root [String] the checkout whose ai-flow.yml governs
+    # @return [void]
+    sig { params(workdir: String, policy_root: String).void }
+    def apply_mcp_policy(workdir, policy_root)
+      return if @mcp_policy_applied.include?(workdir)
+
+      config = RepoConfig.load(policy_root)
+      return unless config.mcp_configured?
+
+      @mcp_policy_applied << workdir
+      allow = config.mcp_allowlist
+      mcp_servers(workdir).each do |name|
+        action = allow.include?(name) ? "enable" : "disable"
+        _err, ok = @executor.stream(binary, "mcp", action, name, chdir: workdir, isolate: true) { |_line| }
+        $stdout.puts "ai-flow mcp policy: #{action} #{name}#{ok ? "" : " failed — proceeding without it"}"
+      end
+    end
+
+    # The configured MCP server names visible from the workdir, via
+    # `agent mcp list` ("name: status" per line — status text may itself
+    # carry colons, e.g. "Error: Connection failed", so only the first
+    # split counts). A failed list warns and yields [] — never a failed
+    # run.
+    #
+    # @param workdir [String]
+    # @return [Array<String>]
+    sig { params(workdir: String).returns(T::Array[String]) }
+    def mcp_servers(workdir)
+      names = T.let([], T::Array[String])
+      err, ok = @executor.stream(binary, "mcp", "list", chdir: workdir, isolate: true) do |line|
+        next unless line.include?(":")
+
+        name = T.must(line.split(":", 2).first).strip
+        names << name unless name.empty?
+      end
+      return names if ok
+
+      $stdout.puts "ai-flow mcp policy: mcp list failed (#{err.strip.lines.first&.strip}) — proceeding without policy"
+      []
+    end
 
     # The AI_FLOW_MODEL override coerced at its boundary: blank is unset.
     #
