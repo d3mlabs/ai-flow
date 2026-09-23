@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "shellwords"
 require "time"
 require "tmpdir"
 
@@ -23,6 +24,12 @@ module AiFlow
     # disposition and the commit link; resolving stays with the human.
     class Build
       extend T::Sig
+
+      # A repo-owned mcp.session.start hook failed: the pass's tool surface
+      # (e.g. the editor that serves the MCP port) never came up, so the
+      # build must not run half-equipped. The stop hook still fires via the
+      # ensure before this surfaces.
+      class McpSessionError < StandardError; end
 
       # The App deliberately lacks the `workflows` permission (see
       # docs/attribution.md): GitHub rejects any App push touching workflow
@@ -193,11 +200,13 @@ module AiFlow
           primary_repo, primary = T.must(checkouts.first)
           capture = capture_learnings?(primary_repo, primary)
           @learn.seed_capture(primary, issue_capture_source(issue, issue_repo)) if capture
-          output = @agent.launch(
-            prompt: build_prompt(issue, extra_instruction, capture: capture, checkouts: checkouts),
-            workdir: primary, command: Command::Build.new,
-            force: true,
-          )
+          output = with_mcp_session(primary) do
+            @agent.launch(
+              prompt: build_prompt(issue, extra_instruction, capture: capture, checkouts: checkouts),
+              workdir: primary, command: Command::Build.new,
+              force: true,
+            )
+          end
           # The agent may have run for close to the token's lifetime; the
           # write phase (commit, push, PR) starts on a fresh mint.
           @executor.refresh_auth!
@@ -1107,6 +1116,61 @@ module AiFlow
             payload: { body: "#{body.chomp}\n\nCoordinated PRs from this build:\n#{listing.join("\n")}\n" },
           )
         end
+      end
+
+      # The repo-owned MCP session around the agent pass (issue #11): when
+      # the primary checkout's ai-flow.yml declares mcp.session.start, run
+      # it before the launch and mcp.session.stop in an ensure — the stop
+      # covers agent failure and a start that half-succeeded (idempotent
+      # teardown is the adopter's contract). Hooks run dispatcher-side,
+      # never sudo: what they manage (e.g. a GUI editor serving the MCP
+      # port) lives in the dispatcher's session; ai-flow never learns what
+      # the commands do. Scope: /build passes, incl. --split children
+      # (shared build_issue); /edit is future work.
+      #
+      # @param checkout [String] the primary checkout (hook cwd and config
+      #   source — the synced workspace state governs)
+      # @return [Object] the block's value
+      # @raise [McpSessionError] when the start hook fails
+      sig do
+        type_parameters(:Result)
+          .params(checkout: String, blk: T.proc.returns(T.type_parameter(:Result)))
+          .returns(T.type_parameter(:Result))
+      end
+      def with_mcp_session(checkout, &blk)
+        config = RepoConfig.load(checkout)
+        start = config.mcp_session_start
+        return yield unless start
+
+        begin
+          raise McpSessionError, "mcp session start failed: #{start}" unless session_hook(start, checkout)
+
+          yield
+        ensure
+          # Best-effort by design: a failed stop must never mask the pass's
+          # own outcome (the warn line is the signal).
+          if (stop = config.mcp_session_stop)
+            $stdout.puts "ai-flow mcp session: stop failed — the session may need manual teardown" unless
+              session_hook(stop, checkout)
+          end
+        end
+      end
+
+      # One session hook, streamed live (an editor build can run minutes;
+      # the Actions run page follows a running step's stdout).
+      #
+      # @param command [String] the hook as declared (shell-split here)
+      # @param checkout [String]
+      # @return [Boolean] success
+      sig { params(command: String, checkout: String).returns(T::Boolean) }
+      def session_hook(command, checkout)
+        $stdout.puts "ai-flow mcp session: #{command}"
+        # T.unsafe: splatting a runtime-built argv (srb.help/7019).
+        err, ok = T.unsafe(@executor).stream(*Shellwords.split(command), chdir: checkout) do |line|
+          $stdout.puts(line)
+        end
+        $stdout.puts err unless err.to_s.strip.empty?
+        ok
       end
 
       # @param argv [Array<String>] command and arguments

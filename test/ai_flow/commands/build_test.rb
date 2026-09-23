@@ -57,6 +57,16 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       nil
     end
 
+    # Session hooks stream (live editor-build output); recorded in the same
+    # command_lines so ordering against launches and git calls is assertable.
+    def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
+      line = argv.join(" ")
+      @command_lines << line
+      return ["simulated hook failure", false] if @fail_on.any? { |needle| line.include?(needle) }
+
+      ["", true]
+    end
+
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
       return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
@@ -260,6 +270,117 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     ENV.delete("AI_FLOW_WORKSPACE_ROOT")
     FileUtils.rm_rf(dir)
     FileUtils.rm_rf(root)
+  end
+
+  # A persistent workspace pre-seeded with an mcp session config — the
+  # session-hook tests' fixture: the workspace dir must pre-exist (healthy
+  # resync path) so RepoConfig.load reads the real file from the checkout.
+  def with_session_workspace(config)
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    root = Dir.mktmpdir("ai-flow-build-test-root-")
+    ENV["AI_FLOW_WORKSPACE_ROOT"] = root
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "workspace: persistent\n")
+    workspace = File.join(root, "d3mlabs-demo")
+    FileUtils.mkdir_p(File.join(workspace, ".github"))
+    File.write(File.join(workspace, ".github", "ai-flow.yml"), config)
+    yield dir, workspace
+  ensure
+    ENV.delete("AI_FLOW_WORKSPACE_ROOT")
+    [dir, root].compact.each { |leftover| FileUtils.rm_rf(leftover) }
+  end
+
+  SESSION_CONFIG = "mcp:\n  session:\n    start: bin/agent-editor start\n    stop: bin/agent-editor stop\n"
+
+  test "mcp session hooks wrap the agent launch: start before, stop after, dispatcher-side" do
+    Given "a persistent workspace whose config declares session hooks"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
+      run_build(github: github, executor: executor, agent: agent, workdir: dir)
+    end
+    command_lines = executor.command_lines
+
+    Then "start precedes stop, the launch happened between them, the PR opens"
+    T.must(command_lines.index("bin/agent-editor start")) < T.must(command_lines.index("bin/agent-editor stop"))
+    agent.prompts.size == 1
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
+  test "the stop hook still fires when the agent pass raises, and the failure propagates" do
+    Given "an agent that dies mid-pass"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new([])
+
+    When "building"
+    error = T.let(nil, T.nilable(StandardError))
+    begin
+      with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
+        run_build(github: github, executor: executor, agent: agent, workdir: dir)
+      end
+    rescue AiFlow::Agent::Error => e
+      error = e
+    end
+
+    Then "the ensure ran the teardown; the agent failure is not swallowed"
+    executor.command_lines.include?("bin/agent-editor stop")
+    !error.nil?
+
+    Cleanup
+    nil
+  end
+
+  test "a failed start hook refuses the pass (McpSessionError), never launching half-equipped" do
+    Given "a start hook that fails"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(fail_on: ["agent-editor start"])
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    error = T.let(nil, T.nilable(StandardError))
+    begin
+      with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
+        run_build(github: github, executor: executor, agent: agent, workdir: dir)
+      end
+    rescue AiFlow::Commands::Build::McpSessionError => e
+      error = e
+    end
+
+    Then "no launch, teardown still attempted, the error names the hook"
+    agent.prompts.empty?
+    executor.command_lines.include?("bin/agent-editor stop")
+    T.must(error).message.include?("bin/agent-editor start")
+
+    Cleanup
+    nil
+  end
+
+  test "no session config: the launch is unwrapped — no hook commands at all" do
+    Given "a persistent workspace with no mcp section"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    with_session_workspace("models: {}\n") do |dir, _workspace|
+      run_build(github: github, executor: executor, workdir: dir)
+    end
+
+    Then
+    executor.command_lines.none? { |line| line.include?("agent-editor") }
+
+    Cleanup
+    nil
   end
 
   test "/build on an issue targeting another repo clones it instead of adding a worktree" do
