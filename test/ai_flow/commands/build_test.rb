@@ -64,6 +64,9 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       @command_lines << line
       return ["simulated hook failure", false] if @fail_on.any? { |needle| line.include?(needle) }
 
+      # The real stream yields output lines live — the session hooks relay
+      # them to the job log, which the hook-output test pins.
+      yield "hook progress line" if block_given?
       ["", true]
     end
 
@@ -272,6 +275,36 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "a multi-target build with a persistent primary keeps tmpdir clones for the secondaries" do
+    Given "a persistent-workspace repo whose issue targets a second repo"
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    root = Dir.mktmpdir("ai-flow-build-test-root-")
+    ENV["AI_FLOW_WORKSPACE_ROOT"] = root
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "workspace: persistent\n")
+    github = FakeGitHub.new
+    github.seed_issue(
+      REPO, 7, title: "Carve system",
+      body: "# Carve system\nTarget repos: #{REPO}, d3mlabs/other\n",
+    )
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor, workdir: dir)
+    command_lines = executor.command_lines
+
+    Then "the primary is durable, the secondary is a disposable clone, both PRs open"
+    command_lines.include?("git worktree add --detach #{File.join(root, "d3mlabs-demo")} origin/main")
+    command_lines.any? { |line| line.start_with?("gh repo clone d3mlabs/other") }
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+    github.calls.include?([:create_pull_request, "d3mlabs/other", "ai/7-carve-system", "main"])
+
+    Cleanup
+    ENV.delete("AI_FLOW_WORKSPACE_ROOT")
+    FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
+  end
+
   # A persistent workspace pre-seeded with an mcp session config — the
   # session-hook tests' fixture: the workspace dir must pre-exist (healthy
   # resync path) so RepoConfig.load reads the real file from the checkout.
@@ -300,14 +333,18 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     agent = FakeAgent.new(["done"])
 
     When "building"
+    stdout_text = T.let("", String)
     with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
-      run_build(github: github, executor: executor, agent: agent, workdir: dir)
+      stdout_text, _stderr = capture_io do
+        run_build(github: github, executor: executor, agent: agent, workdir: dir)
+      end
     end
     command_lines = executor.command_lines
 
-    Then "start precedes stop, the launch happened between them, the PR opens"
+    Then "start precedes stop, the launch happened between them, hook output reaches the job log, the PR opens"
     T.must(command_lines.index("bin/agent-editor start")) < T.must(command_lines.index("bin/agent-editor stop"))
     agent.prompts.size == 1
+    stdout_text.include?("hook progress line")
     github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
 
     Cleanup
