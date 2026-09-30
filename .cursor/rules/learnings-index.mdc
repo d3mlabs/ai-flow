@@ -23,7 +23,7 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
   → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
-  `dev up` / `dev install-deps`)
+  `dev up` / `dev deps install`)
 
 ## architecture
 

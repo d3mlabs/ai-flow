@@ -31,7 +31,7 @@ flowchart LR
     end
 
     subgraph runnerZone [Self-hosted runners]
-        dispatcher["bin/dispatch.rb + lib/ai_flow<br/>(Ruby, provisioned via dev install-deps)"]
+        dispatcher["bin/dispatch.rb + lib/ai_flow<br/>(Ruby, provisioned via dev deps install)"]
         agentCli["headless Cursor agent CLI<br/>(CURSOR_API_KEY)"]
     end
 
@@ -209,7 +209,7 @@ what the model actually saw is auditable.
 
 Everything under `lib/ai_flow/`. The runtime gem surface is exactly
 `sorbet-runtime` (typed with Sorbet; the toolchain and gems reach the runner
-through `dev install-deps`). The two injectable boundaries are `Executor`
+through `dev deps install`). The two injectable boundaries are `Executor`
 (every subprocess: `gh`, `git`, `agent`) and the classes built on it — tests
 fake exactly those and run everything else for real.
 

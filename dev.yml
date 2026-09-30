@@ -1,6 +1,6 @@
 name: ai-flow
 # `dev up` needs no entry here: the builtin installs the locked toolchain and
-# gems from dependencies.rb. Runners use `dev install-deps` (headless — no
+# gems from dependencies.rb. Runners use `dev deps install` (headless — no
 # shell hooks, no credential prompts) before `dev dispatch`.
 commands:
   test:

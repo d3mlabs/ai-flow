@@ -3,8 +3,8 @@
 
 # Dependency manifest for dev: the exact Ruby toolchain plus the gem set.
 # dev generates Gemfile/Gemfile.lock from these declarations — edit here,
-# then run `dev update-deps` (re-lock) and `dev up` (install). CI and
-# runners install with `dev install-deps`.
+# then run `dev deps update` (re-lock) and `dev up` (install). CI and
+# runners install with `dev deps install`.
 require "dev/deps"
 
 Dev::Deps.define do
