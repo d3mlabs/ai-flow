@@ -3,7 +3,7 @@
 
 # The one place the type system's runtime enters: everything under lib/
 # assumes T/sig exist because this file loaded first. Runners get the gem
-# via `dev install-deps` like every other locked dependency.
+# via `dev deps install` like every other locked dependency.
 require "sorbet-runtime"
 
 require "ai_flow/value_equality"

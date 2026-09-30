@@ -279,7 +279,7 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
   and make sure it — plus `dev`, rbenv, and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not
-   prerequisites: the workflow runs `dev install-deps` in the ai-flow
+   prerequisites: the workflow runs `dev deps install` in the ai-flow
    checkout, which provisions the pinned Ruby (an rbenv install, one-time
    per box) and the locked gem set from `dependencies.rb`.
 5. Recommended on any box that also holds a human's credentials (a
