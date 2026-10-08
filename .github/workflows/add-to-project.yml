@@ -1,0 +1,13 @@
+# Feed new issues to the D3M Labs Multi-Project View — see d3mlabs/.github.
+name: add-to-project
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    uses: d3mlabs/.github/.github/workflows/add-to-project.yml@main
+    secrets:
+      D3MLABS_BOT_APP_ID: ${{ secrets.D3MLABS_BOT_APP_ID }}
+      D3MLABS_BOT_PRIVATE_KEY: ${{ secrets.D3MLABS_BOT_PRIVATE_KEY }}
