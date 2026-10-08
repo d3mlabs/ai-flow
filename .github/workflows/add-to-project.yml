@@ -4,14 +4,10 @@ name: add-to-project
 on:
   issues:
     types: [opened]
-  # Dispatching sweeps every open issue onto the board (one-time, re-runnable).
-  workflow_dispatch:
 
 jobs:
   add-to-project:
     uses: d3mlabs/.github/.github/workflows/add-to-project.yml@main
-    with:
-      backfill: ${{ github.event_name == 'workflow_dispatch' }}
     secrets:
       D3MLABS_BOT_APP_ID: ${{ secrets.D3MLABS_BOT_APP_ID }}
       D3MLABS_BOT_PRIVATE_KEY: ${{ secrets.D3MLABS_BOT_PRIVATE_KEY }}
