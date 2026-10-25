@@ -8,7 +8,7 @@
 require "dev/deps"
 
 Dev::Deps.define do
-  ruby "3.3.10"
+  ruby "4.0.6"
 
   # Runtime: sorbet-runtime backs the inline sigs and sealed result
   # hierarchies. The dispatcher runs through `dev`, so runners install

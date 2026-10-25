@@ -2,7 +2,7 @@
 # Add or change gems in dependencies.rb and run `dev deps update`.
 
 source "https://rubygems.org"
-ruby "3.3.10"
+ruby "4.0.6"
 gem "sorbet-runtime"
 
 group :development do
