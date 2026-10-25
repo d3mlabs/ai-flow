@@ -277,11 +277,13 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    rest. One registered runner instance = one concurrent job; register N
    instances for N parallel jobs.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
-  and make sure it — plus `dev`, rbenv, and shadowenv — is on the runner
+  and make sure it — plus `dev` and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not
    prerequisites: the workflow runs `dev deps install` in the ai-flow
-   checkout, which provisions the pinned Ruby (an rbenv install, one-time
-   per box) and the locked gem set from `dependencies.rb`.
+   checkout, which provisions the pinned Ruby (a brew bottle from the
+   d3mlabs tap's `ruby@X.Y.Z` family, dev ≥ 0.3) and the locked gem set
+   from `dependencies.rb`. A leftover `~/.rbenv/shims` on the service's
+   PATH must go: its `gem` shim shadows the keg's once rbenv is gone.
 5. Recommended on any box that also holds a human's credentials (a
   workstation doubling as a runner, or a dedicated box with the owner's gh
    login): run the agent as its own OS user. Set `AI_FLOW_AGENT_USER` in the

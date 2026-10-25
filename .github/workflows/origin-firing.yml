@@ -76,7 +76,7 @@ jobs:
       # Same provisioning as ai-commands.yml: the checker's toolchain comes
       # through dev — `dev deps install` provisions the pinned Ruby and the
       # locked gem set (sorbet-runtime above all) headlessly. The runner box
-      # needs dev, rbenv, and shadowenv preinstalled; Ruby and gems it does not.
+      # needs dev and shadowenv preinstalled; Ruby and gems it does not.
       - name: Install checker dependencies
         working-directory: .ai-flow
         run: dev deps install

@@ -329,11 +329,11 @@ jobs:
           persist-credentials: false
 
       # The dispatcher's toolchain comes through dev, the org's dependency
-      # machinery: `dev deps install` provisions the pinned Ruby (rbenv
-      # install, one-time per box) and the locked gem set from
+      # machinery: `dev deps install` provisions the pinned Ruby (a brew
+      # bottle from the d3mlabs tap, dev >= 0.3) and the locked gem set from
       # dependencies.rb — headless, so no shell hooks or credential prompts.
-      # The runner box needs dev, rbenv, and shadowenv preinstalled; Ruby and
-      # gems it does not.
+      # The runner box needs dev and shadowenv preinstalled; Ruby and gems
+      # it does not.
       - name: Install dispatcher dependencies
         working-directory: .ai-flow
         run: dev deps install
