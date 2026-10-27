@@ -199,7 +199,7 @@ module AiFlow
           elsif dry
             entries, matches = propose(parent, existing, segment)
             stage_spec(parent, entries, matches)
-            dry_summary(entries, matches)
+            dry_summary(entries, matches, existing)
           else
             entries, matches = propose(parent, existing, segment)
             stage_spec(parent, entries, matches)
@@ -644,16 +644,51 @@ module AiFlow
         lines.join("\n")
       end
 
+      # The dry panel is the review surface before the one mutation --apply
+      # makes, so it has to show what that mutation will do: each entry's
+      # 0-based index (the `depends_on` key in the spec), its dependency
+      # edges, and for an `existing:` ref the disposition apply will reach
+      # — adopt (a reparent), link, or keep — in apply_summary's own words.
+      #
       # @return [String]
-      sig { params(entries: T::Array[SubtasksSection::Entry], matches: Matches).returns(String) }
-      def dry_summary(entries, matches)
+      sig do
+        params(entries: T::Array[SubtasksSection::Entry], matches: Matches, existing: T::Array[GitHub::Issue])
+          .returns(String)
+      end
+      def dry_summary(entries, matches, existing)
         lines = ["📋 **/split --dry** — staged #{entries.size} subtasks in the `#{SubtasksSection::HEADER}` section"]
-        entries.each { |entry| lines << "- #{entry.repo} — #{entry.title}" }
+        entries.each_with_index do |entry, index|
+          line = "- [#{index}] #{entry.repo} — #{entry.title}"
+          line += " — #{existing_disposition(T.must(entry.existing), existing)}" if entry.existing
+          line += " → after #{entry.depends_on.map { |dep| "[#{dep}]" }.join(", ")}" unless entry.depends_on.empty?
+          lines << line
+        end
         unless matches.empty?
           lines << "\n#{matches.values.sum(&:size)} possible existing match(es) annotated in the section — promote them into `existing:` or delete the comments."
         end
         lines << "\nReview and edit the section, then comment `/split --apply`."
         lines.join("\n")
+      end
+
+      # What --apply will do with an `existing:` ref, predicted from the
+      # child's native parent (adopt_or_reference learns it the hard way,
+      # from the adoption call failing). An unreadable parent (no App access
+      # on that repo) is said so, never promised as a clean adopt.
+      #
+      # @param ref [String] `owner/repo#n`
+      # @param existing [Array<GitHub::Issue>] this plan's current sub-issues
+      # @return [String] the suffix for the dry line
+      sig { params(ref: String, existing: T::Array[GitHub::Issue]).returns(String) }
+      def existing_disposition(ref, existing)
+        repo, number = parse_issue_ref(ref)
+        return "kept #{ref} (already a sub-issue of this plan)" if existing.any? { |issue| issue.repo == repo && issue.number == number }
+
+        parent = @github.parent_issue(repo, number)
+        return "will adopt #{ref} (parentless)" unless parent
+
+        "will link #{ref} (owned by #{parent.repo}##{parent.number})"
+      rescue GitHub::Error
+        "will adopt? #{ref} (parent unreadable)"
       end
 
       # @return [Array(String, Integer)]

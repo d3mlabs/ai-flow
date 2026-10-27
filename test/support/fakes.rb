@@ -179,8 +179,19 @@ class FakeGitHub < AiFlow::GitHub
     @parents[[owner_repo, number]] = parent
   end
 
+  # The child's parent is unreadable when the App is not installed on the
+  # child's repo; tests opt specific issues into that.
+  def fail_parent_issue_for(owner_repo, number)
+    @unreadable_parents ||= []
+    @unreadable_parents << [owner_repo, number]
+  end
+
   def parent_issue(owner_repo, number)
     @calls << [:parent_issue, owner_repo, number]
+    if (@unreadable_parents || []).include?([owner_repo, number])
+      raise AiFlow::GitHub::Error, "Resource not accessible by integration"
+    end
+
     (@parents || {})[[owner_repo, number]]&.dup
   end
 

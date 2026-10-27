@@ -119,7 +119,7 @@ artifact.
 
 | Invocation | What runs |
 |---|---|
-| `/split --dry` | One agent pass proposes the full subtask set, then a guarded PATCH stages it as a fenced-yaml `## Subtasks` section in the plan body — human-editable escrow. Nothing is created. |
+| `/split --dry` | One agent pass proposes the full subtask set, then a guarded PATCH stages it as a fenced-yaml `## Subtasks` section in the plan body — human-editable escrow. Nothing is created. The panel lists each entry with its 0-based index (the `depends_on` key), its edges (`→ after [0], [2]`), and for an `existing:` ref what `--apply` will do: `will adopt … (parentless)` — a reparent — `will link … (owned by owner/repo#n)`, `kept … (already a sub-issue of this plan)`, or `will adopt? … (parent unreadable)` when the App cannot see the child's repo. |
 | `/split --apply` | **No agent call.** Parses the `## Subtasks` section as it exists at apply time and reconciles sub-issues against it. Human edits between the phases are honored as intent. Re-running is idempotent. |
 | `/split` (bare) | Both phases in one run. |
 | `/split <instruction>` | The instruction feeds the propose phase (with `--dry` or bare). |
