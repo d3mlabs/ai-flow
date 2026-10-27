@@ -155,6 +155,43 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     nil
   end
 
+  test "/split --dry says what --apply will do to each existing: entry, and shows the dependency edges" do
+    Given "a proposal with three existing: refs — parentless, owned by another plan, already ours — and one dependent entry"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent plan\n\nTarget repos: #{REPO}, d3mlabs/other\n")
+    github.seed_issue("d3mlabs/other", 42, title: "Unowned", body: "")
+    github.seed_issue("d3mlabs/other", 43, title: "Owned elsewhere", body: "")
+    github.seed_parent("d3mlabs/other", 43, sub_issue(51, "Another plan", repo: "d3mlabs/plans"))
+    github.seed_issue("d3mlabs/other", 44, title: "Already ours", body: "")
+    github.seed_sub_issues(REPO, 7, [sub_issue(44, "Already ours", repo: "d3mlabs/other")])
+    github.fail_parent_issue_for("d3mlabs/private", 9)
+    agent = FakeAgent.new([<<~JSON])
+      [
+        {"title": "Unowned", "repo": "d3mlabs/other", "existing": "d3mlabs/other#42"},
+        {"title": "Owned elsewhere", "repo": "d3mlabs/other", "existing": "d3mlabs/other#43"},
+        {"title": "Already ours", "repo": "d3mlabs/other", "existing": "d3mlabs/other#44"},
+        {"title": "New work", "repo": "#{REPO}", "depends_on": [0, 2]},
+        {"title": "Behind a wall", "repo": "d3mlabs/private", "existing": "d3mlabs/private#9"}
+      ]
+    JSON
+
+    When "staging"
+    run_split(github: github, agent: agent, comment: "/split --dry")
+
+    Then "each line carries its index, the existing: ones say adopt / link / kept / unreadable, the dependent one its edges, and nothing was mutated"
+    panel = github.comment_edits.fetch(55)
+    panel.include?("- [0] d3mlabs/other — Unowned — will adopt d3mlabs/other#42 (parentless)")
+    panel.include?("- [1] d3mlabs/other — Owned elsewhere — will link d3mlabs/other#43 (owned by d3mlabs/plans#51)")
+    panel.include?("- [2] d3mlabs/other — Already ours — kept d3mlabs/other#44 (already a sub-issue of this plan)")
+    panel.include?("- [3] #{REPO} — New work → after [0], [2]")
+    panel.include?("- [4] d3mlabs/private — Behind a wall — will adopt? d3mlabs/private#9 (parent unreadable)")
+    github.calls.none? { |kind, *| kind == :add_sub_issue }
+    github.calls.none? { |kind, arg| kind == :graphql && arg.is_a?(Hash) && arg.key?(:title) }
+
+    Cleanup
+    nil
+  end
+
   test "/split --apply consumes a hand-edited spec without calling the agent" do
     Given "a staged spec whose repo line was hand-edited, with a stray key outside the interface"
     github = FakeGitHub.new
