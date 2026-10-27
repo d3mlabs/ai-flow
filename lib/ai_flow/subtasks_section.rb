@@ -30,9 +30,17 @@ module AiFlow
       prop :repo, String
       const :depends_on, T::Array[Integer]
       const :existing, T.nilable(String)
+      # A human step (a ruleset, a grant, an App install, a secret) — not
+      # /build's to do. /build --split never dispatches it and holds its
+      # dependents until the human closes it.
+      const :manual, T::Boolean, default: false
     end
 
     HEADER = "## Subtasks"
+    # The body line a created manual sub-issue carries, so the issue itself
+    # tells its reader who acts (the applied map's `(manual)` annotation is
+    # what /build --split reads; this is for the human).
+    MANUAL_LINE = "Manual: a human does this step, not /build — close it when done."
     SPEC_MARKER = "<!-- ai-flow:subtasks v1 — edit freely, then comment `/split --apply` -->"
     APPLIED_MARKER = "<!-- ai-flow:subtasks v1 — applied; a fresh `/split --dry` restages -->"
     ISSUE_REF_PATTERN = %r{[\w.-]+/[\w.-]+#\d+}
@@ -111,12 +119,17 @@ module AiFlow
       "#{lines.join("\n").rstrip}\n"
     end
 
-    # Dispositions recorded in the applied map — /build --split reads them to
-    # know which nodes it cannot drive (adopted/referenced external issues).
+    # The annotation tokens an applied-map line may carry, in parentheses
+    # after the title (`(adopted)`, `(adopted, manual)`): the external-issue
+    # dispositions, and `manual` for a human step. /build --split reads them
+    # to know which nodes it does not drive.
+    ANNOTATIONS = T.let(%w[adopted referenced manual].freeze, T::Array[String])
+
+    # Annotations recorded in the applied map, per sub-issue ref.
     #
     # @param body [String] the plan-issue body
-    # @return [Hash{String => String}] "owner/repo#n" => "adopted"/"referenced"
-    sig { params(body: String).returns(T::Hash[String, String]) }
+    # @return [Hash{String => Array<String>}] "owner/repo#n" => tokens, e.g. ["adopted", "manual"]
+    sig { params(body: String).returns(T::Hash[String, T::Array[String]]) }
     def applied_annotations(body)
       section = section_text(body)
       return {} if section.nil? || section.include?("```yaml")
@@ -124,10 +137,10 @@ module AiFlow
       # T.cast: a two-group scan always yields string pairs, but the stdlib
       # RBI types it as a union that to_h can't accept.
       pairs = T.cast(
-        section.scan(/^- (#{ISSUE_REF_PATTERN}) — .*\((adopted|referenced)\)\s*$/),
+        section.scan(/^- (#{ISSUE_REF_PATTERN}) — .*\(((?:#{ANNOTATIONS.join("|")})(?:, (?:#{ANNOTATIONS.join("|")}))*)\)\s*$/),
         T::Array[[String, String]],
       )
-      pairs.to_h
+      pairs.to_h { |ref, tokens| [ref, tokens.split(", ")] }
     end
 
     # @return [String, nil] the section's text, header included
@@ -152,7 +165,7 @@ module AiFlow
       start...finish
     end
 
-    # The interface is exactly these four keys — sub-issue bodies are not
+    # The interface is exactly these five keys — sub-issue bodies are not
     # part of the spec (the parent plan is the spec; created sub-issues get
     # a thin templated body). Unknown keys are ignored.
     #
@@ -174,11 +187,15 @@ module AiFlow
         raise Error, "`depends_on` must be a list of entry indices, got: #{depends_on.inspect}"
       end
 
+      manual = entry.fetch("manual", false)
+      raise Error, "`manual:` must be true or false, got: #{manual.inspect}" unless [true, false].include?(manual)
+
       Entry.new(
         title: title,
         repo: entry["repo"].to_s.strip,
         depends_on: depends_on,
         existing: existing&.to_s,
+        manual: manual,
       )
     end
 
@@ -193,6 +210,7 @@ module AiFlow
       lines = ["- title: #{entry.title.to_json}"]
       lines << "  repo: #{entry.repo}" unless entry.repo.empty?
       lines << "  existing: #{entry.existing}" if entry.existing
+      lines << "  manual: true" if entry.manual
       lines << "  depends_on: [#{entry.depends_on.join(", ")}]" unless entry.depends_on.empty?
       match_lines.each { |line| lines << "  # possible match: #{line}" }
       "#{lines.join("\n")}\n"

@@ -176,12 +176,21 @@ same-repo form visually).
   issue — set by the agent, the human, or promoted from a
   `# possible match:` comment (Ruby-added suggestions from a per-title
   search; resolve or delete them, they are never decisions).
+- `manual: true` marks a human step the plan still depends on — a
+  repository ruleset or setting, a permission grant, an App install, a
+  secret. It is a real subtask (dependents wait on it) that no agent is
+  dispatched at: `/build --split` lists it as a human's and holds its
+  dependents until the human does it and closes the issue. The agent sets
+  it when the plan describes the step as a human action; the human can add
+  or drop it in the staged yaml. `--dry` labels such entries
+  `— manual (a human step; /build --split will not dispatch it)`.
 - The HTML comment carries the format version.
 
 Created sub-issues get a thin templated body: a `Part of owner/repo#n.`
 line (human-facing decoration — `/build` trusts the native parent
 relationship, not prose), plus the `Depends on:` / `Intended repo:` lines
-when applicable.
+when applicable, and for a manual entry a `Manual: a human does this
+step, not /build — close it when done.` line.
 
 At apply, an `existing:` entry is never created: a **parentless** issue is
 *adopted* as a native sub-issue of the plan; one already owned by another
@@ -191,7 +200,8 @@ parent per issue).
 **Canonicity transfers at apply.** Before apply, the yaml spec is
 canonical. At apply, canonicity moves to the sub-issues and the section is
 rewritten into a linked map (`- owner/repo#12 — <title>`, with
-`(adopted)`/`(referenced)` annotations). The section is never a spec future
+`(adopted)`/`(referenced)`/`(manual)` annotations, comma-joined when an
+entry carries several: `(adopted, manual)`). The section is never a spec future
 runs must keep synced — re-splitting later means a fresh `--dry`.
 
 ### /split refusals, verbatim
@@ -274,15 +284,20 @@ checks out the code the siblings actually landed in (a plans-repo
 integration issue gets a real code-repo workspace, not a code-less
 planning checkout), stacked on every sibling head.
 
-Non-buildable nodes — the ones the orchestrator cannot drive — are skipped
-with an explicit warning, and their dependents are reported blocked until
-those issues close. No silent skips. Two kinds:
+Nodes the orchestrator does not drive are listed under the waves with the
+reason, and their dependents are reported blocked until those issues
+close. No silent skips. Three kinds:
 
 - **Intended-repo fallbacks**: sub-issues whose body carries
   `Intended repo:` (created on the parent's repo because the App wasn't
-  installed where the work must land).
+  installed where the work must land). `[!]`.
 - **Adopted/referenced external issues** (recorded in the applied
-  `## Subtasks` map): owned by another effort or a human.
+  `## Subtasks` map): owned by another effort or a human. `[!]`.
+- **Manual steps** (`(manual)` in the applied map): a human's by design,
+  not a failure — shown as an open checkbox, `[ ] … — manual: a human does
+  this step; close it when done`. The run leaves the sub-issue open; once
+  the human closes it, it drops out of the open set and the next
+  `/build --split` builds its dependents.
 
 A dependency on an issue outside the sub-issue set blocks the dependent
 while that issue is open; a closed one is satisfied.

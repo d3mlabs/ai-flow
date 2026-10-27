@@ -263,6 +263,89 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     nil
   end
 
+  test "a manual sub-issue is never dispatched, is listed as a human step, and blocks its dependents while open" do
+    Given "a manual node (annotated in the applied map), a code node, and an integration depending on both"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
+      # Parent
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::APPLIED_MARKER}
+
+      - #{REPO}#1 — Code work
+      - #{REPO}#2 — Ruleset: require codecov/patch (manual)
+      - #{REPO}#4 — Integration: Parent
+    BODY
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Code work", "Part of #{REPO}#7.\n"),
+      sub_issue(2, "Ruleset: require codecov/patch", "Part of #{REPO}#7.\n\n#{AiFlow::SubtasksSection::MANUAL_LINE}\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
+    ])
+    build = RecordingBuild.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+
+    Then "only the code node was built; the manual one is a human step, not a skip; the integration waits on it"
+    build.built == [1]
+    checklist = github.comment_edits.fetch(55)
+    checklist.include?("(2 not driven by this run)")
+    checklist.include?("[ ] #{REPO}#2 Ruleset: require codecov/patch — manual: a human does this step; close it when done")
+    !checklist.include?("no changes needed")
+    checklist.include?("[!] #{REPO}#4 Integration: Parent — blocked until #{REPO}#2 is resolved")
+
+    Cleanup
+    nil
+  end
+
+  test "once the human closed the manual sub-issue, its dependents build on the next run" do
+    Given "the same plan after the ruleset step was done and closed"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
+      # Parent
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::APPLIED_MARKER}
+
+      - #{REPO}#1 — Code work
+      - #{REPO}#2 — Ruleset: require codecov/patch (manual)
+      - #{REPO}#4 — Integration: Parent
+    BODY
+    github.seed_issue(REPO, 2, title: "Ruleset: require codecov/patch", body: "", state: "closed")
+    closed_manual = AiFlow::GitHub::Issue.new(
+      number: 2, title: "Ruleset: require codecov/patch", body: "Part of #{REPO}#7.\n\n#{AiFlow::SubtasksSection::MANUAL_LINE}\n",
+      html_url: "https://github.com/#{REPO}/issues/2", state: "closed", repo: REPO,
+    )
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Code work", "Part of #{REPO}#7.\n"),
+      closed_manual,
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
+    ])
+    build = RecordingBuild.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+
+    Then "the integration built after the code work; the closed manual step is satisfied and no longer listed"
+    build.built == [1, 4]
+    checklist = github.comment_edits.fetch(55)
+    checklist.include?("✅ **/build --split** — built 2 sub-issues in 2 waves")
+    !checklist.include?("Ruleset")
+
+    Cleanup
+    nil
+  end
+
   test "out-of-set dependencies gate on the referenced issue's open state" do
     Given "one sub-issue gated on an open external issue, another on a closed one"
     github = FakeGitHub.new
