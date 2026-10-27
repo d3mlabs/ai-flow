@@ -262,10 +262,10 @@ module AiFlow
 
           #{segment.instruction.empty? ? "" : "Additional instruction: #{segment.instruction}"}
 
-          Propose the FULL desired set of subtasks (not a delta): well-isolated, independently buildable where possible. Do NOT write subtask bodies — the parent plan is the spec, and sub-issues are thin tracking shards of it, so each title must be self-explanatory about its scope. Route each subtask to the repository its work lands in ("repo"). When a subtask depends on another, reference it by its 0-based index in your list. Reuse the exact title of any existing sub-issue that should stay — titles are the reconciliation key. If integration work across subtasks is needed, include a final integration subtask depending on the others.
+          Propose the FULL desired set of subtasks (not a delta): well-isolated, independently buildable where possible. Do NOT write subtask bodies — the parent plan is the spec, and sub-issues are thin tracking shards of it, so each title must be self-explanatory about its scope. Route each subtask to the repository its work lands in ("repo"). When a subtask depends on another, reference it by its 0-based index in your list. Reuse the exact title of any existing sub-issue that should stay — titles are the reconciliation key. If integration work across subtasks is needed, include a final integration subtask depending on the others. A step the plan describes as a human action rather than code — a repository ruleset or setting, a permission grant, an App installation, a secret — is still a subtask (dependents wait on it) but carries "manual": true: no agent is dispatched at it; a human does it and closes the issue.
 
-          OUTPUT FORMAT — exactly one JSON array, no other text ("depends_on" and "existing" are optional):
-          [{"title": "…", "repo": "owner/repo", "depends_on": [0, 2], "existing": "owner/repo#12"}, …]
+          OUTPUT FORMAT — exactly one JSON array, no other text ("depends_on", "existing" and "manual" are optional):
+          [{"title": "…", "repo": "owner/repo", "depends_on": [0, 2], "existing": "owner/repo#12", "manual": false}, …]
         PROMPT
       end
 
@@ -514,6 +514,7 @@ module AiFlow
       def create_sub_issue(entry, report)
         target = entry.repo
         body = "Part of #{@context.owner_repo}##{@context.number}.\n"
+        body = "#{body}\n#{SubtasksSection::MANUAL_LINE}\n" if entry.manual
         unless installed_repos.include?(target)
           report.warnings << "#{target} has no ai-flow App installation — created #{entry.title.inspect} " \
                              "on #{@context.owner_repo} instead (`Intended repo: #{target}`); " \
@@ -603,23 +604,28 @@ module AiFlow
       def rewrite_section(snapshot, entries, refs)
         lines = entries.each_with_index.map do |entry, index|
           ref = refs.fetch(index)
-          "#{ref.repo}##{ref.number} — #{entry.title}#{map_annotation(ref.disposition)}"
+          "#{ref.repo}##{ref.number} — #{entry.title}#{map_annotation(entry, ref.disposition)}"
         end
         guarded_patch(snapshot, SubtasksSection.replace(snapshot, SubtasksSection.render_applied(lines)))
       end
 
-      # Only external-issue dispositions are annotated in the linked map —
-      # /build --split reads them to know which nodes it cannot drive.
+      # The linked map annotates what /build --split must know to skip a
+      # node: the external-issue dispositions, and `manual` for a human step
+      # (`SubtasksSection::ANNOTATIONS`). Tokens are comma-joined in one
+      # parenthesis so an adopted manual entry reads `(adopted, manual)`.
       #
-      # @return [String]
-      sig { params(disposition: Disposition).returns(String) }
-      def map_annotation(disposition)
-        case disposition
-        when Disposition::Adopted then " (adopted)"
-        when Disposition::Referenced then " (referenced)"
-        when Disposition::Kept, Disposition::Created then ""
-        else T.absurd(disposition)
-        end
+      # @return [String] "" or " (token[, token])"
+      sig { params(entry: SubtasksSection::Entry, disposition: Disposition).returns(String) }
+      def map_annotation(entry, disposition)
+        tokens =
+          case disposition
+          when Disposition::Adopted then ["adopted"]
+          when Disposition::Referenced then ["referenced"]
+          when Disposition::Kept, Disposition::Created then []
+          else T.absurd(disposition)
+          end
+        tokens << "manual" if entry.manual
+        tokens.empty? ? "" : " (#{tokens.join(", ")})"
       end
 
       # ---- Result panels ----
@@ -660,6 +666,7 @@ module AiFlow
         entries.each_with_index do |entry, index|
           line = "- [#{index}] #{entry.repo} — #{entry.title}"
           line += " — #{existing_disposition(T.must(entry.existing), existing)}" if entry.existing
+          line += " — manual (a human step; /build --split will not dispatch it)" if entry.manual
           line += " → after #{entry.depends_on.map { |dep| "[#{dep}]" }.join(", ")}" unless entry.depends_on.empty?
           lines << line
         end

@@ -171,20 +171,23 @@ class AiFlow::Commands::SplitTest < Minitest::Test
         {"title": "Owned elsewhere", "repo": "d3mlabs/other", "existing": "d3mlabs/other#43"},
         {"title": "Already ours", "repo": "d3mlabs/other", "existing": "d3mlabs/other#44"},
         {"title": "New work", "repo": "#{REPO}", "depends_on": [0, 2]},
-        {"title": "Behind a wall", "repo": "d3mlabs/private", "existing": "d3mlabs/private#9"}
+        {"title": "Behind a wall", "repo": "d3mlabs/private", "existing": "d3mlabs/private#9"},
+        {"title": "Ruleset", "repo": "#{REPO}", "manual": true, "depends_on": [3]}
       ]
     JSON
 
     When "staging"
     run_split(github: github, agent: agent, comment: "/split --dry")
 
-    Then "each line carries its index, the existing: ones say adopt / link / kept / unreadable, the dependent one its edges, and nothing was mutated"
+    Then "each line carries its index, the existing: ones say adopt / link / kept / unreadable, the manual one says manual, the dependent ones their edges, and nothing was mutated"
     panel = github.comment_edits.fetch(55)
     panel.include?("- [0] d3mlabs/other — Unowned — will adopt d3mlabs/other#42 (parentless)")
     panel.include?("- [1] d3mlabs/other — Owned elsewhere — will link d3mlabs/other#43 (owned by d3mlabs/plans#51)")
     panel.include?("- [2] d3mlabs/other — Already ours — kept d3mlabs/other#44 (already a sub-issue of this plan)")
     panel.include?("- [3] #{REPO} — New work → after [0], [2]")
     panel.include?("- [4] d3mlabs/private — Behind a wall — will adopt? d3mlabs/private#9 (parent unreadable)")
+    panel.include?("- [5] #{REPO} — Ruleset — manual (a human step; /build --split will not dispatch it) → after [3]")
+    github.issue(REPO, 7).body.include?("- title: \"Ruleset\"\n  repo: #{REPO}\n  manual: true\n  depends_on: [3]\n")
     github.calls.none? { |kind, *| kind == :add_sub_issue }
     github.calls.none? { |kind, arg| kind == :graphql && arg.is_a?(Hash) && arg.key?(:title) }
 
@@ -288,6 +291,78 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     body.include?("- d3mlabs/other#42 — Adoptable work (adopted)")
     body.include?("- d3mlabs/other#43 — Owned elsewhere (referenced)")
     github.comment_edits.fetch(55).include?("adopted 1, referenced 1")
+
+    Cleanup
+    nil
+  end
+
+  test "manual: true travels from the spec into the created sub-issue's body and the linked map, also on an adopted entry" do
+    Given "a staged spec with one manual entry to create and one manual entry adopting a parentless issue"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
+      # Parent plan
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::SPEC_MARKER}
+
+      ```yaml
+      - title: "Ruleset: require codecov/patch"
+        repo: d3mlabs/demo
+        manual: true
+
+      - title: "Grant the bot read on the engine repo"
+        repo: d3mlabs/demo
+        existing: d3mlabs/other#42
+        manual: true
+
+      - title: "Code work"
+        repo: d3mlabs/demo
+        depends_on: [0]
+      ```
+    BODY
+    github.seed_issue("d3mlabs/other", 42, title: "Grant the bot read on the engine repo", body: "")
+
+    When "applying"
+    run_split(github: github, agent: FakeAgent.new([]), comment: "/split --apply")
+
+    Then "the created manual issue says so in its body, both manual entries are annotated in the map, the code entry is not"
+    created = github.issue(REPO, 101)
+    created.body.include?("Part of #{REPO}#7.")
+    created.body.include?(AiFlow::SubtasksSection::MANUAL_LINE)
+    !github.issue(REPO, 102).body.include?("Manual:")
+    body = github.issue(REPO, 7).body
+    body.include?("- #{REPO}#101 — Ruleset: require codecov/patch (manual)")
+    body.include?("- d3mlabs/other#42 — Grant the bot read on the engine repo (adopted, manual)")
+    body.include?("- #{REPO}#102 — Code work\n")
+    AiFlow::SubtasksSection.applied_annotations(body) == {
+      "#{REPO}#101" => ["manual"],
+      "d3mlabs/other#42" => ["adopted", "manual"],
+    }
+
+    Cleanup
+    nil
+  end
+
+  test "manual: must be a boolean" do
+    Given "a staged spec with a stringly manual key"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
+      # Parent plan
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::SPEC_MARKER}
+
+      ```yaml
+      - title: "Ruleset"
+        manual: yes please
+      ```
+    BODY
+
+    When "applying"
+    run_split(github: github, agent: FakeAgent.new([]), comment: "/split --apply")
+
+    Then
+    raises AiFlow::SubtasksSection::Error
 
     Cleanup
     nil

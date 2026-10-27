@@ -66,7 +66,15 @@ module AiFlow
           end
         end
 
-        # A dependency is skipped, blocked, or an open external issue.
+        # A human step (`manual: true` in the spec, `(manual)` in the applied
+        # map): a ruleset, a grant, an App install. Not failure, not an
+        # external owner — just not /build's to do. Never enters a wave;
+        # dependents wait until the human closes it.
+        class Manual
+          include Progress
+        end
+
+        # A dependency is skipped, manual, blocked, or an open external issue.
         class Blocked
           extend T::Sig
           include Progress
@@ -155,9 +163,11 @@ module AiFlow
         @github.sub_issues(@context.owner_repo, @context.number).select(&:open?)
       end
 
-      # Pre-mark every node the orchestrator cannot drive, plus everything
-      # (transitively) depending on one — those enter the checklist as
-      # skipped/blocked and never reach the build loop.
+      # Pre-mark every node the orchestrator does not drive (external owner,
+      # fallback placeholder, human step), plus everything (transitively)
+      # depending on one — those enter the checklist under "not driven" and
+      # never reach the build loop. A manual node is a human's regardless of
+      # who owns the issue, so `manual` wins over adopted/referenced.
       #
       # @return [Hash{String => Progress}] ref => progress
       sig do
@@ -171,13 +181,16 @@ module AiFlow
 
         sub_issues.each do |issue|
           ref = ref_of(issue)
-          if (intended = issue.body[/^Intended repo:\s*(.+)$/, 1])
+          tokens = annotations.fetch(ref, [])
+          if tokens.include?("manual")
+            progress[ref] = Progress::Manual.new
+          elsif (intended = issue.body[/^Intended repo:\s*(.+)$/, 1])
             progress[ref] = Progress::Skipped.new(
               reason: "fallback placeholder — the work lands in #{intended.strip}, " \
                       "where the ai-flow App is not installed",
             )
-          elsif (annotation = annotations[ref])
-            progress[ref] = Progress::Skipped.new(reason: "#{annotation} external issue — owned outside this plan")
+          elsif (disposition = tokens.first)
+            progress[ref] = Progress::Skipped.new(reason: "#{disposition} external issue — owned outside this plan")
           end
         end
 
@@ -185,8 +198,10 @@ module AiFlow
         progress
       end
 
-      # A dependent is blocked when any dependency is skipped/blocked, or is
-      # an external issue (outside the sub-issue set) still open. Fixpoint
+      # A dependent is blocked when any dependency is not driven (skipped,
+      # manual, blocked), or is an external issue (outside the sub-issue
+      # set) still open. A closed manual step is not in the open sub-issue
+      # set at all, so its dependents are free on the next run. Fixpoint
       # loop, since blockage travels along dependency chains.
       #
       # @return [void] mutates `progress` in place
@@ -229,7 +244,7 @@ module AiFlow
       #   will not build
       sig { params(entry: T.nilable(Progress)).returns(T::Boolean) }
       def undrivable?(entry)
-        entry.is_a?(Progress::Skipped) || entry.is_a?(Progress::Blocked)
+        entry.is_a?(Progress::Skipped) || entry.is_a?(Progress::Manual) || entry.is_a?(Progress::Blocked)
       end
 
       # @return [Boolean] whether an out-of-set dependency is still open — a
@@ -335,9 +350,9 @@ module AiFlow
         waves
       end
 
-      # The live checklist: one in-place edit per completed build. Skipped
-      # and blocked nodes are listed under the waves with their reasons —
-      # visible, never silent.
+      # The live checklist: one in-place edit per completed build. Nodes the
+      # run does not drive (skipped, manual, blocked) are listed under the
+      # waves with their reasons — visible, never silent.
       #
       # @return [void]
       sig do
@@ -373,7 +388,7 @@ module AiFlow
       def checklist_headline(waves, undrivable, progress)
         buildable = waves.flatten
         done = buildable.all? { |issue| progress.key?(ref_of(issue)) }
-        suffix = undrivable.empty? ? "" : " (#{undrivable.size} skipped/blocked)"
+        suffix = undrivable.empty? ? "" : " (#{undrivable.size} not driven by this run)"
         if done
           "#{undrivable.empty? ? "✅" : "⚠️"} **/build --split** — built #{buildable.size} sub-issues " \
             "in #{waves.size} waves#{suffix}"
@@ -391,6 +406,7 @@ module AiFlow
           when Progress::NoChanges then ["[-]", " — no changes needed"]
           when Progress::Built then ["[x]", " — #{entry.prs.map(&:html_url).join(", ")}"]
           when Progress::Skipped then ["[!]", " — #{entry.reason}"]
+          when Progress::Manual then ["[ ]", " — manual: a human does this step; close it when done"]
           when Progress::Blocked then ["[!]", " — #{entry.reason}"]
           else T.absurd(entry)
           end
