@@ -21,7 +21,11 @@ module AiFlow
   # with plans#31's quarantined-discovery channel; until then the menu is
   # rendered as guidance. Expensive derived caches and authority-bearing
   # endpoints (shared DDC, container engines) get the category-4/5 note:
-  # they are covered by design and never become widening proposals.
+  # they are covered by design and never become widening proposals. Two
+  # more rungs name non-grants (ai-flow#99): the runner host's sudo edge
+  # (converged with `dev runner register`, not declared anywhere) and
+  # temporary paths (a sandbox rule or the pass's own tmpdir — nothing to
+  # grant).
   class Denials
     extend T::Sig
 
@@ -97,6 +101,26 @@ module AiFlow
         /\bsocket\b/i,
         /\bdocker\b/i,
         /\bcolima\b/i,
+      ].freeze,
+      T::Array[Regexp],
+    )
+
+    # A want that names the runner host's sudo edge (dev's brew escalation,
+    # dev#337/dev#361): the fix is converging the host with `dev runner
+    # register`, never a declarative-layer PR — there is nothing to declare
+    # (ai-flow#99). Matched against subject and reason: the agent usually
+    # states the edge in the reason, with a bare capability as subject.
+    HOST_CONVERGE_PATTERN = /\bsudo(?:ers)?\b/i
+
+    # Transient locations: the pass's own tmpdir or the system temp root.
+    # A denial there is a sandbox filename rule (the dev#359 `.zshrc`
+    # shape) or a path the agent itself created, so no grant exists to
+    # propose (ai-flow#99). Anchored to the path start — a project file
+    # with "tmp" in its name is not a temporary path.
+    TEMPORARY_PATH_PATTERNS = T.let(
+      [
+        %r{\A(?:/private)?/var/folders/},
+        %r{\A(?:/private)?/tmp/},
       ].freeze,
       T::Array[Regexp],
     )
@@ -219,8 +243,10 @@ module AiFlow
       end
 
       # The triage ladder, spoken per want. Category-4/5 subjects get the
-      # by-design note; everything else gets the declarative-layer menu the
-      # human picks from. Neither is ever a host mutation.
+      # by-design note; a sudo edge gets the runner-converge note; a
+      # temporary path gets the nothing-to-grant note; everything else gets
+      # the declarative-layer menu the human picks from. None is ever a
+      # host mutation the run performs.
       #
       # @param want [Want]
       # @return [String]
@@ -228,6 +254,10 @@ module AiFlow
       def resolution(want)
         if CATEGORY_NOTE_PATTERNS.any? { |pattern| pattern.match?(want.subject) }
           "covered by design (plans#26 categories 4–5: cooperative shared DDC, per-user container engine) — not a widening"
+        elsif HOST_CONVERGE_PATTERN.match?(want.subject) || HOST_CONVERGE_PATTERN.match?(want.reason)
+          "a runner-host edge: converge this runner with `dev runner register` (dev#361) — not a declarative-layer change"
+        elsif TEMPORARY_PATH_PATTERNS.any? { |pattern| pattern.match?(want.subject) }
+          "a temporary path — nothing to grant: a sandbox filename rule or the pass's own tmpdir; if the work needed it, the fix is in the code or test that wrote there"
         else
           "resolve declaratively: org-wide → tap Brewfile PR; this project → dependencies.rb PR (ready-to-apply drafts arrive with plans#31)"
         end

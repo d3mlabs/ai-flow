@@ -232,6 +232,75 @@ class AiFlow::DenialsTest < Minitest::Test
     lines.first&.include?("observed")
   end
 
+  test "a sudo/sudoers want renders the runner-host note — a dev runner register, never a declarative PR (ai-flow#99)" do
+    Given "a want whose reason names the sudoers edge the agent hit"
+    want = AiFlow::Denials::Want.new(
+      subject: "sudo -n -u jpduchesne brew", reason: "dev up escalates brew writes; sudoers refused", channel: :declared,
+    )
+
+    When "rendering"
+    lines = AiFlow::Denials.render([want])
+
+    Then "the host-converge note renders, no Brewfile menu"
+    lines.any? { |line| line.include?("dev runner register") }
+    lines.none? { |line| line.include?("Brewfile") }
+  end
+
+  test "a sudoers want is recognized from the reason alone when the subject is a bare capability" do
+    Given "a capability subject with the edge named in the reason"
+    want = AiFlow::Denials::Want.new(
+      subject: "brew write access", reason: "a sudoers rule for the runner user", channel: :declared,
+    )
+
+    When "rendering"
+    lines = AiFlow::Denials.render([want])
+
+    Then "the host-converge note renders"
+    lines.any? { |line| line.include?("dev runner register") }
+  end
+
+  test "a temporary-path want renders the nothing-to-grant note, never a widening menu (ai-flow#99)" do
+    Given "a want under the agent's own tmpdir"
+    want = AiFlow::Denials::Want.new(
+      subject: "/private/var/folders/x1/T/tmp123/.zshrc", reason: "shadowenv hook", channel: :observed,
+    )
+
+    When "rendering"
+    lines = AiFlow::Denials.render([want])
+
+    Then "the temporary-path note renders, no menu"
+    lines.any? { |line| line.include?("nothing to grant") }
+    lines.none? { |line| line.include?("Brewfile") }
+  end
+
+  test "temporary-path roots: /var/folders, /private/var/folders, /tmp, /private/tmp" do
+    Given "one path under each root"
+    subjects = [
+      "/var/folders/ab/cd/T/ai-flow-build-xyz/file",
+      "/private/var/folders/ab/cd/T/file",
+      "/tmp/scratch/file",
+      "/private/tmp/file",
+    ]
+
+    Expect "each renders the nothing-to-grant note"
+    subjects.all? do |subject|
+      AiFlow::Denials.render([AiFlow::Denials::Want.new(subject: subject, reason: "", channel: :observed)])
+        .any? { |line| line.include?("nothing to grant") }
+    end
+  end
+
+  test "a path that merely contains tmp is not a temporary path" do
+    Given "a project file with tmp in its name"
+    want = AiFlow::Denials::Want.new(subject: "/Users/Shared/src/tmp_parser.rb", reason: "", channel: :observed)
+
+    When "rendering"
+    lines = AiFlow::Denials.render([want])
+
+    Then "the declarative menu renders"
+    lines.none? { |line| line.include?("nothing to grant") }
+    lines.any? { |line| line.include?("Brewfile") }
+  end
+
   test "rendering an empty list is empty" do
     Expect "empty in, empty out"
     AiFlow::Denials.render([]).empty?

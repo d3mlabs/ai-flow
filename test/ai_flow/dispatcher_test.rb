@@ -36,6 +36,38 @@ class AiFlow::DispatcherTest < Minitest::Test
     end
   end
 
+  # A /build executor whose checkouts are dev projects that cannot be
+  # provisioned: the worktree add leaves a dev.yml behind and `dev deps
+  # install` fails — the ai-flow#99 shape, seen end to end through the
+  # dispatcher's failure reporting.
+  class UnprovisionableExecutor < AiFlow::Executor
+    def initialize
+      @command_lines = []
+    end
+
+    def refresh_auth!; end
+    def share_workspace(_dir); end
+
+    def workspace_base
+      nil
+    end
+
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      if argv.take(3) == %w[git worktree add]
+        checkout = argv.fetch(4)
+        FileUtils.mkdir_p(checkout)
+        File.write(File.join(checkout, "dev.yml"), "name: demo\n")
+      end
+      ["", "", true]
+    end
+
+    def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
+      return ["Error: brew: sudo -n refused (a password is required)", false] if argv.take(3) == %w[dev deps install]
+
+      ["", true]
+    end
+  end
+
   test "an unauthorized commenter is ignored entirely" do
     Given "a command comment from a non-member without repo access"
     github = FakeGitHub.new
@@ -154,6 +186,27 @@ class AiFlow::DispatcherTest < Minitest::Test
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  test "a workspace that cannot be provisioned fails as the ⚠️ panel with dev's stderr, no agent pass (ai-flow#99)" do
+    Given "a /build on an issue whose checkout is a dev project that will not provision"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build", env: ACTIONS_ENV)
+    agent = FakeAgent.new(["done"])
+
+    When "dispatching"
+    result = build_dispatcher(github: github, agent: agent, context: context, executor: UnprovisionableExecutor.new).run
+
+    Then "the run fails, the comment names the provisioning failure and carries dev's stderr, no pass ran"
+    result == false
+    github.comment_edits.fetch(55).include?("ai-flow failed")
+    github.comment_edits.fetch(55).include?("dev deps install")
+    github.comment_edits.fetch(55).include?("sudo -n refused")
+    agent.prompts.empty?
+
+    Cleanup
+    nil
   end
 
   test "a malformed repo config fails as the ⚠️ panel, not a crash" do

@@ -26,19 +26,27 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     # reports code. `fail_on` substrings make matching command lines fail,
     # for the capture failure paths. `clean_dirs` substrings make the staged
     # diff report empty for matching chdirs — the untouched target of a
-    # multi-target build.
+    # multi-target build. `dev_project` makes every checkout the fake
+    # populates (worktree add, gh clone) carry a dev.yml — the provisioning
+    # gate reads the real file, so the fake must put one there.
     def initialize(dirty: true, workflows_patch: "", capture_patch: "", capture_staged: [], fail_on: [],
-      clean_dirs: [])
+      clean_dirs: [], dev_project: false)
       @dirty = dirty
       @workflows_patch = workflows_patch
       @capture_patch = capture_patch
       @capture_staged = capture_staged
       @fail_on = fail_on
       @clean_dirs = clean_dirs
+      @dev_project = dev_project
       @command_lines = []
       @refreshes = 0
       @shared_workspaces = []
+      @stream_chdirs = []
     end
+
+    # Where each streamed command ran — the provisioning gate must run in
+    # the checkout it provisions, not the job checkout.
+    attr_reader :stream_chdirs
 
     def refresh_auth!
       @refreshes += 1
@@ -62,6 +70,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
       line = argv.join(" ")
       @command_lines << line
+      @stream_chdirs << chdir
       return ["simulated hook failure", false] if @fail_on.any? { |needle| line.include?(needle) }
 
       # The real stream yields output lines live — the session hooks relay
@@ -75,6 +84,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }
 
       @applied = true if argv.take(2) == %w[git apply]
+      populate_checkout(argv)
       out =
         if argv.join(" ").start_with?("git diff --cached -- .github/workflows")
           @workflows_patch
@@ -94,6 +104,27 @@ class AiFlow::Commands::BuildTest < Minitest::Test
           ""
         end
       [out, "", true]
+    end
+
+    private
+
+    # The real worktree add / clone leave a populated directory behind; the
+    # fake leaves the dev.yml marker when the test declares a dev project
+    # (and nothing otherwise — a checkout with no dev.yml is the non-dev
+    # project case).
+    def populate_checkout(argv)
+      return unless @dev_project
+
+      checkout =
+        if argv.take(3) == %w[git worktree add]
+          argv.fetch(4)
+        elsif argv.take(3) == %w[gh repo clone]
+          argv.fetch(4)
+        end
+      return unless checkout
+
+      FileUtils.mkdir_p(checkout)
+      File.write(File.join(checkout, "dev.yml"), "name: demo\n")
     end
   end
 
@@ -418,6 +449,116 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  # ---- workspace provisioning (ai-flow#99) ----
+
+  test "a dev project is provisioned dispatcher-side, in the checkout, after branching and before the pass" do
+    Given "an issue in a repo that carries a dev.yml"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(dev_project: true)
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent)
+    command_lines = executor.command_lines
+    provision_at = T.must(command_lines.index("dev deps install"))
+
+    Then "dev deps install runs once, in the checkout, between the branch cut and the post-pass staging"
+    command_lines.count("dev deps install") == 1
+    T.must(command_lines.index("git checkout -B ai/7-carve-system")) < provision_at
+    provision_at < T.must(command_lines.index("git add -A"))
+    T.must(executor.stream_chdirs.first).end_with?("/d3mlabs-demo")
+    agent.prompts.size == 1
+
+    Cleanup
+    nil
+  end
+
+  test "a checkout without dev.yml is not provisioned — nothing to install" do
+    Given "an issue in a repo with no dev.yml"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+
+    Then "no dev call, the pass still runs"
+    executor.command_lines.none? { |line| line.start_with?("dev ") }
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
+  test "a failed provisioning refuses the pass (WorkspaceProvisionError): no launch, no PR, dev's stderr carried" do
+    Given "a dev project whose dev deps install fails"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(dev_project: true, fail_on: ["dev deps install"])
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    error = T.let(nil, T.nilable(StandardError))
+    begin
+      run_build(github: github, executor: executor, agent: agent)
+    rescue AiFlow::Commands::Build::WorkspaceProvisionError => e
+      error = e
+    end
+
+    Then "the typed error names the repo, the command, and dev's stderr; the agent never spawned; no PR"
+    T.must(error).message.include?(REPO)
+    T.must(error).message.include?("dev deps install")
+    T.must(error).message.include?("simulated hook failure")
+    agent.prompts.empty?
+    github.calls.none? { |call| call.first == :create_pull_request }
+
+    Cleanup
+    nil
+  end
+
+  test "every target of a multi-target build is provisioned, each in its own checkout" do
+    Given "an issue targeting two dev projects"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\nTarget repos: d3mlabs/demo, d3mlabs/other\n")
+    executor = RecordingExecutor.new(dev_project: true)
+
+    When "building"
+    run_build(github: github, executor: executor)
+
+    Then "two installs, one per checkout"
+    executor.command_lines.count("dev deps install") == 2
+    executor.stream_chdirs.map { |dir| File.basename(T.must(dir)) }.sort == %w[d3mlabs-demo d3mlabs-other]
+
+    Cleanup
+    nil
+  end
+
+  test "the PR-iteration pass provisions the job checkout before launching" do
+    Given "a PR in a dev project, with feedback to address"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    github.seed_issue_comment(REPO, 7, id: 40, body: "please also update the README")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build", pull_request: true)
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nUpdated the README."])
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    File.write(File.join(dir, "dev.yml"), "name: demo\n")
+
+    When "iterating"
+    run_build(github: github, executor: executor, context: context, agent: agent, workdir: dir)
+    command_lines = executor.command_lines
+
+    Then "dev deps install runs in the job checkout, ahead of the post-pass staging"
+    T.must(command_lines.index("dev deps install")) <
+      T.must(command_lines.index { |line| line.start_with?("git add -A") })
+    executor.stream_chdirs == [dir]
+    agent.prompts.size == 1
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "/build on an issue targeting another repo clones it instead of adding a worktree" do
