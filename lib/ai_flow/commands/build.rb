@@ -25,11 +25,24 @@ module AiFlow
     class Build
       extend T::Sig
 
+      # A /build pass could not start: the workspace never reached the
+      # state the agent is promised. Dispatcher reports these as the ⚠️
+      # panel (the run goes red with the reason on the comment, not a
+      # stack trace in the job log).
+      class Error < StandardError; end
+
       # A repo-owned mcp.session.start hook failed: the pass's tool surface
       # (e.g. the editor that serves the MCP port) never came up, so the
       # build must not run half-equipped. The stop hook still fires via the
       # ensure before this surfaces.
-      class McpSessionError < StandardError; end
+      class McpSessionError < Error; end
+
+      # A dev project's checkout could not be provisioned (`dev deps
+      # install` failed, ai-flow#99): the agent would start without the
+      # toolchain the repo declares and improvise one — the dev#350 shape.
+      # Refusing here keeps the boundary legible: the failure is the
+      # dispatcher's, with dev's stderr, before any agent spawns.
+      class WorkspaceProvisionError < Error; end
 
       # The App deliberately lacks the `workflows` permission (see
       # docs/attribution.md): GitHub rejects any App push touching workflow
@@ -194,6 +207,7 @@ module AiFlow
           checkouts.each do |repo, checkout|
             stack_on_bases(checkout, bases_by_repo.fetch(repo, []))
             create_branch(checkout, branch)
+            provision_workspace(repo, checkout)
           end
           # The first declared target is the primary: the agent's working
           # directory, the capture surface, and the PR that closes the plan.
@@ -324,6 +338,7 @@ module AiFlow
           return
         end
 
+        provision_workspace(@context.owner_repo, @workdir)
         capture = RepoConfig.load(@workdir).learn_on_build?
         @learn.seed_capture(@workdir, pr_capture_source) if capture
         output = @agent.launch(
@@ -865,6 +880,39 @@ module AiFlow
       sig { params(worktree: String, branch: String).void }
       def create_branch(worktree, branch)
         run!(["git", "checkout", "-B", branch], chdir: worktree)
+      end
+
+      # The marker of a dev project: the repo declares its toolchain through
+      # dev, so the checkout needs provisioning before an agent can work in
+      # it.
+      DEV_PROJECT_FILE = "dev.yml"
+
+      # Provision a dev project's checkout before the pass (ai-flow#99):
+      # `dev deps install` — the headless install the runner job already
+      # uses for ai-flow's own toolchain — brings the repo's pinned Ruby
+      # and locked gems in from the declarative layers. It runs
+      # dispatcher-side, as the runner user: that is the user whose brew
+      # prefix (and sudoers edge, dev#361) the box was converged for, so
+      # the agent's own later `dev up` finds everything installed and has
+      # nothing to write. Streamed live — a first install can run minutes
+      # and the run page follows stdout. A checkout without dev.yml is not
+      # a dev project and needs nothing.
+      #
+      # @param repo [String] owner/repo, for the error message
+      # @param checkout [String]
+      # @return [void]
+      # @raise [WorkspaceProvisionError] when the install fails, carrying
+      #   dev's stderr
+      sig { params(repo: String, checkout: String).void }
+      def provision_workspace(repo, checkout)
+        return unless File.exist?(File.join(checkout, DEV_PROJECT_FILE))
+
+        $stdout.puts "ai-flow provision: dev deps install (#{repo})"
+        err, ok = @executor.stream("dev", "deps", "install", chdir: checkout) { |line| $stdout.puts(line) }
+        return if ok
+
+        raise WorkspaceProvisionError,
+          "#{repo} could not be provisioned — dev deps install failed: #{err.strip}"
       end
 
       # Move a checkout onto its stacked base before the issue branch is
