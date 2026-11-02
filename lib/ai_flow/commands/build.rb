@@ -508,18 +508,21 @@ module AiFlow
 
       # Learn's nilable land_capture contract flattens to a panel-block
       # contribution at this single boundary — capture off and "nothing
-      # landed" both contribute no blocks.
+      # landed" both contribute no blocks. The rubric's FIX lines ride
+      # along (ai-flow#103): the capture prompt asks for them, so the
+      # capture surface relays them — in the run log alone they go unread.
       #
       # @param capture [Boolean] whether capture ran for this pass
       # @param output [String] the pass's agent output (may carry a PROMOTE
-      #   declaration — see Learn's org routing)
-      # @return [Array<String>] zero or one landed-capture panel blocks
+      #   declaration — see Learn's org routing — and FIX lines)
+      # @return [Array<String>] the landed-capture block, if any, then one
+      #   block per declared root-cause fix
       sig { params(capture: T::Boolean, output: String).returns(T::Array[String]) }
       def landed_capture_notes(capture, output)
         return [] unless capture
 
         note = @learn.land_capture(result: output)
-        note ? [note] : []
+        (note ? [note] : []) + @learn.fix_notes(output)
       end
 
       # @return [String] numbered THREAD blocks, then the fresh conversation

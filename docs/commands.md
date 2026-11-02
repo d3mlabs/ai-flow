@@ -440,10 +440,10 @@ question: if a code, test, or tooling change would remove the sharp edge
 outright, the coping procedure is not the learning. The pass captures the
 design rule the fix embodies (or nothing) and declares the fix on a final
 output line, `FIX: <where it lives> — <the one-line change>` (one per
-line). `/learn` relays each declared fix as a panel note — nothing is
-applied or filed automatically; the humans at the gate own the follow-up.
-In `/build` passes the summary block already reaches the result comment,
-so a declared fix rides along there.
+line). Every surface carrying the rubric — `/learn`, and `/build` with
+capture on — relays each declared fix as the same `🔧` panel note, next to
+the capture outcome; nothing is applied or filed automatically, and the
+humans at the gate own the follow-up.
 
 > ℹ️ **/learn** — no learning drafted: the pass proposed a root-cause fix instead.
 > 🔧 proposed root-cause fix (for a human to file): dev — make the scrub guard spawn its own bundler activation

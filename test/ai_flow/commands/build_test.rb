@@ -1395,4 +1395,85 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  # ---- The FIX contract on the build surface (ai-flow#103) ----
+
+  FIX_NOTE = "🔧 proposed root-cause fix (for a human to file): "
+
+  test "an issue /build relays the pass's FIX lines to its panel next to the boundary want" do
+    Given "a build pass that declared two root-cause fixes and surfaced one boundary want"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    agent = FakeAgent.new(
+      ["done\nFIX: dev `OciRepository` — skip the registry check for an unchanged pin\n" \
+       "FIX: dev `BrewRepository` — run read-only brew queries with HOMEBREW_NO_AUTO_UPDATE=1"],
+      wants: [AiFlow::Denials::Want.new(subject: "/etc/hosts", reason: "inspect DNS overrides", channel: :declared)],
+    )
+    segment = AiFlow::CommentParser.new.parse("/build").fetch(0)
+
+    When "building with the agent-aware result writer"
+    AiFlow::Commands::Build.new(
+      context: ContextBuilder.issue_comment(number: 7, body: "/build"),
+      github: github, agent: agent, executor: RecordingExecutor.new, workdir: Dir.pwd,
+      result_writer: AiFlow::ResultWriter.new(github: github, agent: agent),
+      org_invariants: empty_org_invariants,
+    ).run(segment)
+
+    Then "the panel carries both 🔧 notes and the one want"
+    panel = github.comment_edits.fetch(55)
+    panel.include?("#{FIX_NOTE}dev `OciRepository` — skip the registry check for an unchanged pin")
+    panel.include?("#{FIX_NOTE}dev `BrewRepository` — run read-only brew queries with HOMEBREW_NO_AUTO_UPDATE=1")
+    panel.include?("`/etc/hosts` — inspect DNS overrides")
+    panel.scan("🔧").size == 2
+
+    Cleanup
+    nil
+  end
+
+  test "a FIX line the pass restates renders once" do
+    Given "a rambling pass that declared the same fix twice"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    agent = FakeAgent.new(["FIX: demo — inject the runner\n…reconsidering…\nFIX: demo — inject the runner\ndone"])
+
+    When "building"
+    run_build(github: github, executor: RecordingExecutor.new, agent: agent)
+
+    Then "one 🔧 note"
+    github.comment_edits.fetch(55).scan("🔧").size == 1
+
+    Cleanup
+    nil
+  end
+
+  test "a pass with no FIX lines renders no 🔧 note" do
+    Given "an ordinary build pass"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+
+    When "building"
+    run_build(github: github, executor: RecordingExecutor.new, agent: FakeAgent.new(["done, no fix to propose"]))
+
+    Then "no 🔧 anywhere on the panel"
+    !github.comment_edits.fetch(55).include?("🔧")
+
+    Cleanup
+    nil
+  end
+
+  test "a PR iteration relays FIX lines too" do
+    Given "an iteration pass that declared a fix"
+    github = FakeGitHub.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed.\nFIX: demo — make the guard spawn its own bundler activation"])
+
+    When "iterating"
+    run_build(github: github, executor: RecordingExecutor.new, body: "/build fix the walk", context: context, agent: agent)
+
+    Then "the panel carries the note"
+    github.comment_edits.fetch(55).include?("#{FIX_NOTE}demo — make the guard spawn its own bundler activation")
+
+    Cleanup
+    nil
+  end
 end
