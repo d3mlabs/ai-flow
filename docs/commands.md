@@ -272,8 +272,10 @@ thread-scoped and act PR-scoped:
 
 The refused comment is not lost: the next top-level sweep reads its
 instruction (`/build should be a strong type` → "should be a strong type")
-as the thread's feedback, alongside any plain replies. Threads started by
-other commands (`/ask`) are handled conversations and stay out of the sweep.
+as the thread's feedback, alongside any plain replies. The same holds for
+any command-led thread the bot never answered (a dropped `/ask`): it is
+outstanding feedback until the bot's reply is the thread's last word. A
+human replying after the bot reopens it, like any unresolved thread.
 
 ## /build --split
 

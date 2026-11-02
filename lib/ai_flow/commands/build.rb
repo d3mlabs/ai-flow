@@ -393,12 +393,16 @@ module AiFlow
                .filter_map { |thread| trusted_thread(thread) }
       end
 
-      # A thread another command started is a handled conversation (a
-      # threaded /ask and its answer), not outstanding feedback. A thread a
-      # /build started is the exception: refuse_review_thread turned it away
-      # with the promise that this sweep picks it up, so its instruction (and
-      # quote) stands in for the first comment's text — the command line and
-      # the appended refusal panel are not feedback. A bare refused /build
+      # A thread a command started is a handled conversation only on
+      # evidence: the bot's reply is the thread's last word (a threaded /ask
+      # and its answer; a /build-led thread this sweep already replied to).
+      # Otherwise it is outstanding (ai-flow#75: a dropped or refused
+      # command would stay invisible forever) — and a human writing after
+      # the bot reopens it, as any plain thread stays open until resolved.
+      # An outstanding command comment is swept as the feedback it carries:
+      # its quote and instruction stand in for the first comment's text —
+      # the command line and any appended panel (the /build refusal, which
+      # promised exactly this pickup) are not feedback. A bare command
       # leaves only the thread's replies.
       #
       # @param thread [AiFlow::GitHub::ReviewThread]
@@ -411,9 +415,7 @@ module AiFlow
 
         segments = CommentParser.new(prefix: @prefix).parse(first.body)
         return thread if segments.empty?
-        # The parser rejects a /build sharing a comment with any other
-        # command, so a /build-led comment is exactly one segment.
-        return nil unless T.must(segments.first).command == Command::Build.new
+        return nil if thread.comments.last&.author == CommitIdentity.bot_login
 
         feedback = segments.map { |segment| [segment.quote, segment.instruction].compact.join("\n\n") }.join("\n\n").strip
         replies = thread.comments.drop(1)
