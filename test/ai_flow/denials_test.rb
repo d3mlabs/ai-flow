@@ -146,6 +146,44 @@ class AiFlow::DenialsTest < Minitest::Test
     wants.length == 1
   end
 
+  test "a denial wrapped by CLI::UI at 80 columns is reassembled: the path on the next line is the subject (ai-flow#111)" do
+    Given "dev test's framed, word-wrapped stderr from a passing test that exercises its EACCES rescue " \
+          "(the wrap leaves a trailing space on each broken line)"
+    text = [
+      "┃┃ Progress: |=======================================================dev: Could ",
+      "┃┃ not add shadowenv hook to shell profile: Permission denied @ rb_sysopen - ",
+      "┃┃ /var/folders/3d/4jk0nzb959972_kx06p2hnbm0000gn/T/shadowenv-hook-test-20261102-65510-mgs72i/.zshrc",
+      "┃┃ =============|",
+      "",
+    ].join("\n")
+
+    When "scanning"
+    wants = AiFlow::Denials.observed_in(text)
+
+    Then "one want, keyed by the denied path — so the temporary-path rung applies, not the widening menu"
+    wants.map(&:subject) ==
+      ["/var/folders/3d/4jk0nzb959972_kx06p2hnbm0000gn/T/shadowenv-hook-test-20261102-65510-mgs72i/.zshrc"]
+    AiFlow::Denials.render(wants).fetch(1).include?("a temporary path — nothing to grant")
+  end
+
+  test "a wrapped denial on a non-temporary path keeps that path as the subject" do
+    When "the denied path wrapped onto its own line"
+    wants = AiFlow::Denials.observed_in(
+      "┃ cp: cannot create regular file: Permission denied @ rb_sysopen -\n┃ /Users/Shared/dev/cache/x\n",
+    )
+
+    Then
+    wants.map(&:subject) == ["/Users/Shared/dev/cache/x"]
+  end
+
+  test "a framed pathless denial falls back to the line without its frame prefix" do
+    When
+    wants = AiFlow::Denials.observed_in("┃┃ docker: permission denied while trying to connect\n")
+
+    Then
+    wants.map(&:subject) == ["docker: permission denied while trying to connect"]
+  end
+
   # ---- rendering hygiene (agent-authored text lands in GitHub comments) ----
 
   test "rendered subjects and reasons are sanitized: no code-span breakout, bounded length" do

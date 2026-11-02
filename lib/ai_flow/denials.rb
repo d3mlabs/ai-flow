@@ -89,6 +89,17 @@ module AiFlow
     # classifier). Single-path shell denials are unaffected.
     TOUCHED_PATH = %r{/[A-Za-z0-9_./@+~-]+}
 
+    # CLI::UI's frame gutter (`┃`, nested `┃┃`), which dev's commands put
+    # in front of every output line. Stripped before matching so a gutter
+    # is never part of a subject.
+    FRAME_PREFIX = /\A[┃│]+\s?/
+
+    # A line that is nothing but an absolute path: the tail of a denial
+    # message CLI::UI word-wrapped at 80 columns when stdout is not a TTY
+    # (ai-flow#111). The path moves to its own line, so the denial line
+    # alone has no path — and no temp-path or category-4/5 exemption.
+    WRAPPED_PATH_LINE = /\A\s*(?<path>#{TOUCHED_PATH.source})\s*\z/
+
     # Subjects resolved by design rather than by widening (plans#26 access
     # categories 4–5): the shared data root (dev's DataRoot::SHARED_ROOT —
     # cross-repo constant, duplicated knowingly), DDC trees, and sockets /
@@ -168,20 +179,20 @@ module AiFlow
 
       # The observed channel: denial signatures in tool output, one want
       # per touched path (the line itself when no path parses), GitHub-API
-      # 403s excluded.
+      # 403s excluded. A denial whose path wrapped onto the next line is
+      # read as one message (ai-flow#111).
       #
       # @param text [String] a tool call's output
       # @return [Array<Want>] deduped observed wants
       sig { params(text: String).returns(T::Array[Want]) }
       def observed_in(text)
         wants = T.let([], T::Array[Want])
-        text.split("\n").each do |line|
+        lines = text.split("\n").map { |line| line.sub(FRAME_PREFIX, "") }
+        lines.each_with_index do |line, index|
           next unless DENIAL_LINE.match?(line)
           next if GITHUB_403.match?(line)
 
-          # scan with a groupless regexp yields strings; Sorbet only knows
-          # the union shape, hence the cast.
-          subject = T.cast(line.scan(TOUCHED_PATH).last, T.nilable(String)) || line.strip
+          subject = touched_path(line) || wrapped_path(lines[index + 1]) || line.strip
           want = Want.new(subject: subject, reason: "", channel: :observed)
           wants << want unless wants.any? { |seen| seen.subject == subject }
         end
@@ -217,6 +228,30 @@ module AiFlow
       end
 
       private
+
+      # The last absolute path on a denial line — see TOUCHED_PATH for why
+      # the last.
+      #
+      # @param line [String]
+      # @return [String, nil]
+      sig { params(line: String).returns(T.nilable(String)) }
+      def touched_path(line)
+        # scan with a groupless regexp yields strings; Sorbet only knows
+        # the union shape, hence the cast.
+        T.cast(line.scan(TOUCHED_PATH).last, T.nilable(String))
+      end
+
+      # The path a wrapped denial continued onto, when the line after the
+      # denial is nothing but a path.
+      #
+      # @param next_line [String, nil] the line following a denial line
+      # @return [String, nil]
+      sig { params(next_line: T.nilable(String)).returns(T.nilable(String)) }
+      def wrapped_path(next_line)
+        return nil unless next_line
+
+        WRAPPED_PATH_LINE.match(next_line)&.[](:path)
+      end
 
       # One rendered field: backticks out (they would close the code
       # span), whitespace collapsed, length bounded.
