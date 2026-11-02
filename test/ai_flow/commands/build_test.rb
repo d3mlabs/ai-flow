@@ -10,6 +10,10 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BuildTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
+  # What the fake answers for `git rev-parse origin/main`: the default
+  # branch's tip as the build checkout saw it (the capture's landing base).
+  BASE_SHA = "ba5e0000000000000000000000000000000000ba"
+
   # Records every subprocess invocation as a joined command line (strings
   # survive RSpock's block-parameter destructuring where arrays don't);
   # `dirty` controls whether the staged diff reports changes (i.e. whether
@@ -99,7 +103,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
             "lib/thing.rb\n"
           end
         elsif argv.take(2) == %w[git rev-parse]
-          "abc1234def5678\n"
+          argv.last == "origin/main" ? "#{BASE_SHA}\n" : "abc1234def5678\n"
         else
           ""
         end
@@ -1323,6 +1327,69 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.pull_request_bodies.fetch(1).include?("learned-from: #{REPO}#7 (build-sweep)")
     github.comment_edits.fetch(55).include?("🧠 drafted 1 learning in a learning proposal PR")
     github.comment_edits.fetch(55).include?("`one-seam`")
+
+    Cleanup
+    nil
+  end
+
+  test "the capture lands on the base the build checkout saw, not on a re-fetched default branch (ai-flow#112)" do
+    Given "an issue build whose pass staged a learning diff — extracted against the checkout's base"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(
+      capture_patch: LEARNING_PATCH,
+      capture_staged: [".cursor/rules/learnings-index.mdc", ".cursor/skills/learnings/one-seam/SKILL.md"],
+    )
+
+    When "building"
+    run_build(github: github, executor: executor)
+    worktree_adds = executor.command_lines.select { |line| line.start_with?("git worktree add --detach") }
+
+    Then "the base was pinned from the checkout, the landing worktree starts there, and the diff applies " \
+         "plainly — its preimage is the base, so there is nothing for --3way to reconcile"
+    executor.command_lines.include?("git rev-parse --verify --quiet origin/main")
+    worktree_adds.count { |line| line.end_with?(" origin/main") } == 1
+    worktree_adds.count { |line| line.end_with?(" #{BASE_SHA}") } == 1
+    executor.command_lines.include?("git apply --index")
+    executor.command_lines.none? { |line| line.include?("--3way") }
+
+    Cleanup
+    nil
+  end
+
+  # A depth-1 PR checkout: `origin/main` is unknown until something fetches
+  # it, as actions/checkout leaves the job checkout on a PR iteration.
+  class UnfetchedDefaultExecutor < RecordingExecutor
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      @default_fetched = true if argv == %w[git fetch origin main]
+      if argv == %w[git rev-parse --verify --quiet origin/main] && !@default_fetched
+        @command_lines << argv.join(" ")
+        return ["", "", false]
+      end
+
+      super
+    end
+  end
+
+  test "a PR iteration's capture fetches the default branch before pinning its base (depth-1 PR checkout)" do
+    Given "a PR checkout where origin/main is not yet a known ref"
+    github = FakeGitHub.new
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
+    executor = UnfetchedDefaultExecutor.new(
+      capture_patch: LEARNING_PATCH,
+      capture_staged: [".cursor/rules/learnings-index.mdc", ".cursor/skills/learnings/one-seam/SKILL.md"],
+    )
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build fix the walk", context: context, agent: agent)
+    verify_at = executor.command_lines.index("git rev-parse --verify --quiet origin/main")
+    fetch_at = executor.command_lines.index("git fetch origin main")
+
+    Then "the miss fetched the branch, and the landing still based on the pinned ref"
+    T.must(verify_at) < T.must(fetch_at)
+    executor.command_lines.any? { |line| line.start_with?("git worktree add --detach") && line.end_with?(" #{BASE_SHA}") }
+    github.comment_edits.fetch(55).include?("🧠 drafted 1 learning in a learning proposal PR")
 
     Cleanup
     nil

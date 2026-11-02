@@ -273,6 +273,12 @@ module AiFlow
         sig { returns(T.nilable(GitHub::PullRequest)) }
         attr_reader :existing
 
+        # @return [String] the default branch's tip as the build checkout
+        #   saw it — the commit the extracted diff is taken against, and so
+        #   the only base it is guaranteed to apply to (ai-flow#112)
+        sig { returns(String) }
+        attr_reader :base_sha
+
         # @return [String, nil] the staged learning diff — nil until
         #   extract_capture runs, and when the pass wrote no learning files
         sig { returns(T.nilable(String)) }
@@ -280,15 +286,18 @@ module AiFlow
 
         # @param source [CaptureSource]
         # @param existing [AiFlow::GitHub::PullRequest, nil]
+        # @param base_sha [String]
         sig do
           params(
             source: CaptureSource,
             existing: T.nilable(GitHub::PullRequest),
+            base_sha: String,
           ).void
         end
-        def initialize(source:, existing:)
+        def initialize(source:, existing:, base_sha:)
           @source = source
           @existing = existing
+          @base_sha = base_sha
           @patch = T.let(nil, T.nilable(String))
         end
       end
@@ -360,14 +369,38 @@ module AiFlow
       end
 
       # Bring an open draft's files into the build worktree so the hot pass
-      # refines (or dissolves) them instead of drafting blind duplicates.
+      # refines (or dissolves) them instead of drafting blind duplicates,
+      # and pin the base the landing will start from.
       #
       # @param dir [String] the build worktree
       # @param source [CaptureSource] the built surface
       # @return [void]
       sig { params(dir: String, source: CaptureSource).void }
       def seed_capture(dir, source)
-        @capture = Capture.new(source: source, existing: seeded_draft(dir, source))
+        @capture = Capture.new(
+          source: source, existing: seeded_draft(dir, source), base_sha: default_branch_tip(dir),
+        )
+      end
+
+      # The default branch's tip as the checkout knows it — read, not
+      # re-fetched: a fetch here could already see a newer tip than the
+      # one the worktree was added from (dev deps install runs in between),
+      # and the landing must start exactly where the diff's preimage is. A
+      # depth-1 PR checkout has no origin/<default> yet; that one miss
+      # fetches it.
+      #
+      # @param dir [String] the build checkout
+      # @return [String] a commit sha
+      sig { params(dir: String).returns(String) }
+      def default_branch_tip(dir)
+        default = @github.default_branch(@context.owner_repo)
+        sha, _err, ok = @executor.capture("git", "rev-parse", "--verify", "--quiet", "origin/#{default}", chdir: dir)
+        unless ok
+          run!(["git", "fetch", "origin", default], chdir: dir)
+          sha, _err, ok = @executor.capture("git", "rev-parse", "--verify", "--quiet", "origin/#{default}", chdir: dir)
+          raise GitHub::Error, "origin/#{default} is unknown in the build checkout after a fetch" unless ok
+        end
+        sha.strip
       end
 
       # Pull the staged learning diff out of the pending code commit — the
@@ -417,7 +450,7 @@ module AiFlow
         return close_dissolved_draft(existing) if patch.nil? && existing
         return nil if patch.nil?
 
-        note = land_patch(patch, existing, capture.source, result)
+        note = land_patch(capture, patch, result)
         $stdout.puts note if note
         note
       rescue GitHub::Error => e
@@ -1287,17 +1320,29 @@ module AiFlow
 
       # ---- Build-capture landing (private half) ----
 
+      # The landing worktree starts at the capture's pinned base — the
+      # commit the diff was extracted against — never at a re-fetched
+      # default branch (ai-flow#112): a learning PR merged mid-run appends
+      # to the same index section this pass did, and that is a conflict no
+      # 3-way merge resolves. If the default branch moved, the proposal PR
+      # shows the conflict on GitHub, where a human resolves it; the draft
+      # is never lost.
+      #
+      # @param capture [Capture] the extracted capture (patch present)
+      # @param patch [String] the extracted learning diff
+      # @param result [String, nil] the build pass's agent output
       # @return [String, nil]
       sig do
         params(
+          capture: Capture,
           patch: String,
-          existing: T.nilable(GitHub::PullRequest),
-          source: CaptureSource,
           result: T.nilable(String),
         ).returns(T.nilable(String))
       end
-      def land_patch(patch, existing, source, result)
-        in_worktree(source.branch, refine: false) do |worktree|
+      def land_patch(capture, patch, result)
+        source = capture.source
+        existing = capture.existing
+        worktree_at(source.branch, capture.base_sha) do |worktree|
           apply_patch(worktree, patch)
           promotion_notes = result ? route_promotions(worktree, result).map(&:note) : []
           slugs = commit_learnings(worktree, message: "ai-flow /build: capture learnings from the build pass")
@@ -1314,15 +1359,10 @@ module AiFlow
         end
       end
 
-      # The extracted diff was taken against the same origin/<default> base
-      # the landing worktree starts from; --3way covers a mid-run base move.
-      #
       # @return [void]
       sig { params(worktree: String, patch: String).void }
       def apply_patch(worktree, patch)
-        _out, err, ok = @executor.capture(
-          "git", "apply", "--index", "--3way", stdin: patch, chdir: worktree,
-        )
+        _out, err, ok = @executor.capture("git", "apply", "--index", stdin: patch, chdir: worktree)
         raise GitHub::Error, "applying the learning diff failed: #{err.strip}" unless ok
       end
 
@@ -1376,6 +1416,28 @@ module AiFlow
       def in_worktree(branch, refine:, &blk)
         default = @github.default_branch(@context.owner_repo)
         base_ref = refine ? branch : default
+        run!(["git", "fetch", "origin", base_ref], chdir: @workdir)
+        worktree_at(branch, "origin/#{base_ref}", &blk)
+      end
+
+      # An isolated worktree for `branch` starting at a commit the job
+      # checkout already has — a fetched remote ref, or a capture's pinned
+      # base sha (the build worktree shared this object store, so the sha
+      # it was added from is here).
+      #
+      # @param branch [String] the branch to (re)create at the start point
+      # @param start_point [String] a commit-ish known to the job checkout
+      # @yieldparam worktree [String] the worktree's path
+      # @return [Object] the block's value
+      sig do
+        type_parameters(:Result)
+          .params(
+            branch: String,
+            start_point: String,
+            blk: T.proc.params(worktree: String).returns(T.type_parameter(:Result)),
+          ).returns(T.type_parameter(:Result))
+      end
+      def worktree_at(branch, start_point, &blk)
         Dir.mktmpdir("ai-flow-learn-", @executor.workspace_base) do |dir|
           # Shared while still empty: everything populated inside inherits
           # the agent-shared group via setgid (plans#26; no-op unisolated).
@@ -1383,9 +1445,8 @@ module AiFlow
           # able to traverse to the leaf (nil = mktmpdir default).
           @executor.share_workspace(dir)
           worktree = File.join(dir, "worktree")
-          run!(["git", "fetch", "origin", base_ref], chdir: @workdir)
           run!(["git", "worktree", "prune"], chdir: @workdir)
-          run!(["git", "worktree", "add", "--detach", worktree, "origin/#{base_ref}"], chdir: @workdir)
+          run!(["git", "worktree", "add", "--detach", worktree, start_point], chdir: @workdir)
           run!(["git", "checkout", "-B", branch], chdir: worktree)
           begin
             yield worktree
