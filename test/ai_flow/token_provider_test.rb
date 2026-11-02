@@ -8,12 +8,17 @@ require "socket"
 
 # In-memory GitHub App endpoints: installation lookup + token mint, counting
 # mints and handing out sequenced tokens so freshness is observable. Mint
-# request bodies are recorded so scoping is observable too.
+# request bodies are recorded so scoping is observable too. The
+# installation answers with the grants an App registered per the README
+# holds, unless a test says otherwise.
 class FakeAppApi
+  README_GRANTS = { contents: "write", metadata: "read", issues: "write", pull_requests: "write" }.freeze
+
   attr_reader :mints, :requests, :mint_bodies
 
-  def initialize(owner_kind: "orgs")
+  def initialize(owner_kind: "orgs", permissions: README_GRANTS)
     @owner_kind = owner_kind
+    @permissions = permissions
     @mints = 0
     @requests = []
     @mint_bodies = []
@@ -23,7 +28,7 @@ class FakeAppApi
     @requests << [method, url]
     case url
     when %r{/#{@owner_kind}/[^/]+/installation\z}
-      [200, JSON.generate(id: 42)]
+      [200, JSON.generate(id: 42, permissions: @permissions)]
     when %r{/(orgs|users)/[^/]+/installation\z}
       [404, JSON.generate(message: "Not Found")]
     when %r{/app/installations/42/access_tokens\z}
@@ -179,7 +184,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
     http = lambda do |_method, url, headers, _body|
       captured ||= headers.fetch("Authorization")
       if url.end_with?("/orgs/d3mlabs/installation")
-        [200, JSON.generate(id: 42)]
+        [200, JSON.generate(id: 42, permissions: FakeAppApi::README_GRANTS)]
       else
         [201, JSON.generate(token: "ghs_minted_1")]
       end
@@ -216,6 +221,73 @@ class AiFlow::TokenProviderTest < Minitest::Test
     body = JSON.parse(T.must(api.mint_bodies.fetch(0)))
     body.keys == ["permissions"]
     body.fetch("permissions").values.uniq == ["read"]
+
+    Cleanup
+    nil
+  end
+
+  test "an agent mint names exactly the required surfaces at read when the App holds nothing optional (#102)" do
+    Given "an App registered per the README — no Packages grant"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "asking for the agent's token"
+    provider.agent_token
+
+    Then "the body is the required tier alone — naming packages would be rejected by the mint API"
+    body = JSON.parse(T.must(api.mint_bodies.fetch(0)))
+    body.fetch("permissions") == { "contents" => "read", "metadata" => "read", "issues" => "read", "pull_requests" => "read" }
+
+    Cleanup
+    nil
+  end
+
+  test "an agent mint adds packages: read when the installation grants it (#102)" do
+    Given "an App whose installation accepted Packages: Read-only"
+    api = FakeAppApi.new(permissions: FakeAppApi::README_GRANTS.merge(packages: "read"))
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "asking for the agent's token"
+    provider.agent_token
+
+    Then "the optional grant rides along, still at read — a pull, never a push"
+    body = JSON.parse(T.must(api.mint_bodies.fetch(0)))
+    body.fetch("permissions").fetch("packages") == "read"
+    body.fetch("permissions").values.uniq == ["read"]
+
+    Cleanup
+    nil
+  end
+
+  test "an App missing a required grant fails closed at the first mint, naming the gap (#102)" do
+    Given "an App registered without pull requests"
+    api = FakeAppApi.new(permissions: { contents: "write", metadata: "read", issues: "write" })
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "asking for the dispatcher's token"
+    error = assert_raises(AiFlow::TokenProvider::AppPermissionError) { provider.token }
+
+    Then "the message names the missing permission and where the registration recipe lives, and nothing was minted"
+    error.message.include?("pull_requests")
+    error.message.include?("README")
+    api.mints == 0
+
+    Cleanup
+    nil
+  end
+
+  test "the installation is looked up once per job — the dispatcher and agent mints share it (#102)" do
+    Given "a provider"
+    api = FakeAppApi.new
+    provider = build_provider(http: api, clock: -> { Time.at(0) })
+
+    When "minting for the dispatcher and for the agent"
+    provider.token
+    provider.agent_token
+
+    Then "two mints, one installation lookup"
+    api.mints == 2
+    api.requests.count { |_method, url| url.end_with?("/installation") } == 1
 
     Cleanup
     nil
@@ -290,7 +362,7 @@ class AiFlow::TokenProviderTest < Minitest::Test
     server = TCPServer.new("127.0.0.1", 0)
     port = server.addr[1]
     responses = [
-      JSON.generate(id: 42),
+      JSON.generate(id: 42, permissions: FakeAppApi::README_GRANTS),
       JSON.generate(token: "ghs_over_the_wire"),
     ]
     server_thread = Thread.new do

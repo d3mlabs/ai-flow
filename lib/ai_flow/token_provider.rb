@@ -32,6 +32,13 @@ module AiFlow
 
     class Error < StandardError; end
 
+    # The App installation lacks a grant every ai-flow deployment needs —
+    # registered off the README's recipe, or a new permission not yet
+    # accepted on the installation. Raised at the first mint so a
+    # mis-registered App fails here, not as a push 403 at the end of a
+    # long /build.
+    class AppPermissionError < Error; end
+
     class << self
       extend T::Sig
 
@@ -211,6 +218,41 @@ module AiFlow
         JWT_BACKDATE_SECONDS = 60
         JWT_TTL_SECONDS = 540
 
+        # The grants every deployment's App must hold — the README's
+        # registration recipe. Checked against the installation at the
+        # first mint (see #installation); the metadata read every
+        # installation implies is not listed because it cannot be absent.
+        REQUIRED_PERMISSIONS = T.let(%i[contents issues pull_requests].freeze, T::Array[Symbol])
+
+        # The agent's required tier: every surface REQUIRED_PERMISSIONS
+        # names, downgraded to read, plus metadata. Always in the agent's
+        # mint body — GitHub's mint API rejects permissions the App was
+        # never granted, which is exactly the fail-fast a mis-registered
+        # App deserves.
+        READ_ONLY_PERMISSIONS = T.let(
+          {
+            contents: "read",
+            metadata: "read",
+            issues: "read",
+            pull_requests: "read",
+          }.freeze,
+          T::Hash[Symbol, String],
+        )
+
+        # The agent's optional tier (#102): grants only some deployments
+        # need, included in the mint body only when the installation holds
+        # them, so an org that never pins an `image` floor is not forced to
+        # grant Packages — and one that does gets the GHCR pull `dev deps
+        # update` needs to relock it. Read only: a pull, never a push.
+        OPTIONAL_READ_PERMISSIONS = T.let({ packages: "read" }.freeze, T::Hash[Symbol, String])
+
+        # What the installation lookup answers with: the id every mint
+        # posts to, and the grants the installation has accepted.
+        class Installation < T::Struct
+          const :id, Integer
+          const :permissions, T::Hash[String, String]
+        end
+
         # @param app_id [String] GitHub App id
         # @param private_key [OpenSSL::PKey::RSA] the App's private key
         # @param owner [String, nil] the org/user the App is installed on —
@@ -239,7 +281,7 @@ module AiFlow
           @clock = clock
           @minted_token = T.let(nil, T.nilable(String))
           @minted_at = T.let(nil, T.nilable(Time))
-          @installation_id = T.let(nil, T.nilable(Integer))
+          @installation = T.let(nil, T.nilable(Installation))
         end
 
         # A token fresh enough for the call about to be made: the age check
@@ -258,66 +300,75 @@ module AiFlow
         # @return [void]
         sig { void }
         def refresh!
-          @minted_token = mint
+          @minted_token = mint(app_jwt)
           @minted_at = @clock.call
         end
-
-        # The agent's permission set: every content surface the App holds,
-        # downgraded to read. GitHub's mint API rejects permissions the App
-        # was never granted, so this list must stay within the App's own
-        # grants (contents, issues, pull requests, plus the metadata read
-        # every installation implies).
-        READ_ONLY_PERMISSIONS = T.let(
-          {
-            contents: "read",
-            metadata: "read",
-            issues: "read",
-            pull_requests: "read",
-          }.freeze,
-          T::Hash[Symbol, String],
-        )
 
         # A one-off read-only token (never cached — see
         # TokenProvider#agent_token): installation-wide in repositories so
         # discovery reads work across the org, write-free so the arbitrary
-        # shell holding it cannot push, comment, or merge anywhere.
+        # shell holding it cannot push, comment, or merge anywhere. The
+        # required tier always, the optional tier as far as the
+        # installation grants it.
         #
         # @return [String]
         sig { returns(String) }
         def read_only_token
-          mint(permissions: READ_ONLY_PERMISSIONS)
+          jwt = app_jwt
+          granted = installation(jwt).permissions
+          optional = OPTIONAL_READ_PERMISSIONS.select { |permission, _access| granted.key?(permission.to_s) }
+          mint(jwt, permissions: READ_ONLY_PERMISSIONS.merge(optional))
         end
 
         private
 
+        # @param jwt [String] the App JWT this mint authenticates with
         # @param permissions [Hash{Symbol => String}, nil] permission map to
         #   downscope the token to; nil mints with the App's full grants
         #   (the dispatcher's own)
         # @return [String] a fresh installation token
-        sig { params(permissions: T.nilable(T::Hash[Symbol, String])).returns(String) }
-        def mint(permissions: nil)
-          jwt = app_jwt
+        sig { params(jwt: String, permissions: T.nilable(T::Hash[Symbol, String])).returns(String) }
+        def mint(jwt, permissions: nil)
           body = permissions && JSON.generate(permissions: permissions)
-          response = request("POST", "app/installations/#{installation_id(jwt)}/access_tokens", jwt, body: body)
+          response = request("POST", "app/installations/#{installation(jwt).id}/access_tokens", jwt, body: body)
           response.fetch("token")
         end
 
         # The installation on the owner org (or user account —
         # personal-account adopters like JPDuchesne/** live under /users).
-        # Memoized: it never changes within a job.
+        # Memoized: it never changes within a job. The required grants are
+        # checked here, on the one lookup every mint depends on, so a
+        # mis-registered App fails at the first token ask of the job.
         #
         # @param jwt [String]
-        # @return [Integer]
-        sig { params(jwt: String).returns(Integer) }
-        def installation_id(jwt)
-          @installation_id ||= begin
+        # @return [Installation]
+        # @raise [AppPermissionError] when the installation lacks a
+        #   required grant
+        sig { params(jwt: String).returns(Installation) }
+        def installation(jwt)
+          @installation ||= begin
             response = begin
               request("GET", "orgs/#{@owner}/installation", jwt)
             rescue Error
               request("GET", "users/#{@owner}/installation", jwt)
             end
-            response.fetch("id")
+            found = Installation.new(id: response.fetch("id"), permissions: response.fetch("permissions", {}))
+            require_grants(found)
+            found
           end
+        end
+
+        # @param found [Installation]
+        # @return [void]
+        # @raise [AppPermissionError]
+        sig { params(found: Installation).void }
+        def require_grants(found)
+          missing = REQUIRED_PERMISSIONS.reject { |permission| found.permissions.key?(permission.to_s) }
+          return if missing.empty?
+
+          raise AppPermissionError,
+            "the ai-flow App installation on #{@owner} lacks #{missing.join(", ")} — " \
+            "grant it on the App and accept it on the installation (see the README's identity section)"
         end
 
         # A short-lived RS256 JWT authenticating as the App itself (stdlib

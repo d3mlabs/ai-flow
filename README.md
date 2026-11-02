@@ -227,11 +227,23 @@ Setup is a one-time org task: register the App (permissions: contents,
 issues, pull requests — read/write; **never** `workflows`, a deliberate
 security wall — see [docs/attribution.md](docs/attribution.md)), install it
 on participating repos, and store `AI_FLOW_APP_ID` /
-`AI_FLOW_APP_PRIVATE_KEY` as org secrets. The App is intrinsic to the
-attribution model, so a job without the secrets fails loudly. Adopters who
-want to try ai-flow before registering an App can set
+`AI_FLOW_APP_PRIVATE_KEY` as org secrets. Those three grants are required:
+the first token mint of a job checks the installation holds them and fails
+closed naming the gap, rather than surfacing a missing grant as a push
+failure at the end of a long `/build`. One grant is optional — **Packages:
+Read-only**, needed only if a participating repo pins an `image` floor in
+its `dependencies.rb`: relocking it (`dev deps update`) pulls the image
+manifest from GHCR, and the agent's token carries `packages: read` exactly
+when the installation grants it. GHCR reaches a package through its
+linked repository, so that repo must be among the installation's selected
+repos (a package linked to no repo is out of any App token's reach;
+cross-org floors need a runner credential of their own). The App is
+intrinsic to the attribution model, so a job without the secrets fails
+loudly. Adopters who want to try ai-flow before registering an App can set
 `allow_token_fallback: true` to knowingly run degraded on `github.token`
-(writes act as `github-actions[bot]`, /build PRs don't trigger CI).
+(writes act as `github-actions[bot]`, /build PRs don't trigger CI, and
+`image` floors relock only when the package is linked to the triggering
+repo itself).
 
 GitHub caps App installation tokens at 1 hour — shorter than a long
 `/build` — so the dispatcher never trusts a pre-minted token: the private
@@ -260,7 +272,9 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
   `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
    and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App —
    required unless the caller sets `allow_token_fallback: true`). Install
-   the App on the repo. Our org secrets use `selected` visibility, so add
+   the App on the repo — and, if the repo pins an `image` floor, on the
+   package's source repo too, with Packages: Read-only granted on the App
+   (see the identity section). Our org secrets use `selected` visibility, so add
    the adopting repo to each secret's repository list (org settings →
    secrets, or `gh secret set <name> --org <org> --visibility selected  --repos <list>`). Note `private` visibility excludes public repos  entirely — a public caller's job fails at the "Require the ai-flow App"spl  step until the secret is shared with it.
 3. Register self-hosted runners with the per-command labels the workflow
