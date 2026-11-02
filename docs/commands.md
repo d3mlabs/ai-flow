@@ -270,6 +270,11 @@ thread-scoped and act PR-scoped:
 
 > ℹ️ **/build** — /build runs from the PR conversation, not a review thread. Leave the feedback as a plain comment here and post /build as a top-level comment — the sweep picks this thread up.
 
+The refused comment is not lost: the next top-level sweep reads its
+instruction (`/build should be a strong type` → "should be a strong type")
+as the thread's feedback, alongside any plain replies. Threads started by
+other commands (`/ask`) are handled conversations and stay out of the sweep.
+
 ## /build --split
 
 Orchestrates `/build` across the plan's open sub-issues: topological waves
