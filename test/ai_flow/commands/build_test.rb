@@ -810,6 +810,46 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "a thread started by a refused /build is swept with its instruction as the feedback" do
+    Given "a thread whose first comment is a /build the dispatcher refused (its panel appended in place)"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    refused_body = <<~BODY.strip
+      /build should be a strong type instead
+
+      > ℹ️ **/build** — /build runs from the PR conversation, not a review thread. Leave the feedback as a plain comment here and post /build as a top-level comment — the sweep picks this thread up.
+
+      ---
+
+      > ⚙️ [workflow run](https://github.com/d3mlabs/demo/actions/runs/1)
+    BODY
+    github.seed_review_threads(REPO, 7, [
+      AiFlow::GitHub::ReviewThread.new(
+        path: "lib/tap_trust.rb", diff_hunk: "@@ -45 +45 @@", first_comment_id: 91,
+        comments: [
+          AiFlow::GitHub::ReviewThread::Comment.new(author: "jpduchesne", body: refused_body, url: "u"),
+          AiFlow::GitHub::ReviewThread::Comment.new(author: "jpduchesne", body: "a TapName value object", url: "u"),
+        ],
+      ),
+    ])
+    context = ContextBuilder.issue_comment(number: 7, body: "/build", pull_request: true)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nIntroduced TapName.\n<<<AI-FLOW:SEGMENT 2>>>\nDone."])
+
+    When "a bare top-level /build sweeps"
+    run_build(github: github, executor: RecordingExecutor.new, body: "/build", context: context, agent: agent)
+
+    Then "the thread reaches the prompt as plain feedback — instruction kept, command line and panel gone"
+    agent.prompts.first.include?("<<<THREAD 1>>> (lib/tap_trust.rb)")
+    agent.prompts.first.include?("@jpduchesne: should be a strong type instead")
+    agent.prompts.first.include?("a TapName value object")
+    !agent.prompts.first.include?("/build should be")
+    !agent.prompts.first.include?("runs from the PR conversation")
+    github.calls.include?([:reply_to_review_comment, REPO, 7, 91])
+
+    Cleanup
+    nil
+  end
+
   test "a bare /build with nothing outstanding is a friendly no-op" do
     Given "a PR with no threads, no fresh comments, and no instruction"
     github = FakeGitHub.new

@@ -380,18 +380,54 @@ module AiFlow
         branch
       end
 
-      # Unresolved review threads, minus those a command started (a threaded
-      # /ask and its answer are a handled conversation, not outstanding
-      # feedback). Each surviving thread carries only its write-authorized
-      # comments (plans#24) — the pass runs with force, so third-party thread
-      # content is an injection surface.
+      # Unresolved review threads as feedback: threads a command started are
+      # dropped or rewritten (feedback_thread), and each surviving thread
+      # carries only its write-authorized comments (plans#24) — the pass runs
+      # with force, so third-party thread content is an injection surface.
       #
       # @return [Array<AiFlow::GitHub::ReviewThread>]
       sig { returns(T::Array[GitHub::ReviewThread]) }
       def sweepable_threads
         @github.unresolved_review_threads(@context.owner_repo, @context.number)
-               .reject { |thread| command_comment?(thread.comments.first&.body.to_s) }
+               .filter_map { |thread| feedback_thread(thread) }
                .filter_map { |thread| trusted_thread(thread) }
+      end
+
+      # A thread another command started is a handled conversation (a
+      # threaded /ask and its answer), not outstanding feedback. A thread a
+      # /build started is the exception: refuse_review_thread turned it away
+      # with the promise that this sweep picks it up, so its instruction (and
+      # quote) stands in for the first comment's text — the command line and
+      # the appended refusal panel are not feedback. A bare refused /build
+      # leaves only the thread's replies.
+      #
+      # @param thread [AiFlow::GitHub::ReviewThread]
+      # @return [AiFlow::GitHub::ReviewThread, nil] nil when the thread is a
+      #   handled conversation or nothing sweepable remains
+      sig { params(thread: GitHub::ReviewThread).returns(T.nilable(GitHub::ReviewThread)) }
+      def feedback_thread(thread)
+        first = thread.comments.first
+        return thread unless first
+
+        segments = CommentParser.new(prefix: @prefix).parse(first.body)
+        return thread if segments.empty?
+        # The parser rejects a /build sharing a comment with any other
+        # command, so a /build-led comment is exactly one segment.
+        return nil unless T.must(segments.first).command == Command::Build.new
+
+        feedback = segments.map { |segment| [segment.quote, segment.instruction].compact.join("\n\n") }.join("\n\n").strip
+        replies = thread.comments.drop(1)
+        comments = feedback.empty? ? replies : [first.with_body(feedback), *replies]
+        return nil if comments.empty?
+
+        GitHub::ReviewThread.new(
+          path: thread.path,
+          diff_hunk: thread.diff_hunk,
+          first_comment_id: thread.first_comment_id,
+          comments: comments,
+        )
+      rescue CommentParser::ParseError
+        nil
       end
 
       # The thread reduced to its trusted comments; nil when none remain (a

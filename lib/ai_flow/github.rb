@@ -69,9 +69,22 @@ module AiFlow
       # One comment in the thread's conversation. `author` is the login,
       # "" for ghost/deleted users.
       class Comment < T::Struct
+        extend T::Sig
+
         const :author, String
         const :body, String
         const :url, String
+
+        # A copy with the body replaced — consumers rewrite a comment's text
+        # (a refused command reduced to its instruction) without mutating a
+        # shared collection.
+        #
+        # @param body [String]
+        # @return [Comment]
+        sig { params(body: String).returns(Comment) }
+        def with_body(body)
+          Comment.new(author: author, body: body, url: url)
+        end
       end
 
       const :path, String
