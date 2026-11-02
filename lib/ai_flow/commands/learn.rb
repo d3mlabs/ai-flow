@@ -426,6 +426,25 @@ module AiFlow
         warning
       end
 
+      # The FIX contract's reader, paired with the rubric that states it
+      # (capture_prompt_section) — every surface carrying the rubric (/learn
+      # and /build's capture, ai-flow#103) relays the lines the same way.
+      # A pass that restates a fix yields one note.
+      #
+      # @param agent_output [String] the pass's result
+      # @return [Array<String>] panel notes for the pass's declared FIX
+      #   lines (the root-cause gate's escape hatch)
+      sig { params(agent_output: String).returns(T::Array[String]) }
+      def fix_notes(agent_output)
+        agent_output.lines
+          .filter_map { |line| FIX_LINE.match(line) }
+          # T.must: the group is unconditional in FIX_LINE, so a match
+          # always carries it.
+          .map { |match| T.must(match[1]) }
+          .uniq
+          .map { |proposal| "🔧 proposed root-cause fix (for a human to file): #{proposal}" }
+      end
+
       private
 
       # The open learning proposal PR whose files were brought into the build
@@ -866,18 +885,6 @@ module AiFlow
         end
 
         slugs.map { |slug| route_promotion(worktree, slug, knowledge_repo) }
-      end
-
-      # @param agent_output [String] the pass's result
-      # @return [Array<String>] panel notes for the pass's declared FIX
-      #   lines (the root-cause gate's escape hatch)
-      sig { params(agent_output: String).returns(T::Array[String]) }
-      def fix_notes(agent_output)
-        agent_output.lines
-          .filter_map { |line| FIX_LINE.match(line) }
-          # T.must: the group is unconditional in FIX_LINE, so a match
-          # always carries it.
-          .map { |match| "🔧 proposed root-cause fix (for a human to file): #{T.must(match[1])}" }
       end
 
       # @return [Array<String>] slugs the pass declared on its PROMOTE line
