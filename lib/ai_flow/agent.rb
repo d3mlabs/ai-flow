@@ -78,6 +78,9 @@ module AiFlow
       @knowledge_applied = T.let([], T::Array[String])
       @wants = T.let([], T::Array[Denials::Want])
       @mcp_policy_applied = T.let([], T::Array[String])
+      # The log line last printed per toolCallId — the enriched-title and
+      # outcome lines key on it (see render_update).
+      @tool_titles = T.let({}, T::Hash[String, String])
     end
 
     # Run the agent to completion over ACP and return its final answer text.
@@ -315,14 +318,56 @@ module AiFlow
           @knowledge_applied << knowledge unless @knowledge_applied.include?(knowledge)
           $stdout.puts "[/#{word}] knowledge: #{knowledge}"
         else
-          $stdout.puts "[/#{word}] → #{tool_summary(update)}"
+          summary = tool_summary(update)
+          @tool_titles[update["toolCallId"].to_s] = summary
+          $stdout.puts "[/#{word}] → #{summary}"
         end
       when "tool_call_update"
+        render_tool_progress(word, update)
         # The observed denial channel (plans#33): a permission wall in a
         # tool's output surfaces even when the agent doesn't declare it.
         update_texts(update).each do |text|
           Denials.observed_in(text).each { |want| record_want(word, want) }
         end
+      end
+    end
+
+    # The two log lines a tool call earns after its first (ai-flow#109).
+    # cursor-agent emits Edit/grep/Find tool_calls before their arguments
+    # have streamed — bare title, empty rawInput — and the composed title
+    # ("Edit `path`", "grep \"pattern\"") on a later update: that title
+    # gets its own arrow line, so the log names the file or query without
+    # ai-flow composing anything from rawInput. A completion with a
+    # countable rawOutput (search totals, a shell exit code) gets an
+    # outcome line; reads and edits, whose output is file text, get none.
+    #
+    # @param word [String] the command word, for the log line
+    # @param update [Hash] a tool_call_update payload
+    # @return [void]
+    sig { params(word: String, update: T::Hash[String, T.untyped]).void }
+    def render_tool_progress(word, update)
+      id = update["toolCallId"].to_s
+      title = update["title"].to_s
+      if !title.empty? && @tool_titles[id] != truncate(title)
+        @tool_titles[id] = truncate(title)
+        $stdout.puts "[/#{word}] → #{@tool_titles[id]}"
+      end
+      return unless update["status"] == "completed"
+
+      outcome = tool_outcome(update["rawOutput"])
+      $stdout.puts "[/#{word}] ✓ #{@tool_titles.fetch(id, "tool call")} → #{outcome}" if outcome
+    end
+
+    # @param raw [Object] a completed tool_call_update's rawOutput
+    # @return [String, nil] the countable outcome, nil when the output
+    #   carries none (file contents, diffs, unknown shapes)
+    sig { params(raw: T.untyped).returns(T.nilable(String)) }
+    def tool_outcome(raw)
+      return nil unless raw.is_a?(Hash)
+
+      if raw.key?("exitCode") then "exit #{raw["exitCode"]}"
+      elsif raw.key?("totalMatches") then "#{raw["totalMatches"]} matches"
+      elsif raw.key?("totalFiles") then "#{raw["totalFiles"]} files"
       end
     end
 

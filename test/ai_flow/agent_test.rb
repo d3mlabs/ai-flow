@@ -468,6 +468,106 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # cursor-agent 2026.10.22 sends Edit/grep/Find tool_calls before their
+  # arguments have streamed (bare title, empty rawInput) and the composed
+  # title on a later tool_call_update; completions carry rawOutput counts
+  # and exit codes (ai-flow#109 — captured via AcpClient, paths shortened).
+  PROBED_TOOL_STREAM = [
+    { "sessionUpdate" => "tool_call", "toolCallId" => "tc_AoWw", "title" => "Read <dir>/greeting.rb", "kind" => "read",
+      "status" => "pending", "rawInput" => { "path" => "<dir>/greeting.rb" }, "locations" => [{ "path" => "<dir>/greeting.rb" }] },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_AoWw", "status" => "in_progress" },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_AoWw", "status" => "completed",
+      "rawOutput" => { "content" => "class Greeting\n  def hello = \"hello\"\nend\n" } },
+    { "sessionUpdate" => "tool_call", "toolCallId" => "tc_f9dk", "title" => "Edit File", "kind" => "edit", "status" => "pending", "rawInput" => {} },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_f9dk", "title" => "Edit `<dir>/greeting.rb`",
+      "rawInput" => { "path" => "<dir>/greeting.rb" }, "locations" => [{ "path" => "<dir>/greeting.rb" }] },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_f9dk", "status" => "in_progress" },
+    { "sessionUpdate" => "tool_call", "toolCallId" => "tc_s4gg", "title" => "Edit File", "kind" => "edit", "status" => "pending", "rawInput" => {} },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_f9dk", "status" => "completed",
+      "content" => [{ "type" => "diff", "path" => "<dir>/greeting.rb", "oldText" => "class Greeting\n  def hello = \"hello\"\nend\n",
+                      "newText" => "class Greeting\n  def hello = \"hello\"\n  def goodbye = \"goodbye\"\nend\n" }] },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_s4gg", "title" => "Edit `<dir>/farewell.rb`",
+      "rawInput" => { "path" => "<dir>/farewell.rb" }, "locations" => [{ "path" => "<dir>/farewell.rb" }] },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_s4gg", "status" => "in_progress" },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_s4gg", "status" => "completed",
+      "content" => [{ "type" => "diff", "path" => "<dir>/farewell.rb", "oldText" => "-- /dev/null",
+                      "newText" => "++ b/<dir>/farewell.rb\nputs Greeting.new.goodbye" }] },
+    { "sessionUpdate" => "tool_call", "toolCallId" => "tc_Upj4", "title" => "grep", "kind" => "search", "status" => "pending", "rawInput" => {} },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_Upj4", "title" => "grep \"goodbye\"",
+      "rawInput" => { "pattern" => "goodbye", "path" => "<dir>" } },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_Upj4", "status" => "in_progress" },
+    { "sessionUpdate" => "tool_call", "toolCallId" => "tc_8k6k", "title" => "Find", "kind" => "search", "status" => "pending", "rawInput" => {} },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_Upj4", "status" => "completed",
+      "rawOutput" => { "totalMatches" => 3, "truncated" => false } },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_8k6k", "title" => "Find `*.rb`",
+      "rawInput" => { "pattern" => "*.rb" }, "locations" => [{ "path" => "<dir>" }] },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_8k6k", "status" => "in_progress" },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_8k6k", "status" => "completed",
+      "rawOutput" => { "totalFiles" => 2, "truncated" => false } },
+    { "sessionUpdate" => "tool_call", "toolCallId" => "tc_Ste2", "title" => "`ls`", "kind" => "execute", "status" => "pending",
+      "rawInput" => { "command" => "ls" } },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_Ste2", "status" => "in_progress" },
+    { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_Ste2", "status" => "completed",
+      "rawOutput" => { "exitCode" => 0, "stdout" => "farewell.rb\ngreeting.rb\nnotes.txt\n", "stderr" => "" } },
+  ].freeze
+
+  test "late-titled tool calls get an enriched line and completions an outcome line (ai-flow#109)" do
+    Given "the probed cursor-agent stream: two interleaved edits, a grep, a find, a shell command"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = AcpFakeExecutor.new(server: FakeAcpServer.new(updates: PROBED_TOOL_STREAM))
+
+    When "launching"
+    output = capture_agent_stdout do
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Build.new)
+    end
+    tool_lines = output.lines.map(&:chomp).select { |line| line.start_with?("[/build] → ", "[/build] ✓ ") }
+
+    Then "one line per tool call as it arrives, the composed title when it lands, counts and exit codes on completion"
+    tool_lines == [
+      "[/build] → Read <dir>/greeting.rb",
+      "[/build] → Edit File",
+      "[/build] → Edit `<dir>/greeting.rb`",
+      "[/build] → Edit File",
+      "[/build] → Edit `<dir>/farewell.rb`",
+      "[/build] → grep",
+      "[/build] → grep \"goodbye\"",
+      "[/build] → Find",
+      "[/build] ✓ grep \"goodbye\" → 3 matches",
+      "[/build] → Find `*.rb`",
+      "[/build] ✓ Find `*.rb` → 2 files",
+      "[/build] → `ls`",
+      "[/build] ✓ `ls` → exit 0",
+    ]
+    !output.include?("def goodbye")
+    !output.include?("notes.txt")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a tool_call_update repeating the printed title adds no line" do
+    Given "an update whose title matches what tool_call already rendered"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    server = FakeAcpServer.new(updates: [
+      { "sessionUpdate" => "tool_call", "toolCallId" => "tc_1", "title" => "Read a.rb", "kind" => "read", "rawInput" => { "path" => "a.rb" } },
+      { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_1", "title" => "Read a.rb", "status" => "in_progress" },
+      { "sessionUpdate" => "tool_call_update", "toolCallId" => "tc_1", "status" => "completed", "rawOutput" => { "content" => "x" } },
+    ])
+    executor = AcpFakeExecutor.new(server: server)
+
+    When "launching"
+    output = capture_agent_stdout do
+      AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    end
+
+    Then "one arrow line, no outcome line for a read"
+    output.scan("[/ask] → Read a.rb").size == 1
+    !output.include?("[/ask] ✓")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a titleless tool call renders its kind" do
     Given "a tool_call update with no title"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
