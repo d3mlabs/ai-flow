@@ -143,15 +143,11 @@ module AiFlow
       ).returns([String, T::Boolean])
     end
     def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false, &on_line)
-      isolation = isolate ? @isolation : nil
-      if isolation
-        argv = isolation.spawn_prefix + argv
-        env = isolation.redirect_env.merge(env)
-      end
+      argv, full_env = compose_spawn(argv, chdir: chdir, env: env, isolate: isolate)
       opts = chdir ? { chdir: chdir } : {}
       err = T.let("", String)
       # T.unsafe: same variadic forwarding as capture (srb.help/7019).
-      status = T.unsafe(Open3).popen3(spawn_env(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
+      status = T.unsafe(Open3).popen3(full_env, *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
         writer = Thread.new do
           stdin_io.write(stdin) if stdin
           stdin_io.close
@@ -201,15 +197,11 @@ module AiFlow
       ).returns([String, T::Boolean])
     end
     def duplex(*argv, chdir: nil, env: {}, isolate: false, reap_timeout: 10, &blk)
-      isolation = isolate ? @isolation : nil
-      if isolation
-        argv = isolation.spawn_prefix + argv
-        env = isolation.redirect_env.merge(env)
-      end
+      argv, full_env = compose_spawn(argv, chdir: chdir, env: env, isolate: isolate)
       opts = chdir ? { chdir: chdir } : {}
       err = T.let("", String)
       # T.unsafe: same variadic forwarding as capture (srb.help/7019).
-      status = T.unsafe(Open3).popen3(spawn_env(env), *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
+      status = T.unsafe(Open3).popen3(full_env, *argv, **opts) do |stdin_io, stdout_io, stderr_io, wait_thread|
         stdin_io.sync = true
         drain = Thread.new { stderr_io.read }
         begin
@@ -230,6 +222,62 @@ module AiFlow
     end
 
     private
+
+    # The one seam that turns a stream/duplex call into what popen3 runs —
+    # argv and the full child env — so the isolation posture is composed
+    # in exactly one place (plans#26). Under isolation the argv gains the
+    # sudo prefix and the env the toolchain redirects, and a chdir'd spawn
+    # gains the workspace's safe.directory as the next GIT_CONFIG slot
+    # (#101): git refuses the dispatcher-owned checkout for the agent uid,
+    # and this is the only way to tell it otherwise without writing a file.
+    # Appended after the full composition so it lands behind whatever auth
+    # slot the provider or the caller's overlay contributed, never on top
+    # of it.
+    #
+    # @param argv [Array<String>] command and arguments
+    # @param chdir [String, nil] working directory
+    # @param env [Hash{String => String, nil}] caller overrides
+    # @param isolate [Boolean] spawn under the isolation posture when one is
+    #   configured
+    # @return [Array(Array<String>, Hash{String => String, nil})] argv and env
+    sig do
+      params(
+        argv: T::Array[String],
+        chdir: T.nilable(String),
+        env: T::Hash[String, T.nilable(String)],
+        isolate: T::Boolean,
+      ).returns([T::Array[String], T::Hash[String, T.nilable(String)]])
+    end
+    def compose_spawn(argv, chdir:, env:, isolate:)
+      isolation = isolate ? @isolation : nil
+      return [argv, spawn_env(env)] unless isolation
+
+      full_env = spawn_env(isolation.redirect_env.merge(env))
+      full_env = append_git_config(full_env, *isolation.safe_directory_config(chdir)) if chdir
+      [isolation.spawn_prefix + argv, full_env]
+    end
+
+    # Add one entry to the env-borne git config list (git's `-c`
+    # equivalent): slot N = the current GIT_CONFIG_COUNT, which then
+    # advances. The count is read from the env being extended, so the
+    # entry stacks behind whatever is already there.
+    #
+    # @param env [Hash{String => String, nil}] the env to extend
+    # @param key [String] a git config key
+    # @param value [String] its value
+    # @return [Hash{String => String, nil}] a new env with the entry added
+    sig do
+      params(env: T::Hash[String, T.nilable(String)], key: String, value: String)
+        .returns(T::Hash[String, T.nilable(String)])
+    end
+    def append_git_config(env, key, value)
+      slot = env["GIT_CONFIG_COUNT"].to_i
+      env.merge(
+        "GIT_CONFIG_COUNT" => (slot + 1).to_s,
+        "GIT_CONFIG_KEY_#{slot}" => key,
+        "GIT_CONFIG_VALUE_#{slot}" => value,
+      )
+    end
 
     # Escalating child reap: clean exit within the window, then TERM, then
     # KILL. Signals go through `rescue nil` — the child may exit between

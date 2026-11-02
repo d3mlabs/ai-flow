@@ -294,6 +294,92 @@ class AiFlow::ExecutorTest < Minitest::Test
     nil
   end
 
+  # The GIT_CONFIG_* slots as the child sees them, one "KEY=VALUE" per line
+  # in slot order, so a test can assert the whole list at once.
+  GIT_CONFIG_DUMP = <<~RUBY
+    count = ENV.fetch("GIT_CONFIG_COUNT", "0").to_i
+    puts count
+    count.times { |i| puts ENV["GIT_CONFIG_KEY_\#{i}"] + "=" + ENV["GIT_CONFIG_VALUE_\#{i}"] }
+  RUBY
+
+  test "an isolated stream adds a safe.directory slot for the workspace behind the auth header (#101)" do
+    Given "an executor with isolation and a token provider, and a workspace under a symlinked base"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(token_provider: ScriptedTokenProvider.new(["ghs_alpha"]), isolation: isolation)
+    dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
+
+    When "streaming isolated in the workspace, with the agent overlay as the caller env"
+    lines = []
+    _err, ok = executor.stream(
+      RUBY, "-e", GIT_CONFIG_DUMP, chdir: dir, env: executor.agent_auth_env, isolate: true,
+    ) { |line| lines << line.chomp }
+
+    Then "the header keeps slot 0, safe.directory takes slot 1 on the realpath, and the count covers both"
+    ok
+    lines.fetch(0) == "2"
+    lines.fetch(1).start_with?("http.https://github.com/.extraheader=AUTHORIZATION: basic ")
+    lines.fetch(2) == "safe.directory=#{File.realpath(dir)}"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "without a token the safe.directory slot is the only one — the count stays honest (#101)" do
+    Given "an executor with isolation and ambient auth"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(isolation: isolation)
+    dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
+
+    When "streaming isolated in the workspace"
+    lines = []
+    executor.stream(RUBY, "-e", GIT_CONFIG_DUMP, chdir: dir, isolate: true) { |line| lines << line.chomp }
+
+    Then
+    lines == ["1", "safe.directory=#{File.realpath(dir)}"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a non-isolated stream in a workspace gets no safe.directory slot — one uid, the check never fires (#101)" do
+    Given "an executor with isolation configured and a token provider"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(token_provider: ScriptedTokenProvider.new(["ghs_alpha"]), isolation: isolation)
+    dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
+
+    When "streaming in the workspace without isolate:"
+    lines = []
+    executor.stream(RUBY, "-e", GIT_CONFIG_DUMP, chdir: dir) { |line| lines << line.chomp }
+
+    Then "only the auth header"
+    lines.fetch(0) == "1"
+    lines.none? { |line| line.start_with?("safe.directory=") }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "duplex(isolate: true) carries the same safe.directory slot as stream (#101)" do
+    Given "an executor with isolation and a token provider"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(token_provider: ScriptedTokenProvider.new(["ghs_alpha"]), isolation: isolation)
+    dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
+
+    When "reading the child's git config slots through duplex"
+    lines = []
+    executor.duplex(
+      RUBY, "-e", "$stdout.sync = true\n#{GIT_CONFIG_DUMP}",
+      chdir: dir, env: executor.agent_auth_env, isolate: true,
+    ) { |_to_child, from_child| from_child.each_line { |line| lines << line.chomp } }
+
+    Then
+    lines.fetch(0) == "2"
+    lines.fetch(2) == "safe.directory=#{File.realpath(dir)}"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "duplex round-trips: the block writes the child's stdin and reads its stdout" do
     Given "a child that answers each stdin line"
     executor = AiFlow::Executor.new

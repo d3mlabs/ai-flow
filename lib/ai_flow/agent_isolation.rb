@@ -22,15 +22,19 @@ module AiFlow
     class UnknownAgentUserError < StandardError; end
 
     # The env keys that survive sudo's env_reset — exactly what
-    # Executor#auth_overlay injects and Agent reads, nothing more. Values
-    # travel as env (not argv), so tokens stay off process listings. The
-    # redirected toolchain keys ride the same allowlist (see #redirect_env).
+    # Executor injects (the auth header in GIT_CONFIG slot 0, the
+    # workspace's safe.directory in slot 1 — see #safe_directory_config)
+    # and Agent reads, nothing more. Values travel as env (not argv), so
+    # tokens stay off process listings. The redirected toolchain keys ride
+    # the same allowlist (see #redirect_env).
     PRESERVED_ENV_KEYS = T.let(
       %w[
         GH_TOKEN
         GIT_CONFIG_COUNT
         GIT_CONFIG_KEY_0
         GIT_CONFIG_VALUE_0
+        GIT_CONFIG_KEY_1
+        GIT_CONFIG_VALUE_1
         CURSOR_API_KEY
         AI_FLOW_MODEL
         AI_FLOW_AGENT_BIN
@@ -119,6 +123,24 @@ module AiFlow
         "BUNDLE_PATH" => File.join(@home, ".bundle"),
         "AGENT_CLI_CREDENTIAL_STORE" => "file",
       }
+    end
+
+    # The git config entry that lets the agent run git in a workspace the
+    # dispatcher created (#101). Git refuses a repository owned by another
+    # uid regardless of permissions, so the group share alone is not
+    # enough; `safe.directory` is the sanctioned exception, and it travels
+    # as env config on the spawn — nothing written to either user's
+    # ~/.gitconfig, gone with the run. One entry for the worktree path is
+    # all git matches against (a linked worktree's common dir under the
+    # job checkout needs no entry of its own). The realpath, because git
+    # compares the resolved worktree (/private/tmp/... on macOS), not the
+    # spelling the dispatcher created it under.
+    #
+    # @param workspace [String] the checkout the agent spawns in
+    # @return [Array(String, String)] a git config key and value
+    sig { params(workspace: String).returns([String, String]) }
+    def safe_directory_config(workspace)
+      ["safe.directory", File.realpath(workspace)]
     end
 
     # Where fresh workspaces are created when the agent is another user.

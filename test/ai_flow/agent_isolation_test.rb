@@ -81,6 +81,28 @@ class AiFlow::AgentIsolationTest < Minitest::Test
     nil
   end
 
+  test "the allowlist carries a second GIT_CONFIG slot — safe.directory rides behind the auth header (#101)" do
+    Expect "both halves of slot 1 survive sudo's env_reset"
+    AiFlow::AgentIsolation::PRESERVED_ENV_KEYS.include?("GIT_CONFIG_KEY_1")
+    AiFlow::AgentIsolation::PRESERVED_ENV_KEYS.include?("GIT_CONFIG_VALUE_1")
+  end
+
+  test "safe_directory_config names the workspace by the path git itself resolves (#101)" do
+    Given "an isolation and a workspace reached through a symlinked base (/tmp on macOS)"
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/Users/ai-agent")
+    dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
+
+    When "building the git config entry"
+    key, value = isolation.safe_directory_config(dir)
+
+    Then "safe.directory on the realpath — git compares against the resolved worktree, not the spelling"
+    key == "safe.directory"
+    value == File.realpath(dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "redirect_env points toolchain writes under the agent's own home" do
     Given "an isolation config"
     isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/Users/ai-agent")
