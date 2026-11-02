@@ -69,9 +69,22 @@ module AiFlow
       # One comment in the thread's conversation. `author` is the login,
       # "" for ghost/deleted users.
       class Comment < T::Struct
+        extend T::Sig
+
         const :author, String
         const :body, String
         const :url, String
+
+        # A copy with the body replaced — consumers rewrite a comment's text
+        # (a refused command reduced to its instruction) without mutating a
+        # shared collection.
+        #
+        # @param body [String]
+        # @return [Comment]
+        sig { params(body: String).returns(Comment) }
+        def with_body(body)
+          Comment.new(author: author, body: body, url: url)
+        end
       end
 
       const :path, String
@@ -244,7 +257,7 @@ module AiFlow
                 isResolved
                 path
                 comments(first: 50) {
-                  nodes { databaseId body diffHunk url author { login } }
+                  nodes { databaseId body diffHunk url author { login __typename } }
                 }
               }
             }
@@ -455,13 +468,28 @@ module AiFlow
         first_comment_id: comments.first&.dig("databaseId"),
         comments: comments.map do |comment|
           ReviewThread::Comment.new(
-            # dig: ghost/deleted users surface as a null author object.
-            author: comment.dig("author", "login").to_s,
+            author: rest_login(comment["author"]),
             body: comment.fetch("body"),
             url: comment.fetch("url"),
           )
         end,
       )
+    end
+
+    # GraphQL reports an App's login bare ("d3mlabs-ai-flow") where REST
+    # says "d3mlabs-ai-flow[bot]"; every consumer compares authors against
+    # CommitIdentity.bot_login, which is the REST form, so the boundary
+    # renders one form.
+    #
+    # @param author [Hash, nil] a GraphQL actor with login and __typename —
+    #   nil for ghost/deleted users
+    # @return [String] the REST-form login, "" for a missing actor
+    sig { params(author: T.nilable(T::Hash[String, T.untyped])).returns(String) }
+    def rest_login(author)
+      return "" unless author
+
+      login = author["login"].to_s
+      author["__typename"] == "Bot" ? "#{login}[bot]" : login
     end
 
     # @param data [Hash] a REST pull-request object

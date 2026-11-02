@@ -380,18 +380,56 @@ module AiFlow
         branch
       end
 
-      # Unresolved review threads, minus those a command started (a threaded
-      # /ask and its answer are a handled conversation, not outstanding
-      # feedback). Each surviving thread carries only its write-authorized
-      # comments (plans#24) — the pass runs with force, so third-party thread
-      # content is an injection surface.
+      # Unresolved review threads as feedback: threads a command started are
+      # dropped or rewritten (feedback_thread), and each surviving thread
+      # carries only its write-authorized comments (plans#24) — the pass runs
+      # with force, so third-party thread content is an injection surface.
       #
       # @return [Array<AiFlow::GitHub::ReviewThread>]
       sig { returns(T::Array[GitHub::ReviewThread]) }
       def sweepable_threads
         @github.unresolved_review_threads(@context.owner_repo, @context.number)
-               .reject { |thread| command_comment?(thread.comments.first&.body.to_s) }
+               .filter_map { |thread| feedback_thread(thread) }
                .filter_map { |thread| trusted_thread(thread) }
+      end
+
+      # A thread a command started is a handled conversation only on
+      # evidence: the bot's reply is the thread's last word (a threaded /ask
+      # and its answer; a /build-led thread this sweep already replied to).
+      # Otherwise it is outstanding (ai-flow#75: a dropped or refused
+      # command would stay invisible forever) — and a human writing after
+      # the bot reopens it, as any plain thread stays open until resolved.
+      # An outstanding command comment is swept as the feedback it carries:
+      # its quote and instruction stand in for the first comment's text —
+      # the command line and any appended panel (the /build refusal, which
+      # promised exactly this pickup) are not feedback. A bare command
+      # leaves only the thread's replies.
+      #
+      # @param thread [AiFlow::GitHub::ReviewThread]
+      # @return [AiFlow::GitHub::ReviewThread, nil] nil when the thread is a
+      #   handled conversation or nothing sweepable remains
+      sig { params(thread: GitHub::ReviewThread).returns(T.nilable(GitHub::ReviewThread)) }
+      def feedback_thread(thread)
+        first = thread.comments.first
+        return thread unless first
+
+        segments = CommentParser.new(prefix: @prefix).parse(first.body)
+        return thread if segments.empty?
+        return nil if thread.comments.last&.author == CommitIdentity.bot_login
+
+        feedback = segments.map { |segment| [segment.quote, segment.instruction].compact.join("\n\n") }.join("\n\n").strip
+        replies = thread.comments.drop(1)
+        comments = feedback.empty? ? replies : [first.with_body(feedback), *replies]
+        return nil if comments.empty?
+
+        GitHub::ReviewThread.new(
+          path: thread.path,
+          diff_hunk: thread.diff_hunk,
+          first_comment_id: thread.first_comment_id,
+          comments: comments,
+        )
+      rescue CommentParser::ParseError
+        nil
       end
 
       # The thread reduced to its trusted comments; nil when none remain (a

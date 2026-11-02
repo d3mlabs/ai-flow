@@ -236,6 +236,31 @@ class AiFlow::GitHubTest < Minitest::Test
     nil
   end
 
+  test "unresolved_review_threads renders a Bot author in the REST login form" do
+    Given "a thread where the App replied — GraphQL reports Bot logins without the [bot] suffix"
+    executor = CannedExecutor.new(out: JSON.generate(
+      { "data" => { "repository" => { "pullRequest" => { "reviewThreads" => { "nodes" => [
+        { "isResolved" => false, "path" => "lib/thing.rb",
+          "comments" => { "nodes" => [
+            { "databaseId" => 91, "body" => "/ask why?", "diffHunk" => "@@", "url" => "u",
+              "author" => { "login" => "jpduchesne", "__typename" => "User" } },
+            { "databaseId" => 92, "body" => "Because.", "diffHunk" => "@@", "url" => "u2",
+              "author" => { "login" => "d3mlabs-ai-flow", "__typename" => "Bot" } },
+          ] } },
+      ] } } } } },
+    ))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "sweeping the PR"
+    thread = T.must(github.unresolved_review_threads("d3mlabs/demo", 7).first)
+
+    Then "the bot's login matches what REST (and CommitIdentity.bot_login) would say"
+    thread.comments.map(&:author) == ["jpduchesne", "d3mlabs-ai-flow[bot]"]
+
+    Cleanup
+    nil
+  end
+
   test "react_to_comment posts the reaction to the surface's namespace" do
     Given "a plain issue comment to acknowledge"
     executor = CannedExecutor.new
