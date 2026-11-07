@@ -240,6 +240,98 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  # The --split orchestrator's children arrive as comments (ai-flow#115),
+  # so the bases ride the command: `--base=<url>,<url>` names the
+  # dependency PRs to stack on, fetched by url.
+  test "/build --base=<urls> stacks on the named PRs exactly as the in-process seam does" do
+    Given "an issue and two open dependency PRs"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    github.seed_pull_request(REPO, 1, head_ref: "ai/1-server-api")
+    github.seed_pull_request(REPO, 2, head_ref: "ai/2-client-ui")
+    executor = RecordingExecutor.new
+
+    When "building with both as bases"
+    run_build(
+      github: github, executor: executor,
+      body: "/build --base=https://github.com/#{REPO}/pull/1,https://github.com/#{REPO}/pull/2",
+    )
+    command_lines = executor.command_lines
+
+    Then "the first head is the start, the second merges in, the PR bases on the last"
+    command_lines.include?("git checkout --detach origin/ai/1-server-api")
+    command_lines.any? { |line| line.include?("merge --no-edit origin/ai/2-client-ui") }
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "ai/2-client-ui"])
+    github.comment_edits.fetch(55).include?("✅ **/build**")
+
+    Cleanup
+    nil
+  end
+
+  test "a --base that is not a PR url is refused before any git runs" do
+    Given
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When
+    error = assert_raises(AiFlow::Commands::Build::BadBaseError) do
+      run_build(github: github, executor: executor, body: "/build --base=ai/1-server-api")
+    end
+
+    Then
+    error.message.include?("ai/1-server-api")
+    executor.command_lines.empty?
+
+    Cleanup
+    nil
+  end
+
+  # The orchestrator's child comment is the bot's, but the work is the
+  # human's who ran /build --split: `--for=<login>` re-points the
+  # requester (PR body, assignee, commit credit). Honored only on a comment
+  # this App authored — a human cannot sign another's name.
+  test "an app-authored /build --for=<login> is attributed to that human" do
+    Given "the App's own /build --for=jane on an issue"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    github.seed_user("jane", 777)
+    context = ContextBuilder.issue_comment(
+      number: 7, body: "/build --for=jane", association: "NONE", app_id: 424_242, env: { "AI_FLOW_APP_ID" => "424242" },
+    )
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor, body: "/build --for=jane", context: context)
+    commit_line = executor.command_lines.find { |line| line.include?(" commit -m ") }
+
+    Then "jane is the requester everywhere: PR body, assignee, commit credit"
+    github.pull_request_bodies.fetch(0).include?("Requested by @jane.")
+    github.calls.include?([:add_assignees, REPO, 900, ["jane"]])
+    T.must(commit_line).include?("Co-authored-by: jane <777+jane@users.noreply.github.com>")
+
+    Cleanup
+    nil
+  end
+
+  test "a human's /build --for=<login> keeps the human as the requester" do
+    Given
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    github.seed_user("jane", 777)
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --for=jane")
+
+    When
+    run_build(github: github, executor: RecordingExecutor.new, body: "/build --for=jane", context: context)
+
+    Then
+    github.pull_request_bodies.fetch(0).include?("Requested by @jpduchesne.")
+    github.calls.none? { |call| call == [:user_id, "jane"] }
+
+    Cleanup
+    nil
+  end
+
   test "a dependency PR in another repo contributes no base — the build forks from main" do
     Given "a dependency PR that lives outside the issue's target repo"
     github = FakeGitHub.new

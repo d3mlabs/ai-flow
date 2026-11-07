@@ -22,6 +22,10 @@ module AiFlow
     # collaborator-permission API.
     ALLOWED_ASSOCIATIONS = %w[OWNER MEMBER COLLABORATOR].freeze
 
+    # on_behalf_of! on a comment this App did not author — delegation is
+    # the orchestrator's privilege, never a human's flag.
+    class DelegationError < StandardError; end
+
     # @return [String] "owner/repo"
     sig { returns(String) }
     attr_reader :owner_repo
@@ -116,6 +120,9 @@ module AiFlow
       user = source["user"] || {}
       @commenter_login = T.let(user["login"], T.nilable(String))
       @commenter_id = T.let(user["id"], T.nilable(Integer))
+      # Present only on a comment a GitHub App performed — the node is the
+      # App's, not the bot user's, so it cannot be forged by a login.
+      @performing_app_id = T.let(source.dig("performed_via_github_app", "id"), T.nilable(Integer))
     end
 
     # @return [Boolean] any PR surface (conversation, review comment, or
@@ -135,12 +142,50 @@ module AiFlow
     sig { overridable.returns(T::Boolean) }
     def review_summary? = false
 
-    # Permission gate: only owners/members/collaborators may drive the agent.
+    # Permission gate: owners/members/collaborators may drive the agent —
+    # and so may this App itself, whose only command comments are the
+    # --split orchestrator's children (ai-flow#115).
     #
     # @return [Boolean]
     sig { returns(T::Boolean) }
     def authorized?
-      ALLOWED_ASSOCIATIONS.include?(author_association)
+      ALLOWED_ASSOCIATIONS.include?(author_association) || app_authored?
+    end
+
+    # Whether the ai-flow App performed this comment. Only the dispatcher
+    # holds the App key, so an App-performed command comment is an
+    # orchestrator's child /build; the id is matched against the job's
+    # AI_FLOW_APP_ID, so another App's comment — or ours on a host that
+    # does not know the App — is a stranger's.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def app_authored?
+      configured = @env["AI_FLOW_APP_ID"].to_s
+      return false if configured.empty? || @performing_app_id.nil?
+
+      @performing_app_id == Integer(configured, 10)
+    rescue ArgumentError
+      false
+    end
+
+    # Re-point the requesting human: the orchestrator's child comment is
+    # the bot's, but the work — the PR's "Requested by", its assignee, the
+    # commit credit — is the human's who ran /build --split, named by the
+    # child command's --for. Only an App-authored comment may delegate.
+    #
+    # @param login [String]
+    # @param id [Integer] the user's id, for the noreply credit form
+    # @return [void]
+    # @raise [DelegationError] on a comment this App did not author
+    sig { params(login: String, id: Integer).void }
+    def on_behalf_of!(login:, id:)
+      unless app_authored?
+        raise DelegationError, "--for is the orchestrator's: this comment is #{commenter_login.inspect}'s own"
+      end
+
+      @commenter_login = login
+      @commenter_id = id
     end
 
     # @return [String] the issue/PR html URL (for text-fragment backlinks)

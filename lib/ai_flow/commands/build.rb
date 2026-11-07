@@ -44,6 +44,10 @@ module AiFlow
       # dispatcher's, with dev's stderr, before any agent spawns.
       class WorkspaceProvisionError < Error; end
 
+      # A `--base` value that names no pull request — the orchestrator's
+      # child command was malformed (ai-flow#115).
+      class BadBaseError < Error; end
+
       # The App deliberately lacks the `workflows` permission (see
       # docs/attribution.md): GitHub rejects any App push touching workflow
       # files wholesale, and a workflow pushed to a branch could execute on
@@ -285,7 +289,8 @@ module AiFlow
         issue = @github.issue(@context.owner_repo, @context.number)
         return refuse_staged_spec(segment) if SubtasksSection.spec?(issue.body)
 
-        outcome = build_issue(issue, extra_instruction: segment.instruction)
+        delegate_requester!(segment)
+        outcome = build_issue(issue, extra_instruction: segment.instruction, base_prs: base_prs_from(segment))
         headline =
           case outcome
           when Outcome::PrOpened then "✅ **/build** — opened #{outcome.urls.join(", ")}"
@@ -325,6 +330,39 @@ module AiFlow
       end
 
       private
+
+      # The dependency PRs a child command names (`--base=<url>,<url>`,
+      # ai-flow#115), fetched by url — the same bases the in-process
+      # orchestrator passes as objects.
+      #
+      # @param segment [CommentParser::Segment]
+      # @return [Array<GitHub::PullRequest>] dependency order
+      # @raise [BadBaseError]
+      sig { params(segment: CommentParser::Segment).returns(T::Array[GitHub::PullRequest]) }
+      def base_prs_from(segment)
+        urls = segment.option("base").to_s.split(",").reject(&:empty?)
+        urls.map do |url|
+          repo, number = GitHub.parse_pull_request_url(url)
+          @github.pull_request(repo, number)
+        rescue GitHub::Error => e
+          raise BadBaseError, "--base #{url.inspect}: #{e.message}"
+        end
+      end
+
+      # `--for=<login>` on a comment this App authored re-points the
+      # requesting human (ai-flow#115); on anyone else's comment the flag
+      # is inert — a human signs their own name.
+      #
+      # @param segment [CommentParser::Segment]
+      # @return [void]
+      sig { params(segment: CommentParser::Segment).void }
+      def delegate_requester!(segment)
+        login = segment.option("for")
+        return unless login && @context.app_authored?
+
+        login = login.delete_prefix("@")
+        @context.on_behalf_of!(login: login, id: @github.user_id(login))
+      end
 
       # The build proper, once the workspaces are the run's: stack, branch,
       # provision, agent pass, commit, PR.

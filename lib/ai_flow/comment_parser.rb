@@ -66,11 +66,26 @@ module AiFlow
     # index of the last line the segment owns — the insertion point for its
     # interleaved result.
     class Segment < T::Struct
+      extend T::Sig
+
       const :command, Command
       const :flags, T::Array[String]
       const :quote, T.nilable(String)
       prop :instruction, String
       prop :end_line, Integer
+
+      # A valued flag, `--name=value` — one token, so the instruction
+      # grammar is untouched (the --split orchestrator's child commands
+      # carry their bases and requester this way, ai-flow#115).
+      #
+      # @param name [String] the flag name without dashes
+      # @return [String, nil] the value, nil when the flag is absent
+      sig { params(name: String).returns(T.nilable(String)) }
+      def option(name)
+        prefix = "--#{name}="
+        flag = flags.find { |candidate| candidate.start_with?(prefix) }
+        flag&.delete_prefix(prefix)
+      end
     end
 
     # @param prefix [String] optional command prefix for adopters with clashing

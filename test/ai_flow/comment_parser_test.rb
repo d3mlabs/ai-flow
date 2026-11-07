@@ -99,6 +99,25 @@ class AiFlow::CommentParserTest < Minitest::Test
     nil
   end
 
+  # The orchestrator's child commands carry values, not just switches
+  # (ai-flow#115): `--base=<url>,<url>` and `--for=<login>`. The `=` form
+  # keeps a valued flag one token, so the instruction grammar is unchanged.
+  test "a valued flag is one token, read back by name" do
+    Given
+    segments = parse("/build --base=https://github.com/d/x/pull/1,https://github.com/d/x/pull/2 --for=jane stack it")
+    segment = segments.first
+
+    Expect
+    segment.flags == ["--base=https://github.com/d/x/pull/1,https://github.com/d/x/pull/2", "--for=jane"]
+    segment.option("base") == "https://github.com/d/x/pull/1,https://github.com/d/x/pull/2"
+    segment.option("for") == "jane"
+    segment.option("split").nil?
+    segment.instruction == "stack it"
+
+    Cleanup
+    nil
+  end
+
   test "a configured prefix shifts the command tokens" do
     Given "an adopter running with the ai- prefix"
     segments = parse("/ai-ask what changed?", prefix: "ai-")
