@@ -312,12 +312,32 @@ class AiFlow::AgentTest < Minitest::Test
     When "launching"
     answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
-    Then "the accumulated chunks are the answer and the argv is the ACP subcommand"
+    Then "the accumulated chunks are the answer and the argv is the ACP subcommand of the binary the cask ships"
     answer == "THE ANSWER"
-    executor.captures == [["agent", "acp"]]
+    executor.captures == [["cursor-agent", "acp"]]
     executor.server.prompt_texts == ["p"]
 
     Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # The cursor-cli cask installs exactly one binary, `cursor-agent`; a
+  # fresh runner slot has nothing else on its PATH (#118). The env key
+  # stays as the override for a host that keeps the CLI elsewhere.
+  test "AI_FLOW_AGENT_BIN overrides the binary; unset, it is cursor-agent" do
+    Given "a server, and the override set"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = AcpFakeExecutor.new
+    ENV["AI_FLOW_AGENT_BIN"] = "/opt/elsewhere/agent"
+
+    When "launching"
+    AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the override is what spawns"
+    executor.captures == [["/opt/elsewhere/agent", "acp"]]
+
+    Cleanup
+    ENV.delete("AI_FLOW_AGENT_BIN")
     FileUtils.rm_rf(dir)
   end
 
