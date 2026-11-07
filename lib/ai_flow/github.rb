@@ -12,6 +12,8 @@ module AiFlow
 
     class Error < StandardError; end
 
+    PULL_REQUEST_URL = %r{\Ahttps://github\.com/(?<repo>[\w.-]+/[\w.-]+)/pull/(?<number>\d+)\z}
+
     # `repo` is the "owner/repo" the issue lives in (derived from
     # repository_url) — sub-issues may live in a different repo than their
     # parent, so it can't be assumed from context. `body` and `state` are
@@ -104,6 +106,23 @@ module AiFlow
       const :head_ref, String
     end
 
+    class << self
+      extend T::Sig
+
+      # The repo and number a PR url names.
+      #
+      # @param url [String] https://github.com/<owner>/<repo>/pull/<n>
+      # @return [Array(String, Integer)] "owner/repo" and the number
+      # @raise [Error] when the url is not a PR's
+      sig { params(url: String).returns([String, Integer]) }
+      def parse_pull_request_url(url)
+        match = PULL_REQUEST_URL.match(url)
+        raise Error, "not a pull request url: #{url.inspect}" unless match
+
+        [T.must(match[:repo]), Integer(T.must(match[:number]), 10)]
+      end
+    end
+
     # @param executor [AiFlow::Executor]
     sig { params(executor: Executor).void }
     def initialize(executor: Executor.new)
@@ -190,6 +209,15 @@ module AiFlow
     sig { params(owner_repo: String, number: Integer, body: String).returns(Comment) }
     def post_issue_comment(owner_repo, number, body)
       to_comment(api("repos/#{owner_repo}/issues/#{number}/comments", method: "POST", payload: { body: body }))
+    end
+
+    # One comment by id — how the --split orchestrator reads a child
+    # /build's panel back off the comment it posted (ai-flow#115).
+    #
+    # @return [Comment]
+    sig { params(owner_repo: String, comment_id: Integer).returns(Comment) }
+    def issue_comment(owner_repo, comment_id)
+      to_comment(api("repos/#{owner_repo}/issues/comments/#{comment_id}"))
     end
 
     # The issue's conversation, oldest first. One page of 100 covers our
@@ -403,6 +431,19 @@ module AiFlow
     sig { params(owner_repo: String).returns(String) }
     def default_branch(owner_repo)
       api("repos/#{owner_repo}").fetch("default_branch")
+    end
+
+    # @return [PullRequest]
+    sig { params(owner_repo: String, number: Integer).returns(PullRequest) }
+    def pull_request(owner_repo, number)
+      to_pull_request(api("repos/#{owner_repo}/pulls/#{number}"))
+    end
+
+    # @return [Integer] the user's id (the stable half of the noreply
+    #   credit address)
+    sig { params(login: String).returns(Integer) }
+    def user_id(login)
+      api("users/#{login}").fetch("id")
     end
 
     # @return [String] the user's effective permission on the repo:

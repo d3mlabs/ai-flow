@@ -80,7 +80,7 @@ on memory (learning proposal PRs), never the surface's code.
 | `/split [--dry|--apply]`    | Two-phase plan/apply over sub-issues: `--dry` stages an editable `## Subtasks` yaml spec in the plan body, `--apply` executes it deterministically (per-subtask repo routing, `existing:` adoption); bare does both. |
 | `/build` (issue)            | Builds the plan into a PR on branch `ai/<n>-<slug>` — state-aware: refuses on a staged split spec, notes open sub-issues.                                                                                            |
 | `/build [instruction]` (PR) | Iterates on the head branch, sweeping unresolved threads + fresh comments; replies per thread with disposition + commit link.                                                                                        |
-| `/build --split` (issue)    | Orchestrates `/build` across sub-issues in dependency waves with a live checklist; skips undrivable nodes with warnings.                                                                                             |
+| `/build --split` (issue)    | Orchestrates `/build` across sub-issues in dependency waves — each wave fans out as one `/build` run per sub-issue, concurrent on the repo's runner slots — with a live checklist; skips undrivable nodes with warnings. |
 | `/learn [statement]`        | Captures durable learnings into a proposal PR — dictated, or a bare sweep of the surface's threads; never touches the surface's code.                                                                                |
 | `/learn --scan [context…]`  | Surveys the codebase + docs instead of a discussion: seeds/refreshes architecture digests and distills visible practices.                                                                                            |
 | `/learn --promote <slug>`   | Promotes a repo-local learning to the org knowledge repo — paired drafts: the org addition plus the repo-local removal.                                                                                              |
@@ -299,6 +299,11 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    Unset means slot 1. A `/build` that finds its persistent workspace held
    anyway reports busy and exits clean (re-run when free); under
    `/build --split` such a sub-issue is deferred and its dependents wait.
+   `/build --split` fans each wave out as one `/build` run per sub-issue
+   (comments the App posts, dispatched like a human's), while the
+   orchestrator holds a slot of its own to poll them — so two sub-issues
+   build side by side from `--slots 3` up; with fewer, GitHub queues the
+   children and the wave still completes, one at a time.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
   and make sure it — plus `dev` and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not

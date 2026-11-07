@@ -73,12 +73,51 @@ class FakeGitHub < AiFlow::GitHub
     @issues.fetch([owner_repo, number]).state = "closed"
   end
 
+  # Posted comments get ids from 1001 up and are readable back through
+  # issue_comment — the --split orchestrator's child commands (ai-flow#115).
   def post_issue_comment(owner_repo, number, body)
     @calls << [:post_issue_comment, owner_repo, number]
     @comments << body
+    id = 1000 + posted_comments.size + 1
+    posted_comments[id] = [owner_repo, number, body]
     AiFlow::GitHub::Comment.new(
-      id: 1, author: "ai-flow", body: body,
-      html_url: "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-1",
+      id: id, author: "ai-flow", body: body,
+      html_url: "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{id}",
+      created_at: Time.now,
+    )
+  end
+
+  # The third element of every recorded call of one kind (the issue number
+  # of a post, the comment id of a read), in call order. Lives here, not in
+  # a test file: RSpock rewrites every block in a transformed file,
+  # destructuring block parameters, so an inline `|call|` over `calls`
+  # never sees the arrays.
+  def third_args(kind)
+    @calls.select { |call| call.is_a?(Array) && call.first == kind }.map { |call| call[2] }
+  end
+
+  # @return [Hash{Integer => Array(String, Integer, String)}] id => repo,
+  #   issue number, body as posted
+  def posted_comments
+    @posted_comments ||= {}
+  end
+
+  # Plays the children: the block gets (repo, number, posted body, how
+  # many times this comment has been read) and returns the Trailer the
+  # child's panel carries by now, or nil while it is still running.
+  def script_children(&block)
+    @child_script = block
+  end
+
+  def issue_comment(owner_repo, comment_id)
+    @calls << [:issue_comment, owner_repo, comment_id]
+    repo, number, body = posted_comments.fetch(comment_id)
+    @comment_reads ||= Hash.new(0)
+    reads = (@comment_reads[comment_id] += 1)
+    trailer = @child_script&.call(repo, number, body, reads)
+    AiFlow::GitHub::Comment.new(
+      id: comment_id, author: "ai-flow", body: trailer ? "#{body}\n\n> ✅ **/build**\n>\n> #{trailer}" : body,
+      html_url: "https://github.com/#{repo}/issues/#{number}#issuecomment-#{comment_id}",
       created_at: Time.now,
     )
   end
@@ -246,6 +285,35 @@ class FakeGitHub < AiFlow::GitHub
     (@open_prs_by_head || {})[branch]
   end
 
+  def seed_pull_request(owner_repo, number, head_ref:)
+    @pull_requests ||= {}
+    @pull_requests[[owner_repo, number]] = AiFlow::GitHub::PullRequest.new(
+      number: number, html_url: "https://github.com/#{owner_repo}/pull/#{number}", repo: owner_repo, head_ref: head_ref,
+    )
+  end
+
+  # Unseeded PRs synthesize (head `ai/<n>-branch`): the orchestrator fetches
+  # its children's PRs by url, and the children here are scripted.
+  def pull_request(owner_repo, number)
+    @calls << [:pull_request, owner_repo, number]
+    (@pull_requests || {}).fetch([owner_repo, number]) do
+      AiFlow::GitHub::PullRequest.new(
+        number: number, html_url: "https://github.com/#{owner_repo}/pull/#{number}", repo: owner_repo,
+        head_ref: "ai/#{number}-branch",
+      )
+    end
+  end
+
+  def seed_user(login, id)
+    @users ||= {}
+    @users[login] = id
+  end
+
+  def user_id(login)
+    @calls << [:user_id, login]
+    (@users || {}).fetch(login) { raise AiFlow::GitHub::Error, "no such user #{login}" }
+  end
+
   def close_pull_request(owner_repo, number)
     @calls << [:close_pull_request, owner_repo, number]
   end
@@ -352,20 +420,27 @@ end unless defined?(FakeAgent)
 module ContextBuilder
   module_function
 
-  def issue_comment(owner_repo: "d3mlabs/demo", number: 7, comment_id: 55, body:, association: "OWNER", pull_request: false, env: {})
+  # `app_id` makes the comment one a GitHub App performed (the payload's
+  # performed_via_github_app node), authored by that App's bot user.
+  def issue_comment(owner_repo: "d3mlabs/demo", number: 7, comment_id: 55, body:, association: "OWNER", pull_request: false,
+    env: {}, app_id: nil)
     issue = { "number" => number }
     issue["pull_request"] = { "url" => "x" } if pull_request
+    comment = T.let(
+      {
+        "id" => comment_id, "body" => body, "author_association" => association,
+        "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{comment_id}",
+        "user" => { "login" => "jpduchesne", "id" => 111 },
+      },
+      T::Hash[String, T.untyped],
+    )
+    if app_id
+      comment["user"] = { "login" => "ai-flow[bot]", "id" => 424_242, "type" => "Bot" }
+      comment["performed_via_github_app"] = { "id" => app_id, "slug" => "ai-flow" }
+    end
     AiFlow::Context.from_event(
       event_name: "issue_comment",
-      payload: {
-        "repository" => { "full_name" => owner_repo },
-        "issue" => issue,
-        "comment" => {
-          "id" => comment_id, "body" => body, "author_association" => association,
-          "html_url" => "https://github.com/#{owner_repo}/issues/#{number}#issuecomment-#{comment_id}",
-          "user" => { "login" => "jpduchesne", "id" => 111 },
-        },
-      },
+      payload: { "repository" => { "full_name" => owner_repo }, "issue" => issue, "comment" => comment },
       env: env,
     )
   end

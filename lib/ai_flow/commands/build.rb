@@ -44,6 +44,10 @@ module AiFlow
       # dispatcher's, with dev's stderr, before any agent spawns.
       class WorkspaceProvisionError < Error; end
 
+      # A `--base` value that names no pull request — the orchestrator's
+      # child command was malformed (ai-flow#115).
+      class BadBaseError < Error; end
+
       # The App deliberately lacks the `workflows` permission (see
       # docs/attribution.md): GitHub rejects any App push touching workflow
       # files wholesale, and a workflow pushed to a branch could execute on
@@ -80,6 +84,88 @@ module AiFlow
           @workflows_patch = workflows_patch
         end
 
+        # @return [Trailer] this outcome as a child run reports it
+        sig { abstract.returns(Trailer) }
+        def trailer; end
+
+        # The outcome's wire form across the comment boundary (ai-flow#115):
+        # the last line of every issue-mode /build panel, an HTML comment
+        # GitHub never renders, so the --split orchestrator can read a
+        # child run's result off the comment it posted — the one surface
+        # the child writes to, at the one moment it finishes. Four kinds:
+        # the three outcomes plus `failed`, which the dispatcher stamps on
+        # its ⚠️ panel so a crashed child is distinguishable from one still
+        # running (no trailer at all).
+        class Trailer
+          extend T::Sig
+          include ValueEquality::Derived
+
+          # A trailer whose kind this dispatcher's vocabulary lacks — a
+          # child on a newer ai-flow than its orchestrator.
+          class UnknownKindError < StandardError; end
+
+          class Kind < T::Enum
+            enums do
+              PrOpened = new("pr_opened")
+              NothingToBuild = new("nothing_to_build")
+              Busy = new("busy")
+              Failed = new("failed")
+            end
+          end
+
+          PATTERN = /<!-- ai-flow:outcome (?<fields>[^>]*?) -->/
+
+          sig { returns(Kind) }
+          attr_reader :kind
+
+          # @return [Array<String>] the opened PRs' html urls, primary
+          #   first; empty for every kind but PrOpened
+          sig { returns(T::Array[String]) }
+          attr_reader :pr_urls
+
+          # @param kind [Kind]
+          # @param pr_urls [Array<String>]
+          sig { params(kind: Kind, pr_urls: T::Array[String]).void }
+          def initialize(kind:, pr_urls: [])
+            @kind = kind
+            @pr_urls = pr_urls
+          end
+
+          sig { override.returns(T::Array[Object]) }
+          def equality_members = [@kind, @pr_urls]
+
+          class << self
+            extend T::Sig
+
+            # @return [Trailer] the dispatcher's stamp on a failed /build
+            sig { returns(Trailer) }
+            def failed = new(kind: Kind::Failed)
+
+            # @param body [String] a command comment's body, as fetched
+            # @return [Trailer, nil] nil when the body carries no trailer —
+            #   the run has not reported yet
+            # @raise [UnknownKindError]
+            sig { params(body: String).returns(T.nilable(Trailer)) }
+            def parse(body)
+              match = PATTERN.match(body)
+              return nil unless match
+
+              fields = T.must(match[:fields]).split.to_h { |pair| T.cast(pair.split("=", 2), [String, String]) }
+              kind = Kind.try_deserialize(fields["kind"])
+              raise UnknownKindError, "unknown /build outcome kind #{fields["kind"].inspect} in #{match[0]}" unless kind
+
+              new(kind: kind, pr_urls: fields.fetch("prs", "").split(",").reject(&:empty?))
+            end
+          end
+
+          # @return [String] the HTML comment
+          sig { returns(String) }
+          def to_s
+            prs = pr_urls.empty? ? "" : " prs=#{pr_urls.join(",")}"
+            "<!-- ai-flow:outcome kind=#{kind.serialize}#{prs} -->"
+          end
+        end
+
         # The agent's changes were committed, pushed, and opened as PRs —
         # one per declared target the pass actually changed (multi-target
         # plans open several coordinated PRs, plans#30).
@@ -110,11 +196,19 @@ module AiFlow
           # @return [Array<String>] the created PRs' html urls, primary first
           sig { returns(T::Array[String]) }
           def urls = prs.map(&:html_url)
+
+          sig { override.returns(Trailer) }
+          def trailer = Trailer.new(kind: Trailer::Kind::PrOpened, pr_urls: urls)
         end
 
         # The agent changed nothing committable — possibly only workflow
         # files, which never commit (workflows_patch carries them).
-        class NothingToBuild < Outcome; end
+        class NothingToBuild < Outcome
+          extend T::Sig
+
+          sig { override.returns(Trailer) }
+          def trailer = Trailer.new(kind: Trailer::Kind::NothingToBuild)
+        end
 
         # The repo's persistent workspace is held by another run (or an
         # operator's on-box reset) — the overlap the runner layer cannot
@@ -135,6 +229,9 @@ module AiFlow
             super(capture_notes: [], workflows_patch: nil)
             @reason = reason
           end
+
+          sig { override.returns(Trailer) }
+          def trailer = Trailer.new(kind: Trailer::Kind::Busy)
         end
       end
 
@@ -192,7 +289,8 @@ module AiFlow
         issue = @github.issue(@context.owner_repo, @context.number)
         return refuse_staged_spec(segment) if SubtasksSection.spec?(issue.body)
 
-        outcome = build_issue(issue, extra_instruction: segment.instruction)
+        delegate_requester!(segment)
+        outcome = build_issue(issue, extra_instruction: segment.instruction, base_prs: base_prs_from(segment))
         headline =
           case outcome
           when Outcome::PrOpened then "✅ **/build** — opened #{outcome.urls.join(", ")}"
@@ -201,6 +299,7 @@ module AiFlow
           else T.absurd(outcome)
           end
         blocks = [headline] + outcome.capture_notes + workflows_notes(outcome) + sub_issues_notes
+        blocks << outcome.trailer.to_s
         @result_writer.write(@context, [[segment, blocks.join("\n\n")]])
       end
 
@@ -231,6 +330,39 @@ module AiFlow
       end
 
       private
+
+      # The dependency PRs a child command names (`--base=<url>,<url>`,
+      # ai-flow#115), fetched by url — the same bases the in-process
+      # orchestrator passes as objects.
+      #
+      # @param segment [CommentParser::Segment]
+      # @return [Array<GitHub::PullRequest>] dependency order
+      # @raise [BadBaseError]
+      sig { params(segment: CommentParser::Segment).returns(T::Array[GitHub::PullRequest]) }
+      def base_prs_from(segment)
+        urls = segment.option("base").to_s.split(",").reject(&:empty?)
+        urls.map do |url|
+          repo, number = GitHub.parse_pull_request_url(url)
+          @github.pull_request(repo, number)
+        rescue GitHub::Error => e
+          raise BadBaseError, "--base #{url.inspect}: #{e.message}"
+        end
+      end
+
+      # `--for=<login>` on a comment this App authored re-points the
+      # requesting human (ai-flow#115); on anyone else's comment the flag
+      # is inert — a human signs their own name.
+      #
+      # @param segment [CommentParser::Segment]
+      # @return [void]
+      sig { params(segment: CommentParser::Segment).void }
+      def delegate_requester!(segment)
+        login = segment.option("for")
+        return unless login && @context.app_authored?
+
+        login = login.delete_prefix("@")
+        @context.on_behalf_of!(login: login, id: @github.user_id(login))
+      end
 
       # The build proper, once the workspaces are the run's: stack, branch,
       # provision, agent pass, commit, PR.

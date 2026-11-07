@@ -103,4 +103,65 @@ class AiFlow::ContextTest < Minitest::Test
     Cleanup
     nil
   end
+
+  # A command comment the ai-flow App itself authored — the --split
+  # orchestrator's child /build (ai-flow#115). Only the dispatcher holds the
+  # App key, so a comment performed via *this* App is an orchestrator's,
+  # and it authorizes on that fact alone; any other App's comment, or ours
+  # on a host that does not know the App id, is a stranger's.
+  test "a comment performed via this App is app-authored and authorized without an association" do
+    Given "the App's comment, association NONE, the App id in the job env"
+    context = ContextBuilder.issue_comment(
+      body: "/build", association: "NONE", app_id: 424_242, env: { "AI_FLOW_APP_ID" => "424242" },
+    )
+
+    Expect
+    context.app_authored?
+    context.authorized?
+
+    Cleanup
+    nil
+  end
+
+  test "another App's comment, or ours where the App id is unknown, is not app-authored" do
+    Given
+    other_app = ContextBuilder.issue_comment(body: "/build", association: "NONE", app_id: 1, env: { "AI_FLOW_APP_ID" => "424242" })
+    no_env = ContextBuilder.issue_comment(body: "/build", association: "NONE", app_id: 424_242, env: {})
+    human = ContextBuilder.issue_comment(body: "/build", association: "NONE", env: { "AI_FLOW_APP_ID" => "424242" })
+    garbage_env = ContextBuilder.issue_comment(body: "/build", association: "NONE", app_id: 424_242, env: { "AI_FLOW_APP_ID" => "not-a-number" })
+
+    Expect
+    !other_app.app_authored?
+    !other_app.authorized?
+    !no_env.app_authored?
+    !no_env.authorized?
+    !human.app_authored?
+    !human.authorized?
+    !garbage_env.app_authored?
+    !garbage_env.authorized?
+
+    Cleanup
+    nil
+  end
+
+  test "an app-authored comment re-points the requesting human; a human's comment refuses" do
+    Given
+    delegated = ContextBuilder.issue_comment(
+      body: "/build --for=jane", association: "NONE", app_id: 424_242, env: { "AI_FLOW_APP_ID" => "424242" },
+    )
+    human = ContextBuilder.issue_comment(body: "/build --for=jane")
+
+    When
+    delegated.on_behalf_of!(login: "jane", id: 777)
+    refused = assert_raises(AiFlow::Context::DelegationError) { human.on_behalf_of!(login: "jane", id: 777) }
+
+    Then "the delegated comment's requester is the human it names; the other keeps its author"
+    delegated.commenter_login == "jane"
+    delegated.commenter_id == 777
+    human.commenter_login == "jpduchesne"
+    refused.message.include?("jpduchesne")
+
+    Cleanup
+    nil
+  end
 end

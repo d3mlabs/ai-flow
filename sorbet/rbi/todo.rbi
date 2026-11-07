@@ -22,8 +22,12 @@ module AiFlow::Commands::BatchTest::Cleanup; end
 module AiFlow::Commands::BatchTest::Then; end
 module AiFlow::Commands::BuildSplitTest::Cleanup; end
 module AiFlow::Commands::BuildSplitTest::Then; end
+module AiFlow::Commands::BuildSplitTest::When; end
 module AiFlow::Commands::BuildTest::Cleanup; end
+module AiFlow::Commands::BuildTest::Expect; end
+module AiFlow::Commands::BuildTest::Given; end
 module AiFlow::Commands::BuildTest::Then; end
+module AiFlow::Commands::BuildTest::When; end
 module AiFlow::Commands::LearnTest::Cleanup; end
 module AiFlow::Commands::SplitTest::Cleanup; end
 module AiFlow::Commands::SplitTest::Then; end
@@ -32,7 +36,10 @@ module AiFlow::CommentParserTest::Expect; end
 module AiFlow::CommentParserTest::Given; end
 module AiFlow::CommentParserTest::Then; end
 module AiFlow::ContextTest::Cleanup; end
+module AiFlow::ContextTest::Expect; end
+module AiFlow::ContextTest::Given; end
 module AiFlow::ContextTest::Then; end
+module AiFlow::ContextTest::When; end
 module AiFlow::DenialsTest::Then; end
 module AiFlow::DenialsTest::When; end
 module AiFlow::DispatcherTest::Cleanup; end

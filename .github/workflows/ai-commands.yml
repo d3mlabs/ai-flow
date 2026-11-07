@@ -69,8 +69,15 @@ jobs:
   # CONTRIBUTOR); the authorize job re-checks authorization against the
   # collaborator-permission API and fails closed.
   #
-  # The Bot-type guard keeps the bot's own replies (panels quoting a
-  # command) from spawning runs — noise, and a latent self-trigger surface.
+  # The Bot-type guard keeps other bots' comments (and the bot's own
+  # replies quoting a command) from spawning runs — noise, and a latent
+  # self-trigger surface. One exception, by design (ai-flow#115): a comment
+  # *performed via a GitHub App* passes the coarse filter so that the
+  # /build --split orchestrator's child commands — /build comments the
+  # ai-flow App posts on each sub-issue — dispatch like a human's. The
+  # authorize job then admits only comments performed via THIS App (its id
+  # against the AI_FLOW_APP_ID secret), which only the dispatcher can
+  # author; every other App's comment is denied like a stranger's.
   #
   # Review summaries (pull_request_review) are deliberately absent here:
   # reviews have no reactions API, so their acknowledgment is the
@@ -81,7 +88,7 @@ jobs:
   ack:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
-      github.event.comment.user.type != 'Bot' &&
+      (github.event.comment.user.type != 'Bot' || github.event.comment.performed_via_github_app != null) &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
       (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
@@ -145,7 +152,7 @@ jobs:
   authorize:
     if: >-
       (github.event_name == 'issue_comment' &&
-       github.event.comment.user.type != 'Bot' &&
+       (github.event.comment.user.type != 'Bot' || github.event.comment.performed_via_github_app != null) &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
        (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
         contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
@@ -175,27 +182,43 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
+      # A Bot-authored comment never reaches the association or permission
+      # paths: it is authorized iff the App that performed it is this one
+      # (ai-flow#115) — the orchestrator's child /build — and denied
+      # otherwise. The dispatcher's Context#authorized? applies the same
+      # rule from the payload, as defense in depth.
       - name: Check the author's repo permission
         id: gate
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           ASSOCIATION: ${{ github.event.comment.author_association || github.event.review.author_association }}
           AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login }}
+          AUTHOR_TYPE: ${{ github.event.comment.user.type || github.event.review.user.type }}
+          PERFORMING_APP_ID: ${{ github.event.comment.performed_via_github_app.id }}
         run: |
-          case "$ASSOCIATION" in
-            OWNER|MEMBER|COLLABORATOR)
+          if [ "$AUTHOR_TYPE" = "Bot" ]; then
+            if [ -n "$AI_FLOW_APP_ID" ] && [ "$PERFORMING_APP_ID" = "$AI_FLOW_APP_ID" ]; then
               authorized=true
-              ;;
-            *)
-              # Fail closed: an API error reads as no permission.
-              permission=$(gh api "repos/${{ github.repository }}/collaborators/${AUTHOR}/permission" --jq .permission || echo "none")
-              case "$permission" in
-                admin|write) authorized=true ;;
-                *) authorized=false ;;
-              esac
-              ;;
-          esac
-          if [ "$authorized" != "true" ]; then
+            else
+              authorized=false
+              echo "::notice::ai-flow: @${AUTHOR} is a bot not performing as this App — command not dispatched"
+            fi
+          else
+            case "$ASSOCIATION" in
+              OWNER|MEMBER|COLLABORATOR)
+                authorized=true
+                ;;
+              *)
+                # Fail closed: an API error reads as no permission.
+                permission=$(gh api "repos/${{ github.repository }}/collaborators/${AUTHOR}/permission" --jq .permission || echo "none")
+                case "$permission" in
+                  admin|write) authorized=true ;;
+                  *) authorized=false ;;
+                esac
+                ;;
+            esac
+          fi
+          if [ "$authorized" != "true" ] && [ "$AUTHOR_TYPE" != "Bot" ]; then
             echo "::notice::ai-flow: @${AUTHOR} (${ASSOCIATION}) lacks write permission — command not dispatched"
           fi
           echo "authorized=$authorized" >> "$GITHUB_OUTPUT"
@@ -266,7 +289,9 @@ jobs:
     # Serialize runs per issue/PR: batches assume a stable body snapshot.
     # A review's commands can't evict each other — the whole review is one
     # run (ai-flow#73) — but distinct surfaces still race for the single
-    # pending slot; the newest queued run wins.
+    # pending slot; the newest queued run wins. Per issue, not per repo:
+    # /build --split's children are separate issues, so a wave runs as
+    # many jobs at once as the repo has visible runner slots (ai-flow#115).
     concurrency:
       group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
     timeout-minutes: 120
@@ -356,7 +381,7 @@ jobs:
           echo "ai-flow workflow yaml: ${{ github.job_workflow_sha || '(empty on this runner — see referenced_workflows on the run API)' }}"
           echo "target repo: ${{ github.repository }}@$(git log -1 --format='%H')"
           echo "ruby: $(cd .ai-flow && shadowenv exec -- ruby --version)"
-          echo "agent CLI: $("${AI_FLOW_AGENT_BIN:-agent}" --version 2>/dev/null || echo 'not found')"
+          echo "agent CLI: $("${AI_FLOW_AGENT_BIN:-cursor-agent}" --version 2>/dev/null || echo 'not found')"
           echo "::group::repo config (.github/ai-flow.yml)"
           [ -f .github/ai-flow.yml ] && cat .github/ai-flow.yml || echo "no .github/ai-flow.yml — code policy / CLI default"
           echo "::endgroup::"

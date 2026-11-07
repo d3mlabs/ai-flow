@@ -251,7 +251,7 @@ class AiFlow::ResultWriterTest < Minitest::Test
     github.comments.first.include?("> /build address my review")
     github.comments.first.include?("⏳ ai-flow is running")
     github.calls.last.first == :update_issue_comment
-    final = github.comment_edits.fetch(1)
+    final = github.comment_edits.fetch(1001)
     final.include?("> /build address my review")
     final.include?("✅ **/build** — committed.")
     !final.include?("> ✅")

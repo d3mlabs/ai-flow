@@ -203,6 +203,7 @@ class AiFlow::DispatcherTest < Minitest::Test
     github.comment_edits.fetch(55).include?("ai-flow failed")
     github.comment_edits.fetch(55).include?("dev deps install")
     github.comment_edits.fetch(55).include?("sudo -n refused")
+    github.comment_edits.fetch(55).include?("<!-- ai-flow:outcome kind=failed -->")
     agent.prompts.empty?
 
     Cleanup
@@ -226,6 +227,7 @@ class AiFlow::DispatcherTest < Minitest::Test
     result == false
     github.comment_edits.fetch(55).include?("ai-flow failed")
     github.comment_edits.fetch(55).include?(".github/ai-flow.yml is not valid YAML")
+    !github.comment_edits.fetch(55).include?("ai-flow:outcome")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -285,7 +287,7 @@ class AiFlow::DispatcherTest < Minitest::Test
     Given "a plan without sub-issues"
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n")
-    context = ContextBuilder.issue_comment(body: "/build --split")
+    context = ContextBuilder.issue_comment(body: "/build --split", env: { "AI_FLOW_APP_ID" => "424242" })
 
     When "dispatching"
     result = build_dispatcher(github: github, agent: FakeAgent.new([]), context: context).run
@@ -375,8 +377,8 @@ class AiFlow::DispatcherTest < Minitest::Test
     github.comments.first.include?("In reply to jpduchesne's [review]")
     github.comments.first.include?("> /ask why LOD0 only?")
     github.comments.first.include?("⏳ ai-flow is running — [follow the run](#{RUN_URL})")
-    github.comment_edits.fetch(1).include?("Because carving happens at runtime.")
-    !github.comment_edits.fetch(1).include?("⏳")
+    github.comment_edits.fetch(1001).include?("Because carving happens at runtime.")
+    !github.comment_edits.fetch(1001).include?("⏳")
 
     Cleanup
     nil

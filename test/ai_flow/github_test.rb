@@ -178,6 +178,65 @@ class AiFlow::GitHubTest < Minitest::Test
     nil
   end
 
+  test "issue_comment fetches one comment by id and coerces it" do
+    Given "an API that answers with the comment"
+    executor = CannedExecutor.new(out: JSON.generate(
+      { "id" => 1001, "body" => "> ✅ **/build**", "user" => { "login" => "ai-flow[bot]" },
+        "html_url" => "https://github.com/d3mlabs/demo/issues/7#issuecomment-1001",
+        "created_at" => "2026-07-30T12:00:00Z" },
+    ))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "reading it back"
+    comment = github.issue_comment("d3mlabs/demo", 1001)
+
+    Then "the comments endpoint was hit and a typed comment came back"
+    executor.command_lines.first == "gh api repos/d3mlabs/demo/issues/comments/1001"
+    comment.id == 1001
+    comment.body == "> ✅ **/build**"
+
+    Cleanup
+    nil
+  end
+
+  test "pull_request fetches one PR by number and coerces it" do
+    Given "an API that answers with the PR"
+    executor = CannedExecutor.new(out: JSON.generate({
+      "number" => 12, "html_url" => "https://github.com/d3mlabs/demo/pull/12",
+      "head" => { "ref" => "ai/12-x" },
+      "base" => { "repo" => { "full_name" => "d3mlabs/demo" } },
+    }))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "fetching it"
+    pr = github.pull_request("d3mlabs/demo", 12)
+
+    Then "the pulls endpoint was hit and a typed PR came back"
+    executor.command_lines.first == "gh api repos/d3mlabs/demo/pulls/12"
+    pr.number == 12
+    pr.repo == "d3mlabs/demo"
+    pr.head_ref == "ai/12-x"
+
+    Cleanup
+    nil
+  end
+
+  test "user_id resolves a login to its numeric id" do
+    Given "an API that answers with the user"
+    executor = CannedExecutor.new(out: JSON.generate({ "login" => "jane", "id" => 777 }))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "resolving"
+    id = github.user_id("jane")
+
+    Then "the users endpoint was hit and the id came back"
+    executor.command_lines.first == "gh api users/jane"
+    id == 777
+
+    Cleanup
+    nil
+  end
+
   test "Comment#with_body returns a copy, leaving the original untouched" do
     Given "a comment whose body carries noise to strip"
     comment = AiFlow::GitHub::Comment.new(
