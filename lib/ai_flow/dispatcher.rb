@@ -289,6 +289,10 @@ module AiFlow
       message = "⚠️ **ai-flow failed:** #{error.message}"
       first_segment = segments&.first
       if first_segment
+        # A failed /build still reports: the --split orchestrator reads the
+        # trailer off its children's comments (ai-flow#115), and a crash
+        # with no trailer would read as a run still going.
+        message = "#{message}\n\n#{Commands::Build::Outcome::Trailer.failed}" if first_segment.command.is_a?(Command::Build)
         @result_writer.write(@context, [[first_segment, message]])
       else
         footer = @result_writer.footer(@context.run_url)

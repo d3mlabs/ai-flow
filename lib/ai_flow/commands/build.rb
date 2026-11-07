@@ -80,6 +80,88 @@ module AiFlow
           @workflows_patch = workflows_patch
         end
 
+        # @return [Trailer] this outcome as a child run reports it
+        sig { abstract.returns(Trailer) }
+        def trailer; end
+
+        # The outcome's wire form across the comment boundary (ai-flow#115):
+        # the last line of every issue-mode /build panel, an HTML comment
+        # GitHub never renders, so the --split orchestrator can read a
+        # child run's result off the comment it posted — the one surface
+        # the child writes to, at the one moment it finishes. Four kinds:
+        # the three outcomes plus `failed`, which the dispatcher stamps on
+        # its ⚠️ panel so a crashed child is distinguishable from one still
+        # running (no trailer at all).
+        class Trailer
+          extend T::Sig
+          include ValueEquality::Derived
+
+          # A trailer whose kind this dispatcher's vocabulary lacks — a
+          # child on a newer ai-flow than its orchestrator.
+          class UnknownKindError < StandardError; end
+
+          class Kind < T::Enum
+            enums do
+              PrOpened = new("pr_opened")
+              NothingToBuild = new("nothing_to_build")
+              Busy = new("busy")
+              Failed = new("failed")
+            end
+          end
+
+          PATTERN = /<!-- ai-flow:outcome (?<fields>[^>]*?) -->/
+
+          sig { returns(Kind) }
+          attr_reader :kind
+
+          # @return [Array<String>] the opened PRs' html urls, primary
+          #   first; empty for every kind but PrOpened
+          sig { returns(T::Array[String]) }
+          attr_reader :pr_urls
+
+          # @param kind [Kind]
+          # @param pr_urls [Array<String>]
+          sig { params(kind: Kind, pr_urls: T::Array[String]).void }
+          def initialize(kind:, pr_urls: [])
+            @kind = kind
+            @pr_urls = pr_urls
+          end
+
+          sig { override.returns(T::Array[Object]) }
+          def equality_members = [@kind, @pr_urls]
+
+          class << self
+            extend T::Sig
+
+            # @return [Trailer] the dispatcher's stamp on a failed /build
+            sig { returns(Trailer) }
+            def failed = new(kind: Kind::Failed)
+
+            # @param body [String] a command comment's body, as fetched
+            # @return [Trailer, nil] nil when the body carries no trailer —
+            #   the run has not reported yet
+            # @raise [UnknownKindError]
+            sig { params(body: String).returns(T.nilable(Trailer)) }
+            def parse(body)
+              match = PATTERN.match(body)
+              return nil unless match
+
+              fields = T.must(match[:fields]).split.to_h { |pair| T.cast(pair.split("=", 2), [String, String]) }
+              kind = Kind.try_deserialize(fields["kind"])
+              raise UnknownKindError, "unknown /build outcome kind #{fields["kind"].inspect} in #{match[0]}" unless kind
+
+              new(kind: kind, pr_urls: fields.fetch("prs", "").split(",").reject(&:empty?))
+            end
+          end
+
+          # @return [String] the HTML comment
+          sig { returns(String) }
+          def to_s
+            prs = pr_urls.empty? ? "" : " prs=#{pr_urls.join(",")}"
+            "<!-- ai-flow:outcome kind=#{kind.serialize}#{prs} -->"
+          end
+        end
+
         # The agent's changes were committed, pushed, and opened as PRs —
         # one per declared target the pass actually changed (multi-target
         # plans open several coordinated PRs, plans#30).
@@ -110,11 +192,19 @@ module AiFlow
           # @return [Array<String>] the created PRs' html urls, primary first
           sig { returns(T::Array[String]) }
           def urls = prs.map(&:html_url)
+
+          sig { override.returns(Trailer) }
+          def trailer = Trailer.new(kind: Trailer::Kind::PrOpened, pr_urls: urls)
         end
 
         # The agent changed nothing committable — possibly only workflow
         # files, which never commit (workflows_patch carries them).
-        class NothingToBuild < Outcome; end
+        class NothingToBuild < Outcome
+          extend T::Sig
+
+          sig { override.returns(Trailer) }
+          def trailer = Trailer.new(kind: Trailer::Kind::NothingToBuild)
+        end
 
         # The repo's persistent workspace is held by another run (or an
         # operator's on-box reset) — the overlap the runner layer cannot
@@ -135,6 +225,9 @@ module AiFlow
             super(capture_notes: [], workflows_patch: nil)
             @reason = reason
           end
+
+          sig { override.returns(Trailer) }
+          def trailer = Trailer.new(kind: Trailer::Kind::Busy)
         end
       end
 
@@ -201,6 +294,7 @@ module AiFlow
           else T.absurd(outcome)
           end
         blocks = [headline] + outcome.capture_notes + workflows_notes(outcome) + sub_issues_notes
+        blocks << outcome.trailer.to_s
         @result_writer.write(@context, [[segment, blocks.join("\n\n")]])
       end
 

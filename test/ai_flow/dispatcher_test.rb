@@ -203,6 +203,7 @@ class AiFlow::DispatcherTest < Minitest::Test
     github.comment_edits.fetch(55).include?("ai-flow failed")
     github.comment_edits.fetch(55).include?("dev deps install")
     github.comment_edits.fetch(55).include?("sudo -n refused")
+    github.comment_edits.fetch(55).include?("<!-- ai-flow:outcome kind=failed -->")
     agent.prompts.empty?
 
     Cleanup
@@ -226,6 +227,7 @@ class AiFlow::DispatcherTest < Minitest::Test
     result == false
     github.comment_edits.fetch(55).include?("ai-flow failed")
     github.comment_edits.fetch(55).include?(".github/ai-flow.yml is not valid YAML")
+    !github.comment_edits.fetch(55).include?("ai-flow:outcome")
 
     Cleanup
     FileUtils.rm_rf(dir)

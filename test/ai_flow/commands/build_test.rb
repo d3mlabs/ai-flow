@@ -3,11 +3,14 @@
 
 require "test_helper"
 require "support/fakes"
+require "support/value_semantics_assertions"
 require "fileutils"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BuildTest < Minitest::Test
+  include ValueSemanticsAssertions
+
   REPO = "d3mlabs/demo"
 
   # What the fake answers for `git rev-parse origin/main`: the default
@@ -278,6 +281,9 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.pull_request_bodies.fetch(0).include?("Closes #{REPO}#7")
     github.calls.include?([:add_assignees, REPO, 900, ["jpduchesne"]])
     github.comment_edits.fetch(55).include?("✅ **/build**")
+    github.comment_edits.fetch(55).include?(
+      "<!-- ai-flow:outcome kind=pr_opened prs=https://github.com/#{REPO}/pull/900 -->",
+    )
 
     Cleanup
     nil
@@ -335,6 +341,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     result.include?("⏳ **/build** — the persistent workspace for #{REPO} is held by another run")
     result.include?(lock_path)
     result.include?("re-run `/build` when it is free")
+    result.include?("<!-- ai-flow:outcome kind=busy -->")
     github.calls.none? { |call| Array(call).first == :create_pull_request }
 
     Cleanup
@@ -1182,6 +1189,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.comment_edits.fetch(55).include?("⚠️ **/build** — the agent made no changes, so no PR was opened.")
     github.comment_edits.fetch(55).include?("extra: step")
     !github.comment_edits.fetch(55).include?("gh pr checkout")
+    github.comment_edits.fetch(55).include?("<!-- ai-flow:outcome kind=nothing_to_build -->")
 
     Cleanup
     nil
@@ -1703,6 +1711,69 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     Then "the panel carries the note"
     github.comment_edits.fetch(55).include?("#{FIX_NOTE}demo — make the guard spawn its own bundler activation")
+
+    Cleanup
+    nil
+  end
+
+  # The trailer is how a child /build reports to the --split orchestrator
+  # across the comment boundary (ai-flow#115): the panel's last line, an
+  # HTML comment GitHub does not render, parsed by the orchestrator and by
+  # nothing else. Outcome owns both directions so the wire form cannot
+  # drift from the outcome vocabulary.
+  test "an outcome's trailer round-trips through a rendered comment body" do
+    Given "an outcome"
+    prs = [
+      AiFlow::GitHub::PullRequest.new(
+        number: 900, html_url: "https://github.com/#{REPO}/pull/900", head_ref: "ai/7-x", repo: REPO,
+      ),
+      AiFlow::GitHub::PullRequest.new(
+        number: 901, html_url: "https://github.com/d3mlabs/other/pull/901", head_ref: "ai/7-x", repo: "d3mlabs/other",
+      ),
+    ]
+    outcome = AiFlow::Commands::Build::Outcome::PrOpened.new(prs: prs, capture_notes: [], workflows_patch: nil)
+
+    When "rendered into a blockquoted panel and read back"
+    body = "/build\n\n> ✅ **/build** — opened …\n>\n> #{outcome.trailer}\n"
+    parsed = T.must(AiFlow::Commands::Build::Outcome::Trailer.parse(body))
+
+    Then
+    assert_value_semantics(parsed, equal_to: outcome.trailer, unequal_to: [AiFlow::Commands::Build::Outcome::Trailer.failed])
+    parsed.kind == AiFlow::Commands::Build::Outcome::Trailer::Kind::PrOpened
+    parsed.pr_urls == ["https://github.com/#{REPO}/pull/900", "https://github.com/d3mlabs/other/pull/901"]
+
+    Cleanup
+    nil
+  end
+
+  test "the kinds without PRs render and parse; a body without a trailer is a run still going" do
+    Given "the three PR-less outcomes"
+    trailer = AiFlow::Commands::Build::Outcome::Trailer
+    nothing = AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_notes: [], workflows_patch: nil).trailer
+    busy = AiFlow::Commands::Build::Outcome::Busy.new(reason: "held").trailer
+
+    Expect
+    trailer.parse("> <!-- ai-flow:outcome kind=nothing_to_build -->") == nothing
+    trailer.parse("> <!-- ai-flow:outcome kind=busy -->") == busy
+    trailer.parse("> <!-- ai-flow:outcome kind=failed -->") == trailer.failed
+    trailer.parse("/build\n\n> ⏳ ai-flow is running").nil?
+    trailer.parse("").nil?
+
+    Cleanup
+    nil
+  end
+
+  test "a trailer of a kind this dispatcher does not know is an error, not a silent nil" do
+    Given "a body carrying a trailer from a newer vocabulary"
+    body = "> <!-- ai-flow:outcome kind=teleported -->"
+
+    When
+    error = assert_raises(AiFlow::Commands::Build::Outcome::Trailer::UnknownKindError) do
+      AiFlow::Commands::Build::Outcome::Trailer.parse(body)
+    end
+
+    Then
+    error.message.include?("teleported")
 
     Cleanup
     nil
