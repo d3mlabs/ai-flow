@@ -284,6 +284,53 @@ over their `Depends on:` lines, a final integration sub-issue ensured
 (created if the split didn't), and a live per-wave checklist edited in
 place — one comment for the whole orchestration.
 
+### Fan-out: one `/build` run per sub-issue
+
+A wave's members are independent of each other, so they build at once
+(ai-flow#115). For each sub-issue in the ready wave the orchestrator posts
+a child command on that sub-issue, as the ai-flow App:
+
+```
+/build --base=https://github.com/owner/repo/pull/12,https://github.com/owner/repo/pull/14 --for=jane
+```
+
+Each child is an ordinary `/build` run — dispatched by the same workflow,
+in the sub-issue's own repo (cross-repo sub-issues reach their own repo's
+runners), on whatever runner slots that repo sees. The orchestrator job
+holds its own slot and polls the children's comments: every issue-mode
+`/build` panel ends in a hidden outcome trailer (`<!-- ai-flow:outcome
+kind=… -->`: `pr_opened` with the PR urls, `nothing_to_build`, `busy`,
+`failed`), and a comment without one is a run still going. When every
+member has reported, the next wave is posted with its `--base` computed
+from the children's actual PRs. The checklist has one writer — this job —
+and shows a running child as `[ ] … — running: <comment link>`, a failed
+one as `[!] … — failed: <comment link>` (its dependents block like any
+undrivable node; the rest of the plan proceeds).
+
+Two valued flags exist for this, on `/build` itself:
+
+| Flag | Meaning |
+|---|---|
+| `--base=<pr url>[,<pr url>…]` | The dependency PRs to stack on (see *Stacked PRs*), fully qualified; absent, the build forks from the default branch. |
+| `--for=<login>` | The human whose run this is: PR "Requested by", assignee, commit credit. Honored only on a comment the App itself performed — on a human's comment the flag is inert. |
+
+The workflow's Bot guard admits a comment performed via *this* App (its
+id against the `AI_FLOW_APP_ID` secret) and no other bot's; only the
+dispatcher holds the App key, so only an orchestrator can author a child.
+Children are never `--split`, and panels edit comments in place, so the
+fan-out cannot loop. Without the App (`allow_token_fallback`) there is no
+identity to post children as, and `/build --split` refuses:
+
+> /build --split fans out as /build comments posted by the ai-flow App, and this run has no App (allow_token_fallback) — register the App to use it.
+
+Concurrency is the runner layer's: the whole wave is posted and GitHub
+queues what no visible slot can take. The orchestrator itself occupies one
+slot for the run, so a host needs `--slots ≥ 3` (dev) before two children
+run side by side. The job's `timeout-minutes` bounds the whole
+orchestration; a wave that cannot finish inside it leaves the checklist
+showing which children were still running — they land their own PRs
+regardless — and a human's `/build --split` on the parent is the resume.
+
 A created integration sub-issue declares its `Target repos:` — the
 parent's own line when the plan declares one, else the sub-issues'
 distinct repos when they differ from the parent's. Its build therefore

@@ -221,7 +221,7 @@ flowchart TD
     disp --> batchCmd["Commands::Batch<br/>(/ask + /edit)"]
     disp --> splitCmd["Commands::Split"]
     disp --> buildCmd["Commands::Build"]
-    disp --> buildSplitCmd["Commands::BuildSplit<br/>(orchestrates Build per wave)"]
+    disp --> buildSplitCmd["Commands::BuildSplit<br/>(fans each wave out as child /build comments)"]
 
     splitCmd --> subtasksSection["SubtasksSection<br/>(## Subtasks spec/map<br/>parser + writer)"]
     buildCmd --> subtasksSection
@@ -317,12 +317,54 @@ listed as explicitly out of scope.
 
 `/build --split` wraps this: it reads the parent's native sub-issues,
 topologically sorts them by their `Depends on: owner/repo#n` lines into
-waves, runs `Build#build_issue` per sub-issue, ensures a final integration
-sub-issue exists, and reports a live per-wave checklist edited in place.
-Nodes it cannot drive — intended-repo fallbacks and adopted/referenced
-external issues (read from the applied `## Subtasks` map) — are skipped
-with explicit warnings, and their dependents (including anything depending
-on an open issue outside the set) are reported blocked.
+waves, fans each wave out, ensures a final integration sub-issue exists,
+and reports a live per-wave checklist edited in place. Nodes it cannot
+drive — intended-repo fallbacks and adopted/referenced external issues
+(read from the applied `## Subtasks` map) — are skipped with explicit
+warnings, and their dependents (including anything depending on an open
+issue outside the set) are reported blocked.
+
+The fan-out (ai-flow#115) is comment-driven, so it reuses the whole
+dispatch path and needs nothing from adopters. For each member of a ready
+wave the orchestrator posts `/build --base=<pr urls> --for=<login>` on the
+sub-issue as the App; the workflow dispatches it like a human's command
+(the authorize gate admits comments performed via this App — the payload's
+`performed_via_github_app.id` against `AI_FLOW_APP_ID` — and
+`Context#authorized?` applies the same rule). The children run
+concurrently on the slots their repos see while the orchestrator polls
+their comments: every issue-mode `/build` panel ends in
+`Build::Outcome::Trailer`, the outcome's wire form (`pr_opened` + PR urls,
+`nothing_to_build`, `busy`, `failed` — the dispatcher stamps the last on
+its ⚠️ panel), and no trailer means still running. `Progress::Running` and
+`Progress::Failed` join the orchestration states; the next wave's `--base`
+comes from the children's actual PRs, fetched by url. One writer edits the
+checklist, re-reading the children on each poll rather than trusting
+memory. `--for` re-points the requesting human (`Context#on_behalf_of!`)
+and is honored only on an App-authored comment. Without the App there is
+no identity to post as and the orchestrator refuses rather than keeping an
+in-process serial path alive.
+
+```mermaid
+sequenceDiagram
+    participant H as human
+    participant O as /build --split (orchestrator job)
+    participant GH as GitHub
+    participant C1 as child /build (slot 2)
+    participant C2 as child /build (slot 3)
+    H->>GH: /build --split on the plan
+    GH->>O: dispatch (one slot)
+    O->>GH: post "/build --for=h" on sub-issue A
+    O->>GH: post "/build --for=h" on sub-issue B
+    GH->>C1: dispatch A
+    GH->>C2: dispatch B
+    loop every 30 s
+        O->>GH: read A's and B's comments
+        O->>GH: edit the checklist
+    end
+    C1->>GH: panel + <!-- ai-flow:outcome kind=pr_opened prs=… -->
+    C2->>GH: panel + <!-- ai-flow:outcome kind=pr_opened prs=… -->
+    O->>GH: post "/build --base=A's PR,B's PR --for=h" on the integration sub-issue
+```
 
 On a PR, `/build` iterates on the head branch in the job checkout instead:
 
