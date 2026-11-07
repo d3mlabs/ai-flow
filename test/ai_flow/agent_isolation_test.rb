@@ -1,4 +1,4 @@
-# typed: true
+# typed: false — rspock Where tables are load-time rewritten and have no static typing.
 # frozen_string_literal: true
 
 require "test_helper"
@@ -122,6 +122,43 @@ class AiFlow::AgentIsolationTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  # ai-flow#116: two slots on one box run as the same agent user at the
+  # same time; a gem home they share is two bundlers racing on one tree.
+  # Slot 1 keeps the path it always had (its warm gems stay warm).
+  test "redirect_env keys the gem home and bundle path by slot — slot 1 unchanged, slot N suffixed" do
+    Given "an isolation config on the given slot"
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/Users/ai-agent", slot: slot)
+
+    Expect "one gem tree per slot; the credential store does not vary"
+    isolation.redirect_env.fetch("GEM_HOME") == gem_home
+    isolation.redirect_env.fetch("BUNDLE_PATH") == bundle_path
+    isolation.redirect_env.fetch("AGENT_CLI_CREDENTIAL_STORE") == "file"
+
+    Where
+    slot | gem_home | bundle_path
+    AiFlow::RunnerSlot.new(number: 1) | "/Users/ai-agent/.gem"   | "/Users/ai-agent/.bundle"
+    AiFlow::RunnerSlot.new(number: 2) | "/Users/ai-agent/.gem-2" | "/Users/ai-agent/.bundle-2"
+    AiFlow::RunnerSlot.new(number: 3) | "/Users/ai-agent/.gem-3" | "/Users/ai-agent/.bundle-3"
+  end
+
+  test "from_env carries the slot dev wrote into the service env" do
+    Given "the agent user set, on slot 2"
+    saved_user = ENV["AI_FLOW_AGENT_USER"]
+    saved_slot = ENV["AI_FLOW_RUNNER_SLOT"]
+    ENV["AI_FLOW_AGENT_USER"] = CURRENT_USER
+    ENV["AI_FLOW_RUNNER_SLOT"] = "2"
+
+    When "reading the isolation config"
+    isolation = T.must(AiFlow::AgentIsolation.from_env)
+
+    Then "the redirect is slot 2's"
+    isolation.redirect_env.fetch("GEM_HOME") == File.join(T.must(Etc.getpwuid(Process.uid)).dir, ".gem-2")
+
+    Cleanup
+    saved_user ? ENV["AI_FLOW_AGENT_USER"] = saved_user : ENV.delete("AI_FLOW_AGENT_USER")
+    saved_slot ? ENV["AI_FLOW_RUNNER_SLOT"] = saved_slot : ENV.delete("AI_FLOW_RUNNER_SLOT")
   end
 
   test "workspace_base is a world-traversable root — the agent user must reach the shared leaf" do

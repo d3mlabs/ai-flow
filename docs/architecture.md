@@ -421,9 +421,20 @@ embedded-path records (UBT makefiles/action history) valid. A non-blocking
 flock beside the workspace is the "one workspace, one writer" correctness
 mechanism — a caller-workflow `concurrency` group is queueing politeness,
 the lock is what actually prevents interleaving (including a manual
-on-box reset mid-run). The busy failure names the lockfile and how to
-find the holder (`lsof`); children never inherit the lock (FD_CLOEXEC),
-so its lifetime is exactly the dispatcher process's.
+on-box reset mid-run). A build that finds the lock held does not fail:
+`Build::Outcome::Busy` reports the hold (the lockfile and how to find the
+holder, `lsof`) and exits clean, to be re-run when the workspace is free;
+`/build --split` marks such a sub-issue deferred and blocks its dependents
+for that run. Children never inherit the lock (FD_CLOEXEC), so its
+lifetime is exactly the dispatcher process's.
+
+One checkout per host slot (ai-flow#116): a host that offers the repo N
+runners (dev#470's slots, `AI_FLOW_RUNNER_SLOT` in each slot's service env
+— `RunnerSlot`) keeps N warm trees, `<repo>` for slot 1 and `<repo>-<n>`
+for the rest, so two concurrent builds never share a working tree. How
+many runners a repo can reach on a host is the runner layer's decision
+(slots × runner-group visibility); nothing here counts or routes, and the
+lock stays as the backstop for the overlap that layer cannot see.
 
 The workspace root is durable by design: `AI_FLOW_WORKSPACE_ROOT`, default
 `/Users/Shared/ai-flow/workspaces` under isolation — never `/tmp`, which

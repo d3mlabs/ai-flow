@@ -310,6 +310,40 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  # ai-flow#116: the workspace being held is another run doing this repo's
+  # work (or an operator's on-box reset) — not a failure of this one. The
+  # job says so and exits clean; the human re-runs when it is free.
+  test "/build whose persistent workspace is held reports busy and exits clean — no failure, no PR" do
+    Given "a persistent-workspace repo whose workspace lock another holder owns"
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    root = Dir.mktmpdir("ai-flow-build-test-root-")
+    ENV["AI_FLOW_WORKSPACE_ROOT"] = root
+    FileUtils.mkdir_p(File.join(dir, ".github"))
+    File.write(File.join(dir, ".github", "ai-flow.yml"), "workspace: persistent\n")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+    lock_path = File.join(root, "d3mlabs-demo.lock")
+    holder = File.open(lock_path, File::CREAT | File::RDWR)
+    holder.flock(File::LOCK_EX)
+
+    When "building"
+    run_build(github: github, executor: executor, workdir: dir)
+
+    Then "the command comment names the hold and the re-run; nothing was opened"
+    result = github.comment_edits.values.fetch(-1)
+    result.include?("⏳ **/build** — the persistent workspace for #{REPO} is held by another run")
+    result.include?(lock_path)
+    result.include?("re-run `/build` when it is free")
+    github.calls.none? { |call| Array(call).first == :create_pull_request }
+
+    Cleanup
+    holder.close
+    ENV.delete("AI_FLOW_WORKSPACE_ROOT")
+    FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
+  end
+
   test "a multi-target build with a persistent primary keeps tmpdir clones for the secondaries" do
     Given "a persistent-workspace repo whose issue targets a second repo"
     dir = Dir.mktmpdir("ai-flow-build-test-")
