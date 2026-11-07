@@ -325,7 +325,12 @@ warnings, and their dependents (including anything depending on an open
 issue outside the set) are reported blocked.
 
 The fan-out (ai-flow#115) is comment-driven, so it reuses the whole
-dispatch path and needs nothing from adopters. For each member of a ready
+dispatch path and needs nothing from adopters beyond a runner for the
+orchestrator: the authorize scan routes `/build --split` to the
+`ai-orchestrator` label (plans#53) — a thin, always-on pool, since the
+orchestrator is API calls and sleep for the plan's critical path — with a
+six-hour job timeout, while every `ai-build` slot goes to children. For
+each member of a ready
 wave the orchestrator posts `/build --base=<pr urls> --for=<login>` on the
 sub-issue as the App; the workflow dispatches it like a human's command
 (the authorize gate admits comments performed via this App — the payload's
@@ -347,12 +352,12 @@ in-process serial path alive.
 ```mermaid
 sequenceDiagram
     participant H as human
-    participant O as /build --split (orchestrator job)
+    participant O as /build --split (orchestrator job, ai-orchestrator pool)
     participant GH as GitHub
-    participant C1 as child /build (slot 2)
-    participant C2 as child /build (slot 3)
+    participant C1 as child /build (ai-build slot 1)
+    participant C2 as child /build (ai-build slot 2)
     H->>GH: /build --split on the plan
-    GH->>O: dispatch (one slot)
+    GH->>O: dispatch
     O->>GH: post "/build --for=h" on sub-issue A
     O->>GH: post "/build --for=h" on sub-issue B
     GH->>C1: dispatch A

@@ -296,8 +296,9 @@ a child command on that sub-issue, as the ai-flow App:
 
 Each child is an ordinary `/build` run — dispatched by the same workflow,
 in the sub-issue's own repo (cross-repo sub-issues reach their own repo's
-runners), on whatever runner slots that repo sees. The orchestrator job
-holds its own slot and polls the children's comments: every issue-mode
+runners, so that repo must be in the `ai-flow` runner group), on whatever
+`ai-build` slots that repo sees. The orchestrator job runs on the
+`ai-orchestrator` pool and polls the children's comments: every issue-mode
 `/build` panel ends in a hidden outcome trailer (`<!-- ai-flow:outcome
 kind=… -->`: `pr_opened` with the PR urls, `nothing_to_build`, `busy`,
 `failed`), and a comment without one is a run still going. When every
@@ -324,12 +325,20 @@ identity to post children as, and `/build --split` refuses:
 > /build --split fans out as /build comments posted by the ai-flow App, and this run has no App (allow_token_fallback) — register the App to use it.
 
 Concurrency is the runner layer's: the whole wave is posted and GitHub
-queues what no visible slot can take. The orchestrator itself occupies one
-slot for the run, so a host needs `--slots ≥ 3` (dev) before two children
-run side by side. The job's `timeout-minutes` bounds the whole
-orchestration; a wave that cannot finish inside it leaves the checklist
-showing which children were still running — they land their own PRs
-regardless — and a human's `/build --split` on the parent is the resume.
+queues what no visible slot can take; every build slot goes to children.
+The orchestrator is the one command that is not agent work — API calls and
+sleep for the plan's critical path — so the authorize scan routes it to
+**`ai-orchestrator`** instead of `ai-build`: a label for an always-on thin
+host with many cheap slots (dev's `dev runner register --org --labels
+ai-orchestrator --slots N`; nothing of the agent host bootstrap), never an
+agent slot (one child of parallelism lost, dies with the laptop) nor the
+hosted lane (bills build-shaped time). Its job timeout is six hours where
+an agent run's is two; a plan that cannot finish inside it leaves the
+checklist showing which children were still running — they land their
+own PRs regardless — and a human's `/build --split` on the parent is the
+resume. A `--split` with no `ai-orchestrator` runner online queues
+silently (GitHub shows the requested labels and *Waiting for a runner*,
+then cancels at 24 h); see the README's adoption step 3 for the check.
 
 A created integration sub-issue declares its `Target repos:` — the
 parent's own line when the plan declares one, else the sub-issues'
