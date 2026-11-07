@@ -515,10 +515,14 @@ module AiFlow
       $stdout.puts "::endgroup::"
     end
 
+    # The agent CLI to spawn: `cursor-agent`, the one binary the cursor-cli
+    # cask installs (a fresh runner slot has nothing else on its PATH —
+    # #118), unless AI_FLOW_AGENT_BIN names another.
+    #
     # @return [String]
     sig { returns(String) }
     def binary
-      ENV.fetch("AI_FLOW_AGENT_BIN", "agent")
+      ENV.fetch("AI_FLOW_AGENT_BIN", "cursor-agent")
     end
   end
 end
