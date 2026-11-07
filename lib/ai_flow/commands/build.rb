@@ -733,8 +733,9 @@ module AiFlow
 
         case outcome
         when Outcome::PrOpened then [workflows_apply_note(outcome.urls.fetch(0), patch)]
-        when Outcome::NothingToBuild then [workflows_diff_note(patch)]
-        when Outcome::Busy then []
+        # A Busy carries no patch (nothing ran), so it never reaches here;
+        # listed for exhaustiveness, not behavior.
+        when Outcome::NothingToBuild, Outcome::Busy then [workflows_diff_note(patch)]
         else T.absurd(outcome)
         end
       end
