@@ -5,6 +5,8 @@
 # typed: false
 
 module ::Dev::Deps; end
+module AiCommandsRoutingTest::Expect; end
+module AiCommandsRoutingTest::Where; end
 module AiFlow::AcpClientTest::Cleanup; end
 module AiFlow::AcpClientTest::Given; end
 module AiFlow::AcpClientTest::Then; end

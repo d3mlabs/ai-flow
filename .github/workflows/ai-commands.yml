@@ -257,6 +257,14 @@ jobs:
               break
             fi
           done
+          # /build --split is the one command that is not agent work: its
+          # orchestrator posts the wave's child /builds and polls them for
+          # the plan's whole critical path, so it routes to the thin
+          # ai-orchestrator pool (plans#53), never an agent slot. Children
+          # are plain /build (--base/--for), so they route as builds.
+          if printf '%s' "$bodies" | grep -qE "/${PREFIX}build[[:space:]]+--split"; then
+            runner="ai-orchestrator"
+          fi
           if [ "$commanded" != "true" ]; then
             echo "ai-flow: no command in the ${{ github.event_name }} surface — nothing to dispatch"
           fi
@@ -276,7 +284,9 @@ jobs:
     # per_actor_runners routes to the commenter's own box; otherwise each
     # command routes to its own fixed label, ai-<command> — convention over
     # configuration (deployment decides the topology: one box can carry all
-    # five labels, or a beefy box takes ai-build alone). The label comes
+    # five labels, or a beefy box takes ai-build alone) — except
+    # /build --split, which routes to ai-orchestrator: a capability label,
+    # not a command's, for an always-on thin host (plans#53). The label comes
     # from the authorize job's scan step, which reads every body on the
     # surface (a review's commands may live only in its comments, which
     # engine expressions can't see) and routes by the heaviest command
@@ -294,7 +304,11 @@ jobs:
     # many jobs at once as the repo has visible runner slots (ai-flow#115).
     concurrency:
       group: ai-flow-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
-    timeout-minutes: 120
+    # An agent run is bounded at two hours. The orchestrator route waits
+    # on child runs across waves — the plan's critical path — and gets six;
+    # past that the job dies, the children land their own PRs regardless,
+    # and a human's /build --split on the parent is the resume.
+    timeout-minutes: ${{ needs.authorize.outputs.runner == 'ai-orchestrator' && 360 || 120 }}
     # The secrets context is not valid in step-level `if:` (compile-time
     # "Unrecognized named-value: 'secrets'"), so the App presence check reads
     # the secret through a job-level env var instead.
