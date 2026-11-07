@@ -277,14 +277,17 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    (see the identity section). Our org secrets use `selected` visibility, so add
    the adopting repo to each secret's repository list (org settings →
    secrets, or `gh secret set <name> --org <org> --visibility selected  --repos <list>`). Note `private` visibility excludes public repos  entirely — a public caller's job fails at the "Require the ai-flow App"spl  step until the secret is shared with it.
-3. Register self-hosted runners with the per-command labels the workflow
-  routes on — the **ai-flow label vocabulary**: `ai-ask`, `ai-edit`,
-   `ai-split`, `ai-build`, `ai-learn`. This list is the defining source of
-   the vocabulary (the reusable workflow's authorize job routes each
-   command to `ai-<command>`); tooling that enrolls runners mirrors it as a
-   documented cross-repo literal (dev's
-   `Dev::LabelContracts::AI_FLOW_LABELS`, behind
-   `dev runner register --org --ai-flow`). The topology is a deployment
+3. Register self-hosted runners with the labels the workflow routes on —
+   the **ai-flow label vocabulary**: the per-command labels `ai-ask`,
+   `ai-edit`, `ai-split`, `ai-build`, `ai-learn` (the reusable workflow's
+   authorize job routes each command to `ai-<command>`), plus
+   `ai-orchestrator`, the one label that names a host capability rather
+   than a command — `/build --split` routes to it (below). This list is
+   the defining source of the vocabulary; tooling that enrolls runners
+   mirrors it as a documented cross-repo literal (dev's
+   `Dev::LabelContracts::AI_FLOW_LABELS`; the agent host's set is behind
+   `dev runner register --org --ai-flow`, the orchestrator pool behind
+   `--org --labels ai-orchestrator --slots N`). The topology is a deployment
    choice — one box can carry all five labels, or a beefy box takes
    `ai-build` alone (/build runs the full agent loop including tests, so it
    needs a real dev machine, not a bare runner) while a light box takes the
@@ -300,10 +303,22 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    anyway reports busy and exits clean (re-run when free); under
    `/build --split` such a sub-issue is deferred and its dependents wait.
    `/build --split` fans each wave out as one `/build` run per sub-issue
-   (comments the App posts, dispatched like a human's), while the
-   orchestrator holds a slot of its own to poll them — so two sub-issues
-   build side by side from `--slots 3` up; with fewer, GitHub queues the
-   children and the wave still completes, one at a time.
+   (comments the App posts, dispatched like a human's, routed to
+   `ai-build` in the sub-issue's own repo — so every build slot a host
+   has goes to children, and a cross-repo sub-issue needs its repo in the
+   `ai-flow` runner group). The orchestrator itself is API calls and sleep
+   for the plan's whole critical path, so it routes to **`ai-orchestrator`**
+   — a pool for an always-on thin box, many slots per host, no agent, no
+   agent user, no workspace; what it needs is what every dev runner host
+   has (dev, shadowenv, `gh`, brew on the runner user's PATH) — and gets a
+   six-hour job timeout where an agent run gets two. Without such a runner
+   a `/build --split` queues until one appears: GitHub shows only
+   `Requested labels: self-hosted, ai-orchestrator` and *Waiting for a
+   runner to pick up this job…* — the same lines whether the runners are
+   busy, offline, in a group that does not select the repo, or never
+   enrolled — and cancels after 24 hours. Check the org's Runners page for
+   an Idle runner carrying the label in the `ai-flow` group the first time
+   ([plans#53](https://github.com/d3mlabs/plans/issues/53)).
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
   and make sure it — plus `dev` and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not
