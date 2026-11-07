@@ -128,6 +128,7 @@ class AiFlow::ContextTest < Minitest::Test
     other_app = ContextBuilder.issue_comment(body: "/build", association: "NONE", app_id: 1, env: { "AI_FLOW_APP_ID" => "424242" })
     no_env = ContextBuilder.issue_comment(body: "/build", association: "NONE", app_id: 424_242, env: {})
     human = ContextBuilder.issue_comment(body: "/build", association: "NONE", env: { "AI_FLOW_APP_ID" => "424242" })
+    garbage_env = ContextBuilder.issue_comment(body: "/build", association: "NONE", app_id: 424_242, env: { "AI_FLOW_APP_ID" => "not-a-number" })
 
     Expect
     !other_app.app_authored?
@@ -136,6 +137,8 @@ class AiFlow::ContextTest < Minitest::Test
     !no_env.authorized?
     !human.app_authored?
     !human.authorized?
+    !garbage_env.app_authored?
+    !garbage_env.authorized?
 
     Cleanup
     nil
