@@ -74,7 +74,25 @@ module AiFlow
           include Progress
         end
 
-        # A dependency is skipped, manual, blocked, or an open external issue.
+        # /build found the repo's persistent workspace held by another run
+        # and did not start (Build::Outcome::Busy — ai-flow#116). Not done,
+        # not failed: a later `/build --split` drives it; dependents wait.
+        class Deferred
+          extend T::Sig
+          include Progress
+
+          sig { returns(String) }
+          attr_reader :reason
+
+          # @param reason [String] the hold, in the workspace's words
+          sig { params(reason: String).void }
+          def initialize(reason:)
+            @reason = reason
+          end
+        end
+
+        # A dependency is skipped, manual, blocked, deferred, or an open
+        # external issue.
         class Blocked
           extend T::Sig
           include Progress
@@ -117,18 +135,42 @@ module AiFlow
 
         waves.each do |wave|
           wave.each do |issue|
-            progress[ref_of(issue)] =
-              case (outcome = @build.build_issue(issue, base_prs: base_prs_for(issue, progress)))
-              when Build::Outcome::PrOpened then Progress::Built.new(prs: outcome.prs)
-              when Build::Outcome::NothingToBuild then Progress::NoChanges.new
-              else T.absurd(outcome)
-              end
+            progress[ref_of(issue)] = blocked_by_run(issue, progress) || drive(issue, progress)
             publish_checklist(segment, waves, sub_issues, progress)
           end
         end
       end
 
       private
+
+      # Build one sub-issue and read its outcome as progress.
+      #
+      # @param issue [GitHub::Issue]
+      # @param progress [Hash{String => Progress}] ref => progress so far
+      # @return [Progress]
+      sig { params(issue: GitHub::Issue, progress: T::Hash[String, Progress]).returns(Progress) }
+      def drive(issue, progress)
+        case (outcome = @build.build_issue(issue, base_prs: base_prs_for(issue, progress)))
+        when Build::Outcome::PrOpened then Progress::Built.new(prs: outcome.prs)
+        when Build::Outcome::NothingToBuild then Progress::NoChanges.new
+        when Build::Outcome::Busy then Progress::Deferred.new(reason: outcome.reason)
+        else T.absurd(outcome)
+        end
+      end
+
+      # Blockage that arose during this run — a dependency deferred by a
+      # held workspace — which the pre-run pass (undrivable_progress) could
+      # not know. Same reason text as the pre-run blocking, so a reader
+      # sees one notion.
+      #
+      # @param issue [GitHub::Issue]
+      # @param progress [Hash{String => Progress}] ref => progress so far
+      # @return [Progress::Blocked, nil]
+      sig { params(issue: GitHub::Issue, progress: T::Hash[String, Progress]).returns(T.nilable(Progress::Blocked)) }
+      def blocked_by_run(issue, progress)
+        blocker = dependencies_of(issue).find { |dep| undrivable?(progress[dep]) }
+        blocker && Progress::Blocked.new(reason: "blocked until #{blocker} is resolved")
+      end
 
       # The dependency PRs a stacked build cuts its branches from: every
       # already-built dependency contributes its PRs, dependency order
@@ -244,7 +286,8 @@ module AiFlow
       #   will not build
       sig { params(entry: T.nilable(Progress)).returns(T::Boolean) }
       def undrivable?(entry)
-        entry.is_a?(Progress::Skipped) || entry.is_a?(Progress::Manual) || entry.is_a?(Progress::Blocked)
+        entry.is_a?(Progress::Skipped) || entry.is_a?(Progress::Manual) || entry.is_a?(Progress::Blocked) ||
+          entry.is_a?(Progress::Deferred)
       end
 
       # @return [Boolean] whether an out-of-set dependency is still open — a
@@ -364,7 +407,10 @@ module AiFlow
         ).void
       end
       def publish_checklist(segment, waves, sub_issues, progress)
-        undrivable = sub_issues.select { |issue| undrivable?(progress[ref_of(issue)]) }
+        # Nodes the run marked mid-way (deferred, blocked on a deferral)
+        # stay on their wave line; this section is for the pre-run set.
+        scheduled = waves.flatten
+        undrivable = sub_issues.select { |issue| undrivable?(progress[ref_of(issue)]) && !scheduled.include?(issue) }
         lines = [checklist_headline(waves, undrivable, progress)]
         waves.each_with_index do |wave, index|
           lines << "\nWave #{index + 1}:"
@@ -407,6 +453,7 @@ module AiFlow
           when Progress::Built then ["[x]", " — #{entry.prs.map(&:html_url).join(", ")}"]
           when Progress::Skipped then ["[!]", " — #{entry.reason}"]
           when Progress::Manual then ["[ ]", " — manual: a human does this step; close it when done"]
+          when Progress::Deferred then ["[ ]", " — deferred: #{entry.reason}; re-run `/build --split` when it is free"]
           when Progress::Blocked then ["[!]", " — #{entry.reason}"]
           else T.absurd(entry)
           end

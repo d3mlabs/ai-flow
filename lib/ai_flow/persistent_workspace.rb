@@ -3,6 +3,8 @@
 
 require "fileutils"
 
+require "ai_flow/runner_slot"
+
 module AiFlow
   # The durable named workspace a repo opts into with `workspace:
   # persistent` (RepoConfig): one stable checkout per repo, reused across
@@ -19,10 +21,18 @@ module AiFlow
   #   old for untouched sources and incremental builds rebuild only what
   #   the branch touches. The stable absolute path keeps build tools'
   #   embedded-path records (UBT makefiles/action history) valid.
+  # - One checkout per host slot (ai-flow#116): a host that offers this
+  #   repo N runners (dev#470) keeps N warm trees, `<repo>` for slot 1 —
+  #   the path it had before slots existed — and `<repo>-<n>` for the
+  #   rest, so two slots never share a working tree. A repo's concurrency
+  #   on a host is the runners it can reach there, decided at the runner
+  #   layer; nothing here counts or routes.
   # - A non-blocking flock serializes writers ("one workspace, one
-  #   writer"): the GH concurrency group is queueing politeness, this lock
-  #   is the correctness mechanism — it also guards against manual on-box
-  #   resets mid-run. The lockfile lives *beside* the workspace so a full
+  #   writer") per tree: the GH concurrency group is queueing politeness,
+  #   this lock is the correctness mechanism — it also guards against
+  #   manual on-box resets mid-run, and against the overlap the runner
+  #   layer cannot see (Build reports its BusyError as a retry-later
+  #   outcome, not a failure). The lockfile lives *beside* the workspace so a full
   #   workspace nuke can never delete a held lock. True deadlock is
   #   impossible (single lock, all acquisitions non-blocking, the kernel
   #   releases flock on holder death); Ruby's default FD_CLOEXEC means
@@ -51,11 +61,14 @@ module AiFlow
     # @param job_checkout [String] the runner's own repo checkout — the
     #   git dir the persistent worktree attaches to
     # @param executor [AiFlow::Executor]
-    sig { params(repo: String, job_checkout: String, executor: Executor).void }
-    def initialize(repo:, job_checkout:, executor:)
+    # @param slot [RunnerSlot] the host slot this job runs on (default:
+    #   the one dev recorded in the service env)
+    sig { params(repo: String, job_checkout: String, executor: Executor, slot: RunnerSlot).void }
+    def initialize(repo:, job_checkout:, executor:, slot: RunnerSlot.from_env)
       @repo = repo
       @job_checkout = job_checkout
       @executor = executor
+      @slot = slot
     end
 
     # The workspace root: env override, else the durable per-posture
@@ -70,10 +83,10 @@ module AiFlow
       @executor.isolation ? ISOLATED_ROOT : File.join(Dir.home, ".ai-flow", "workspaces")
     end
 
-    # @return [String] the stable checkout path
+    # @return [String] the stable checkout path — this slot's
     sig { returns(String) }
     def path
-      File.join(root, @repo.tr("/", "-"))
+      File.join(root, "#{@repo.tr("/", "-")}#{@slot.suffix}")
     end
 
     # @return [String] the lockfile, beside the workspace (never inside)

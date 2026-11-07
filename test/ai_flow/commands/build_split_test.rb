@@ -15,17 +15,20 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
   class RecordingBuild < AiFlow::Commands::Build
     attr_reader :built, :base_prs_by_number
 
-    def initialize(no_changes_on: [], multi_on: [])
+    def initialize(no_changes_on: [], multi_on: [], busy_on: [])
       @built = []
       @base_prs_by_number = {}
       @no_changes_on = no_changes_on
       @multi_on = multi_on
+      @busy_on = busy_on
     end
 
     def build_issue(issue, extra_instruction: "", base_prs: [])
       @built << issue.number
       @base_prs_by_number[issue.number] = base_prs
-      if @no_changes_on.include?(issue.number)
+      if @busy_on.include?(issue.number)
+        AiFlow::Commands::Build::Outcome::Busy.new(reason: "persistent workspace for d3mlabs/demo is busy")
+      elsif @no_changes_on.include?(issue.number)
         AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_notes: [], workflows_patch: nil)
       else
         repos = ["d3mlabs/demo"]
@@ -105,6 +108,42 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     # A no-changes dependency has no PR to stack on — the dependent forks
     # from the default branch.
     build.base_prs_by_number.fetch(4) == []
+
+    Cleanup
+    nil
+  end
+
+  # ai-flow#116: a child that found its persistent workspace held is not a
+  # failure — the run that holds it is doing the repo's work — and not
+  # done either. It is deferred, its dependents wait, and the rest of the
+  # plan proceeds; a later `/build --split` picks the deferred node up.
+  test "a sub-issue whose workspace was busy is deferred, its dependents blocked, the rest built" do
+    Given "three sub-issues: one busy, one depending on it, one independent"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(2, "Client", "Build the client.\n"),
+      sub_issue(3, "Wiring", "Wire them.\n\nDepends on: #1\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2, #3\n"),
+    ])
+    build = RecordingBuild.new(busy_on: [1])
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When "orchestrating"
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, build: build,
+      result_writer: AiFlow::ResultWriter.new(github: github),
+    ).run(segment)
+    checklist = github.comment_edits.fetch(55)
+
+    Then "the busy node is deferred with the re-run hint, its dependents are blocked on it, the independent one built"
+    checklist.include?("[ ] #{REPO}#1 Server API — deferred: persistent workspace for d3mlabs/demo is busy; re-run `/build --split` when it is free")
+    checklist.include?("[x] #{REPO}#2 Client")
+    checklist.include?("[!] #{REPO}#3 Wiring — blocked until #{REPO}#1 is resolved")
+    checklist.include?("[!] #{REPO}#4 Integration: Parent — blocked until #{REPO}#1 is resolved")
+    build.built == [1, 2]
 
     Cleanup
     nil

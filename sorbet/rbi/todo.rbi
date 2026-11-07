@@ -11,6 +11,7 @@ module AiFlow::AcpClientTest::Then; end
 module AiFlow::AcpClientTest::When; end
 module AiFlow::AgentIsolationTest::Cleanup; end
 module AiFlow::AgentIsolationTest::Then; end
+module AiFlow::AgentIsolationTest::Where; end
 module AiFlow::AgentOutputTest::Cleanup; end
 module AiFlow::AgentOutputTest::Expect; end
 module AiFlow::AgentOutputTest::Then; end
@@ -45,7 +46,9 @@ module AiFlow::ModelSelectionTest::Where; end
 module AiFlow::OrgInvariantsTest::Cleanup; end
 module AiFlow::OrgInvariantsTest::Then; end
 module AiFlow::PersistentWorkspaceTest::Cleanup; end
+module AiFlow::PersistentWorkspaceTest::Expect; end
 module AiFlow::PersistentWorkspaceTest::When; end
+module AiFlow::PersistentWorkspaceTest::Where; end
 module AiFlow::PlanBodyTest::Cleanup; end
 module AiFlow::PlanBodyTest::Expect; end
 module AiFlow::ProposalChecksTest::Cleanup; end
@@ -62,6 +65,8 @@ module AiFlow::ReviewUnitTest::Then; end
 module AiFlow::RichDiffTest::Cleanup; end
 module AiFlow::RichDiffTest::Given; end
 module AiFlow::RichDiffTest::Then; end
+module AiFlow::RunnerSlotTest::Expect; end
+module AiFlow::RunnerSlotTest::Where; end
 module AiFlow::TokenProviderTest::Cleanup; end
 module AiFlow::TokenProviderTest::Then; end
 module AiFlow::ValueEqualityTest::Where; end

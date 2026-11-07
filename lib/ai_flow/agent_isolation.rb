@@ -4,6 +4,8 @@
 require "etc"
 require "fileutils"
 
+require "ai_flow/runner_slot"
+
 module AiFlow
   # The OS-user split's policy object (plans#26): everything ai-flow knows
   # about running the agent as a different, unprivileged user lives here —
@@ -52,16 +54,18 @@ module AiFlow
 
       # @return [AiFlow::AgentIsolation, nil] nil when AI_FLOW_AGENT_USER
       #   is unset (feature off); group from AI_FLOW_AGENT_GROUP, default
-      #   "ai"
+      #   "ai"; slot from AI_FLOW_RUNNER_SLOT (RunnerSlot), default the first
       # @raise [UnknownAgentUserError] when the configured user does not
       #   exist
+      # @raise [RunnerSlot::InvalidSlotError] when dev's slot record is not a
+      #   slot number
       sig { returns(T.nilable(AgentIsolation)) }
       def from_env
         user = ENV["AI_FLOW_AGENT_USER"].to_s.strip
         return nil if user.empty?
 
         group = ENV["AI_FLOW_AGENT_GROUP"].to_s.strip
-        new(user: user, group: group.empty? ? "ai" : group, home: home_of(user))
+        new(user: user, group: group.empty? ? "ai" : group, home: home_of(user), slot: RunnerSlot.from_env)
       end
 
       private
@@ -84,11 +88,14 @@ module AiFlow
     # @param user [String] the OS user the agent spawns as
     # @param group [String] the shared group both identities belong to
     # @param home [String] the agent user's home directory
-    sig { params(user: String, group: String, home: String).void }
-    def initialize(user:, group:, home:)
+    # @param slot [RunnerSlot] the host slot this job runs on — per-slot
+    #   toolchain state is keyed by it (ai-flow#116)
+    sig { params(user: String, group: String, home: String, slot: RunnerSlot).void }
+    def initialize(user:, group:, home:, slot: RunnerSlot.first)
       @user = user
       @group = group
       @home = home
+      @slot = slot
     end
 
     # The argv prefix that re-executes the agent as @user. No wrapper
@@ -115,12 +122,17 @@ module AiFlow
     # securityd raises its "Keychain Not Found" dialog in the *runner
     # user's* GUI session (caught live at the plans#36 ceremony).
     #
+    # One gem tree per host slot (ai-flow#116): two slots run as this same
+    # user at the same time, and two bundlers in one tree race on its
+    # files. Slot 1 keeps the unsuffixed paths it always had — its warm
+    # gems stay warm; slot n gets `.gem-<n>` / `.bundle-<n>`.
+    #
     # @return [Hash{String => String}]
     sig { returns(T::Hash[String, String]) }
     def redirect_env
       {
-        "GEM_HOME" => File.join(@home, ".gem"),
-        "BUNDLE_PATH" => File.join(@home, ".bundle"),
+        "GEM_HOME" => File.join(@home, ".gem#{@slot.suffix}"),
+        "BUNDLE_PATH" => File.join(@home, ".bundle#{@slot.suffix}"),
         "AGENT_CLI_CREDENTIAL_STORE" => "file",
       }
     end

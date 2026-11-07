@@ -115,6 +115,27 @@ module AiFlow
         # The agent changed nothing committable — possibly only workflow
         # files, which never commit (workflows_patch carries them).
         class NothingToBuild < Outcome; end
+
+        # The repo's persistent workspace is held by another run (or an
+        # operator's on-box reset) — the overlap the runner layer cannot
+        # see (ai-flow#116). Nothing ran, nothing failed: the holder is
+        # doing this repo's work, and this build is to be re-run when the
+        # workspace is free. Exits clean, so the job is not a red check.
+        class Busy < Outcome
+          extend T::Sig
+
+          # @return [String] the hold, in PersistentWorkspace's words
+          #   (the lockfile and how to find the holder)
+          sig { returns(String) }
+          attr_reader :reason
+
+          # @param reason [String]
+          sig { params(reason: String).void }
+          def initialize(reason:)
+            super(capture_notes: [], workflows_patch: nil)
+            @reason = reason
+          end
+        end
       end
 
       # @param context [AiFlow::Context]
@@ -176,6 +197,7 @@ module AiFlow
           case outcome
           when Outcome::PrOpened then "✅ **/build** — opened #{outcome.urls.join(", ")}"
           when Outcome::NothingToBuild then "⚠️ **/build** — the agent made no changes, so no PR was opened."
+          when Outcome::Busy then busy_headline(outcome)
           else T.absurd(outcome)
           end
         blocks = [headline] + outcome.capture_notes + workflows_notes(outcome) + sub_issues_notes
@@ -203,6 +225,34 @@ module AiFlow
         branch = branch_name(issue)
         bases_by_repo = base_prs.group_by(&:repo)
 
+        build_in_workspaces(code_repos, issue, issue_repo, branch, bases_by_repo, extra_instruction)
+      rescue PersistentWorkspace::BusyError => e
+        Outcome::Busy.new(reason: e.message)
+      end
+
+      private
+
+      # The build proper, once the workspaces are the run's: stack, branch,
+      # provision, agent pass, commit, PR.
+      #
+      # @param code_repos [Array<String>]
+      # @param issue [GitHub::Issue]
+      # @param issue_repo [String]
+      # @param branch [String]
+      # @param bases_by_repo [Hash{String => Array<GitHub::PullRequest>}]
+      # @param extra_instruction [String]
+      # @return [Outcome]
+      sig do
+        params(
+          code_repos: T::Array[String],
+          issue: GitHub::Issue,
+          issue_repo: String,
+          branch: String,
+          bases_by_repo: T::Hash[String, T::Array[GitHub::PullRequest]],
+          extra_instruction: String,
+        ).returns(Outcome)
+      end
+      def build_in_workspaces(code_repos, issue, issue_repo, branch, bases_by_repo, extra_instruction)
         in_workspaces(code_repos) do |checkouts|
           checkouts.each do |repo, checkout|
             stack_on_bases(checkout, bases_by_repo.fetch(repo, []))
@@ -260,8 +310,6 @@ module AiFlow
           )
         end
       end
-
-      private
 
       # ---- Split-state guards (issue mode) ----
 
@@ -686,8 +734,17 @@ module AiFlow
         case outcome
         when Outcome::PrOpened then [workflows_apply_note(outcome.urls.fetch(0), patch)]
         when Outcome::NothingToBuild then [workflows_diff_note(patch)]
+        when Outcome::Busy then []
         else T.absurd(outcome)
         end
+      end
+
+      # @param outcome [Outcome::Busy]
+      # @return [String] the result headline for a held workspace
+      sig { params(outcome: Outcome::Busy).returns(String) }
+      def busy_headline(outcome)
+        "⏳ **/build** — the persistent workspace for #{@context.owner_repo} is held by another run, so this one " \
+          "did not start (#{outcome.reason}); re-run `/build` when it is free."
       end
 
       # A copy-paste command that lands the patch on the PR branch under the

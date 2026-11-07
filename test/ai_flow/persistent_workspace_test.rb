@@ -1,4 +1,4 @@
-# typed: true
+# typed: false — rspock Where tables are load-time rewritten and have no static typing.
 # frozen_string_literal: true
 
 require "test_helper"
@@ -181,6 +181,26 @@ class AiFlow::PersistentWorkspaceTest < Minitest::Test
       Process.kill("KILL", child)
       Process.wait(child)
     end
+  end
+
+  # ai-flow#116: a host that offers a persistent repo two slots keeps one
+  # warm tree per slot — the flock stays as the backstop, never the
+  # schedule. Slot 1 keeps today's path, so the warm tree an upgrade finds
+  # is the one it keeps.
+  test "path is keyed by slot: slot 1 is the bare repo path, slot N is suffixed, the lock beside each" do
+    Given "a workspace on the given slot"
+    ws = AiFlow::PersistentWorkspace.new(
+      repo: "d3mlabs/demo", job_checkout: "/job/checkout", executor: RecordingExecutor.new, slot: slot,
+    )
+
+    Expect
+    File.basename(ws.path) == leaf
+    ws.lock_path == "#{ws.path}.lock"
+
+    Where
+    slot | leaf
+    AiFlow::RunnerSlot.new(number: 1) | "d3mlabs-demo"
+    AiFlow::RunnerSlot.new(number: 2) | "d3mlabs-demo-2"
   end
 
   test "root resolution: env override wins; the unisolated default is durable, under HOME" do

@@ -289,7 +289,16 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    `ai-build` alone (/build runs the full agent loop including tests, so it
    needs a real dev machine, not a bare runner) while a light box takes the
    rest. One registered runner instance = one concurrent job; register N
-   instances for N parallel jobs.
+   instances for N parallel jobs — dev's `dev runner register --slots N`
+   does exactly that (one host, N *slots*, dev#470) and writes each slot's
+   number into its runner service env as `AI_FLOW_RUNNER_SLOT`. ai-flow
+   keys per-slot state by it — the agent user's gem home and bundle path
+   (`.gem-<n>`, `.bundle-<n>`) and a persistent workspace (`<repo>-<n>`) —
+   so two slots running as the same agent user never share a writable
+   tree; slot 1 keeps the unsuffixed paths it had before slots existed.
+   Unset means slot 1. A `/build` that finds its persistent workspace held
+   anyway reports busy and exits clean (re-run when free); under
+   `/build --split` such a sub-issue is deferred and its dependents wait.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
   and make sure it — plus `dev` and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not
