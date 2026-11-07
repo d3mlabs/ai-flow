@@ -211,6 +211,15 @@ module AiFlow
       to_comment(api("repos/#{owner_repo}/issues/#{number}/comments", method: "POST", payload: { body: body }))
     end
 
+    # One comment by id — how the --split orchestrator reads a child
+    # /build's panel back off the comment it posted (ai-flow#115).
+    #
+    # @return [Comment]
+    sig { params(owner_repo: String, comment_id: Integer).returns(Comment) }
+    def issue_comment(owner_repo, comment_id)
+      to_comment(api("repos/#{owner_repo}/issues/comments/#{comment_id}"))
+    end
+
     # The issue's conversation, oldest first. One page of 100 covers our
     # review threads; quote-context resolution degrades gracefully (verbatim
     # fallback) if a source comment ever falls past the cap.

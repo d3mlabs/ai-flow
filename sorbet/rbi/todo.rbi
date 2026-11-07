@@ -22,6 +22,7 @@ module AiFlow::Commands::BatchTest::Cleanup; end
 module AiFlow::Commands::BatchTest::Then; end
 module AiFlow::Commands::BuildSplitTest::Cleanup; end
 module AiFlow::Commands::BuildSplitTest::Then; end
+module AiFlow::Commands::BuildSplitTest::When; end
 module AiFlow::Commands::BuildTest::Cleanup; end
 module AiFlow::Commands::BuildTest::Expect; end
 module AiFlow::Commands::BuildTest::Given; end

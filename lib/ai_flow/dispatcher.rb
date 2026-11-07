@@ -64,7 +64,7 @@ module AiFlow
       warn "ai-flow: one or more segments failed — see the command comment."
       false
     rescue CommentParser::ParseError, GitHub::Error, Agent::Error, SubtasksSection::Error, RepoConfig::Error,
-           Commands::Build::Error => e
+           Commands::Build::Error, Commands::BuildSplit::Error => e
       report_failure(segments, e)
       false
     end
@@ -220,9 +220,7 @@ module AiFlow
     # @return [Commands::BuildSplit]
     sig { returns(Commands::BuildSplit) }
     def build_split
-      Commands::BuildSplit.new(
-        context: @context, github: @github, build: build, result_writer: @result_writer,
-      )
+      Commands::BuildSplit.new(context: @context, github: @github, result_writer: @result_writer)
     end
 
     # @return [Commands::Learn]

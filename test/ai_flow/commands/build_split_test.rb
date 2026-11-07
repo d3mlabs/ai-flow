@@ -8,41 +8,61 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BuildSplitTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
-  # A build stand-in recording the order sub-issues were built in and the
-  # base PRs each was stacked on; `multi_on` numbers report a second PR (a
-  # multi-target sub-issue). Subclasses the real command so sorbet-runtime's
-  # sig checks accept it.
-  class RecordingBuild < AiFlow::Commands::Build
-    attr_reader :built, :base_prs_by_number
+  # The children are /build comments the orchestrator posts and reads back
+  # (ai-flow#115); the fake GitHub plays them. `script_children` decides
+  # what each child's panel reports once read: a PR per repo in `repos_for`
+  # (one, or two for a multi-target sub-issue), no changes, busy, or
+  # failed. `slow` numbers report nothing on their first read, so the
+  # orchestrator has to poll again. The orchestrator never sleeps here:
+  # the sleeper records the intervals it was asked for.
+  Children = Struct.new(:no_changes_on, :busy_on, :failed_on, :multi_on, :slow, keyword_init: true) do
+    def trailer_for(number, reads)
+      return nil if (slow || []).include?(number) && reads < 2
 
-    def initialize(no_changes_on: [], multi_on: [], busy_on: [])
-      @built = []
-      @base_prs_by_number = {}
-      @no_changes_on = no_changes_on
-      @multi_on = multi_on
-      @busy_on = busy_on
-    end
-
-    def build_issue(issue, extra_instruction: "", base_prs: [])
-      @built << issue.number
-      @base_prs_by_number[issue.number] = base_prs
-      if @busy_on.include?(issue.number)
-        AiFlow::Commands::Build::Outcome::Busy.new(reason: "persistent workspace for d3mlabs/demo is busy")
-      elsif @no_changes_on.include?(issue.number)
-        AiFlow::Commands::Build::Outcome::NothingToBuild.new(capture_notes: [], workflows_patch: nil)
-      else
-        repos = ["d3mlabs/demo"]
-        repos << "d3mlabs/other" if @multi_on.include?(issue.number)
-        prs = repos.map do |repo|
-          AiFlow::GitHub::PullRequest.new(
-            number: issue.number, html_url: "https://github.com/#{repo}/pull/#{issue.number}",
-            repo: repo, head_ref: "ai/#{issue.number}-branch",
-          )
+      kind =
+        if (busy_on || []).include?(number) then AiFlow::Commands::Build::Outcome::Trailer::Kind::Busy
+        elsif (failed_on || []).include?(number) then AiFlow::Commands::Build::Outcome::Trailer::Kind::Failed
+        elsif (no_changes_on || []).include?(number) then AiFlow::Commands::Build::Outcome::Trailer::Kind::NothingToBuild
+        else AiFlow::Commands::Build::Outcome::Trailer::Kind::PrOpened
         end
-        AiFlow::Commands::Build::Outcome::PrOpened.new(prs: prs, capture_notes: [], workflows_patch: nil)
-      end
+      repos = ["d3mlabs/demo"]
+      repos << "d3mlabs/other" if (multi_on || []).include?(number)
+      urls = kind == AiFlow::Commands::Build::Outcome::Trailer::Kind::PrOpened ? repos.map { |repo| "https://github.com/#{repo}/pull/#{number}" } : []
+      AiFlow::Commands::Build::Outcome::Trailer.new(kind: kind, pr_urls: urls)
     end
   end
+
+  class RecordingSleeper
+    attr_reader :intervals
+
+    def initialize
+      @intervals = []
+    end
+
+    def call(seconds)
+      @intervals << seconds
+    end
+  end
+
+  # Runs the orchestrator over the seeded fake with scripted children.
+  #
+  # @return [Array(Array<Integer>, Hash{Integer => String})] the sub-issue
+  #   numbers in the order their /build was posted, and each one's posted
+  #   command body
+  def orchestrate(github, children: Children.new, sleeper: RecordingSleeper.new, body: "/build --split")
+    github.script_children { |_repo, number, _body, reads| children.trailer_for(number, reads) }
+    context = ContextBuilder.issue_comment(number: 7, body: body, env: APP_ENV)
+    segment = AiFlow::CommentParser.new.parse(body).fetch(0)
+    AiFlow::Commands::BuildSplit.new(
+      context: context, github: github, result_writer: AiFlow::ResultWriter.new(github: github),
+      interval: 30, sleeper: sleeper.method(:call).to_proc,
+    ).run(segment)
+    posted = github.posted_comments.values.reject { |_repo, number, _body| number == 7 }
+    [posted.map { |_repo, number, _body| number }, posted.to_h { |_repo, number, body| [number, body] }]
+  end
+
+  # The job env of a run with the App configured — fan-out posts as the App.
+  APP_ENV = { "AI_FLOW_APP_ID" => "424242" }.freeze
 
   def sub_issue(number, title, body)
     AiFlow::GitHub::Issue.new(
@@ -61,24 +81,19 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(3, "Wiring", "Wire them.\n\nDepends on: #1, #2\n"),
       sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2, #3\n"),
     ])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, commands = orchestrate(github)
 
-    Then "waves respect Depends on, integration is last, and each build stacks on its dependencies' PRs"
-    build.built == [1, 2, 3, 4]
+    Then "waves respect Depends on, integration is last, and each child command stacks on its dependencies' PRs"
+    order == [1, 2, 3, 4]
     github.comment_edits.fetch(55).include?("✅ **/build --split**")
     github.comment_edits.fetch(55).include?("[x] #{REPO}#4 Integration: Parent")
-    build.base_prs_by_number.fetch(1) == []
-    build.base_prs_by_number.fetch(2) == []
-    build.base_prs_by_number.fetch(3).map(&:head_ref) == ["ai/1-branch", "ai/2-branch"]
-    build.base_prs_by_number.fetch(4).map(&:head_ref) == ["ai/1-branch", "ai/2-branch", "ai/3-branch"]
+    commands.fetch(1) == "/build --for=jpduchesne"
+    commands.fetch(2) == "/build --for=jpduchesne"
+    commands.fetch(3) == "/build --base=https://github.com/#{REPO}/pull/1,https://github.com/#{REPO}/pull/2 --for=jpduchesne"
+    commands.fetch(4) == "/build --base=https://github.com/#{REPO}/pull/1,https://github.com/#{REPO}/pull/2," \
+      "https://github.com/#{REPO}/pull/3 --for=jpduchesne"
 
     Cleanup
     nil
@@ -92,22 +107,16 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(1, "Server API", "Build the API.\n"),
       sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1\n"),
     ])
-    build = RecordingBuild.new(no_changes_on: [1])
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    _order, commands = orchestrate(github, children: Children.new(no_changes_on: [1]))
 
     Then "the checklist marks the no-changes build distinctly from a built one"
     github.comment_edits.fetch(55).include?("[-] #{REPO}#1 Server API — no changes needed")
     github.comment_edits.fetch(55).include?("[x] #{REPO}#4 Integration: Parent")
     # A no-changes dependency has no PR to stack on — the dependent forks
     # from the default branch.
-    build.base_prs_by_number.fetch(4) == []
+    commands.fetch(4) == "/build --for=jpduchesne"
 
     Cleanup
     nil
@@ -127,23 +136,20 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(3, "Wiring", "Wire them.\n\nDepends on: #1\n"),
       sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2, #3\n"),
     ])
-    build = RecordingBuild.new(busy_on: [1])
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, _commands = orchestrate(github, children: Children.new(busy_on: [1]))
     checklist = github.comment_edits.fetch(55)
 
     Then "the busy node is deferred with the re-run hint, its dependents are blocked on it, the independent one built"
-    checklist.include?("[ ] #{REPO}#1 Server API — deferred: persistent workspace for d3mlabs/demo is busy; re-run `/build --split` when it is free")
+    checklist.include?(
+      "[ ] #{REPO}#1 Server API — deferred: its persistent workspace was held by another run " \
+      "(https://github.com/#{REPO}/issues/1#issuecomment-1001); re-run `/build --split` when it is free",
+    )
     checklist.include?("[x] #{REPO}#2 Client")
     checklist.include?("[!] #{REPO}#3 Wiring — blocked until #{REPO}#1 is resolved")
     checklist.include?("[!] #{REPO}#4 Integration: Parent — blocked until #{REPO}#1 is resolved")
-    build.built == [1, 2]
+    order == [1, 2]
 
     Cleanup
     nil
@@ -157,21 +163,16 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(1, "Cross-repo work", "Do it in both repos.\n"),
       sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1\n"),
     ])
-    build = RecordingBuild.new(multi_on: [1])
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    _order, commands = orchestrate(github, children: Children.new(multi_on: [1]))
 
-    Then "the checklist line carries both PR urls"
+    Then "the checklist line carries both PR urls, and the dependent stacks on both"
     github.comment_edits.fetch(55).include?(
       "[x] #{REPO}#1 Cross-repo work — " \
         "https://github.com/d3mlabs/demo/pull/1, https://github.com/d3mlabs/other/pull/1",
     )
+    commands.fetch(4).include?("--base=https://github.com/d3mlabs/demo/pull/1,https://github.com/d3mlabs/other/pull/1")
 
     Cleanup
     nil
@@ -185,23 +186,17 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(1, "Server API", "Build the API.\n"),
       sub_issue(2, "Client UI", "Build the UI.\n"),
     ])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, _commands = orchestrate(github)
 
     Then "an integration issue was created, attached as a sub-issue, and built last"
     github.calls.any? { |kind, _repo, title| kind == :create_issue && title.to_s.start_with?("Integration:") }
     github.calls.map(&:first).include?(:add_sub_issue)
-    build.built.size == 3
-    build.built.last > 100
+    order.size == 3
+    T.must(order.last) > 100
     # Same-repo plan: the issue's own repo is the implicit target.
-    !github.issue(REPO, T.must(build.built.last)).body.include?("Target repos:")
+    !github.issue(REPO, T.must(order.last)).body.include?("Target repos:")
 
     Cleanup
     nil
@@ -216,18 +211,12 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       html_url: "https://github.com/d3mlabs/dev/issues/1", state: "open", repo: "d3mlabs/dev",
     )
     github.seed_sub_issues(REPO, 7, [code_sub])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, _commands = orchestrate(github)
 
     Then "the integration issue targets the code repo, so its build gets a real checkout"
-    github.issue(REPO, T.must(build.built.last)).body.include?("Target repos: d3mlabs/dev")
+    github.issue(REPO, T.must(order.last)).body.include?("Target repos: d3mlabs/dev")
 
     Cleanup
     nil
@@ -238,18 +227,12 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\nTarget repos: d3mlabs/dev\n")
     github.seed_sub_issues(REPO, 7, [sub_issue(1, "Server API", "Build the API.\n")])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, _commands = orchestrate(github)
 
     Then "the integration issue carries the parent's declared targets"
-    github.issue(REPO, T.must(build.built.last)).body.include?("Target repos: d3mlabs/dev")
+    github.issue(REPO, T.must(order.last)).body.include?("Target repos: d3mlabs/dev")
 
     Cleanup
     nil
@@ -279,18 +262,12 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(3, "Dependent wiring", "Wire.\n\nDepends on: #1\n"),
       sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, d3mlabs/other#42, #3\n"),
     ])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, _commands = orchestrate(github)
 
     Then "nothing undrivable was built and the checklist names every skip and block"
-    build.built == []
+    order == []
     checklist = github.comment_edits.fetch(55)
     checklist.include?("⚠️ **/build --split**")
     checklist.include?("[!] #{REPO}#1 Fallback work — fallback placeholder — the work lands in d3mlabs/private")
@@ -320,18 +297,12 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(2, "Ruleset: require codecov/patch", "Part of #{REPO}#7.\n\n#{AiFlow::SubtasksSection::MANUAL_LINE}\n"),
       sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
     ])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, _commands = orchestrate(github)
 
     Then "only the code node was built; the manual one is a human step, not a skip; the integration waits on it"
-    build.built == [1]
+    order == [1]
     checklist = github.comment_edits.fetch(55)
     checklist.include?("(2 not driven by this run)")
     checklist.include?("[ ] #{REPO}#2 Ruleset: require codecov/patch — manual: a human does this step; close it when done")
@@ -365,18 +336,12 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       closed_manual,
       sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
     ])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, _commands = orchestrate(github)
 
     Then "the integration built after the code work; the closed manual step is satisfied and no longer listed"
-    build.built == [1, 4]
+    order == [1, 4]
     checklist = github.comment_edits.fetch(55)
     checklist.include?("✅ **/build --split** — built 2 sub-issues in 2 waves")
     !checklist.include?("Ruleset")
@@ -396,21 +361,15 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(2, "Cleared", "Go.\n\nDepends on: d3mlabs/other#43\n"),
       sub_issue(3, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
     ])
-    build = RecordingBuild.new
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: build,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    order, commands = orchestrate(github)
 
     Then "the closed dependency is satisfied; the open one blocks its dependent and the integration"
-    build.built == [2]
+    order == [2]
     # A satisfied external dependency has no PR in the set — nothing to
     # stack on.
-    build.base_prs_by_number.fetch(2) == []
+    commands.fetch(2) == "/build --for=jpduchesne"
     checklist = github.comment_edits.fetch(55)
     checklist.include?("[!] #{REPO}#1 Gated — blocked until d3mlabs/other#42 is resolved")
     checklist.include?("[x] #{REPO}#2 Cleared")
@@ -429,17 +388,135 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
       sub_issue(2, "B", "Depends on: #1\n"),
       sub_issue(3, "Integration: Parent", "Depends on: #1, #2\n"),
     ])
-    context = ContextBuilder.issue_comment(number: 7, body: "/build --split")
-    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
 
     When "orchestrating"
-    AiFlow::Commands::BuildSplit.new(
-      context: context, github: github, build: RecordingBuild.new,
-      result_writer: AiFlow::ResultWriter.new(github: github),
-    ).run(segment)
+    orchestrate(github)
 
     Then
     raises AiFlow::GitHub::Error
+
+    Cleanup
+    nil
+  end
+
+  # The fan-out itself (ai-flow#115): a wave's members are posted together
+  # and the orchestrator waits for all of them before the next wave — the
+  # children run concurrently on whatever slots the repo sees.
+  test "a wave is posted whole, then polled until every member reports; the next wave waits" do
+    Given "two independent sub-issues, one slow to report, and an integration on both"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(2, "Client UI", "Build the UI.\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
+    ])
+    sleeper = RecordingSleeper.new
+
+    When "orchestrating"
+    order, _commands = orchestrate(github, children: Children.new(slow: [2]), sleeper: sleeper)
+    posts = github.third_args(:post_issue_comment)
+    reads = github.third_args(:issue_comment)
+    first_integration_post = github.calls.index([:post_issue_comment, REPO, 4])
+    last_wave_one_read = github.calls.rindex([:issue_comment, REPO, 1002])
+
+    Then "both wave-one children were posted before either was read; the slow one was read twice; wave two came after"
+    order == [1, 2, 4]
+    posts.first(2) == [1, 2]
+    reads.count(1001) == 1
+    reads.count(1002) == 2
+    T.must(first_integration_post) > T.must(last_wave_one_read)
+    sleeper.intervals == [30, 30, 30]
+
+    Cleanup
+    nil
+  end
+
+  test "while children run, the checklist links each one's command comment" do
+    Given "a slow child"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1\n"),
+    ])
+
+    When "orchestrating"
+    orchestrate(github, children: Children.new(slow: [1]))
+    mid_run = github.comment_edit_history.find { |body| body.include?("— running:") }
+
+    Then "an intermediate checklist showed the child as running, linked"
+    T.must(mid_run).include?("🔄 **/build --split**")
+    T.must(mid_run).include?("[ ] #{REPO}#1 Server API — running: https://github.com/#{REPO}/issues/1#issuecomment-1001")
+
+    Cleanup
+    nil
+  end
+
+  test "a failed child blocks its dependents like any undrivable node; the rest of the plan proceeds" do
+    Given "a child that fails, a dependent, an independent sibling, and the integration"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(2, "Client", "Build the client.\n"),
+      sub_issue(3, "Wiring", "Wire them.\n\nDepends on: #1\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2, #3\n"),
+    ])
+
+    When "orchestrating"
+    order, _commands = orchestrate(github, children: Children.new(failed_on: [1]))
+    checklist = github.comment_edits.fetch(55)
+
+    Then "the failure is named with its comment, dependents are blocked on it, the sibling built"
+    order == [1, 2]
+    checklist.include?("[!] #{REPO}#1 Server API — failed: https://github.com/#{REPO}/issues/1#issuecomment-1001")
+    checklist.include?("[x] #{REPO}#2 Client")
+    checklist.include?("[!] #{REPO}#3 Wiring — blocked until #{REPO}#1 is resolved")
+    checklist.include?("[!] #{REPO}#4 Integration: Parent — blocked until #{REPO}#1 is resolved")
+
+    Cleanup
+    nil
+  end
+
+  test "a cross-repo sub-issue's child is posted on its own repo" do
+    Given "a sub-issue living in another repo"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\nTarget repos: d3mlabs/dev\n")
+    code_sub = AiFlow::GitHub::Issue.new(
+      number: 1, title: "Server API", body: "Build the API.\n",
+      html_url: "https://github.com/d3mlabs/dev/issues/1", state: "open", repo: "d3mlabs/dev",
+    )
+    github.seed_sub_issues(REPO, 7, [code_sub])
+
+    When "orchestrating"
+    orchestrate(github)
+
+    Then
+    github.calls.include?([:post_issue_comment, "d3mlabs/dev", 1])
+
+    Cleanup
+    nil
+  end
+
+  test "without the App there is no identity to post children as — /build --split refuses" do
+    Given "a job env with no App id"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [sub_issue(1, "Server API", "Build the API.\n")])
+    context = ContextBuilder.issue_comment(number: 7, body: "/build --split", env: {})
+    segment = AiFlow::CommentParser.new.parse("/build --split").fetch(0)
+
+    When
+    error = assert_raises(AiFlow::Commands::BuildSplit::NoAppError) do
+      AiFlow::Commands::BuildSplit.new(
+        context: context, github: github, result_writer: AiFlow::ResultWriter.new(github: github),
+      ).run(segment)
+    end
+
+    Then "nothing was posted, and the reason names the App"
+    error.message.include?("App")
+    github.third_args(:post_issue_comment).empty?
 
     Cleanup
     nil

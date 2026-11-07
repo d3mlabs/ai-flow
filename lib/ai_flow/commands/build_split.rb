@@ -4,11 +4,22 @@
 module AiFlow
   module Commands
     # /build --split — orchestrator: read the sub-issues and their
-    # "Depends on: owner/repo#n" metadata, topologically sort into waves, run
-    # /build per sub-issue wave by wave, and ensure a final integration
-    # sub-issue exists (created if the split didn't) built last. Progress is
-    # a live per-wave checklist edited in place in the command comment — one
-    # comment for the whole orchestration.
+    # "Depends on: owner/repo#n" metadata, topologically sort into waves,
+    # fan each wave out as one /build per sub-issue, and ensure a final
+    # integration sub-issue exists (created if the split didn't) built last.
+    # Progress is a live per-wave checklist edited in place in the command
+    # comment — one comment for the whole orchestration, one writer.
+    #
+    # A child is a `/build` comment this App posts on the sub-issue
+    # (ai-flow#115) — `--base=<pr urls>` for the dependency PRs it stacks
+    # on, `--for=<login>` for the human whose run this is — which the
+    # workflow dispatches like a human's command (the authorize gate admits
+    # comments performed via this App). The children of a wave run at once
+    # on whatever runner slots their repos see; this job holds its own slot
+    # and polls their comments for the outcome trailer each /build panel
+    # ends in (Build::Outcome::Trailer), then moves to the next wave. The
+    # orchestrator never builds in-process: without the App there is no
+    # identity to post as, and the run refuses.
     #
     # Nodes the orchestrator cannot drive — adopted/referenced external
     # issues (owned by another effort or a human) and intended-repo
@@ -19,6 +30,16 @@ module AiFlow
       extend T::Sig
 
       INTEGRATION_TITLE_PREFIX = "Integration:"
+
+      # Seconds between polls of a wave's children. Each poll is one API
+      # read per running child; a child run is minutes long.
+      DEFAULT_INTERVAL = 30
+
+      class Error < StandardError; end
+
+      # No App in the job env: the children would have to be posted as
+      # github-actions[bot], whose comments the workflow never dispatches.
+      class NoAppError < Error; end
 
       # One sub-issue's orchestration state, rendered exhaustively by
       # checklist_line. Absence from the progress map means "not built yet".
@@ -91,8 +112,50 @@ module AiFlow
           end
         end
 
-        # A dependency is skipped, manual, blocked, deferred, or an open
-        # external issue.
+        # The child /build is posted and has not reported yet.
+        class Running
+          extend T::Sig
+          include Progress
+
+          sig { returns(String) }
+          attr_reader :repo
+
+          sig { returns(Integer) }
+          attr_reader :comment_id
+
+          sig { returns(String) }
+          attr_reader :comment_url
+
+          # @param repo [String] the sub-issue's repo (the comment's)
+          # @param comment_id [Integer] the posted /build comment
+          # @param comment_url [String]
+          sig { params(repo: String, comment_id: Integer, comment_url: String).void }
+          def initialize(repo:, comment_id:, comment_url:)
+            @repo = repo
+            @comment_id = comment_id
+            @comment_url = comment_url
+          end
+        end
+
+        # The child /build failed (its panel is the ⚠️ one). Blocks
+        # dependents like any undrivable node; the rest of the plan goes on.
+        class Failed
+          extend T::Sig
+          include Progress
+
+          sig { returns(String) }
+          attr_reader :comment_url
+
+          # @param comment_url [String] the child's command comment, where
+          #   the failure reads
+          sig { params(comment_url: String).void }
+          def initialize(comment_url:)
+            @comment_url = comment_url
+          end
+        end
+
+        # A dependency is skipped, manual, blocked, deferred, failed, or an
+        # open external issue.
         class Blocked
           extend T::Sig
           include Progress
@@ -110,20 +173,36 @@ module AiFlow
 
       # @param context [AiFlow::Context]
       # @param github [AiFlow::GitHub]
-      # @param build [AiFlow::Commands::Build]
       # @param result_writer [AiFlow::ResultWriter]
-      sig { params(context: Context, github: GitHub, build: Build, result_writer: ResultWriter).void }
-      def initialize(context:, github:, build:, result_writer:)
+      # @param interval [Integer] seconds between polls
+      # @param sleeper [#call] what waits `interval` seconds — Kernel#sleep,
+      #   or a recorder in tests
+      sig do
+        params(
+          context: Context,
+          github: GitHub,
+          result_writer: ResultWriter,
+          interval: Integer,
+          sleeper: T.proc.params(seconds: Integer).void,
+        ).void
+      end
+      def initialize(context:, github:, result_writer:, interval: DEFAULT_INTERVAL, sleeper: ->(seconds) { sleep(seconds) })
         @context = context
         @github = github
-        @build = build
         @result_writer = result_writer
+        @interval = interval
+        @sleeper = sleeper
       end
 
       # @param segment [CommentParser::Segment]
       # @return [void]
       sig { params(segment: CommentParser::Segment).void }
       def run(segment)
+        unless @context.app_configured?
+          raise NoAppError, "/build --split fans out as /build comments posted by the ai-flow App, " \
+                            "and this run has no App (allow_token_fallback) — register the App to use it."
+        end
+
         parent = @github.issue(@context.owner_repo, @context.number)
         sub_issues = open_sub_issues
         raise GitHub::Error, "no open sub-issues — run /split first" if sub_issues.empty?
@@ -135,33 +214,92 @@ module AiFlow
 
         waves.each do |wave|
           wave.each do |issue|
-            progress[ref_of(issue)] = blocked_by_run(issue, progress) || drive(issue, progress)
-            publish_checklist(segment, waves, sub_issues, progress)
+            progress[ref_of(issue)] = blocked_by_run(issue, progress) || post_child(issue, progress)
           end
+          publish_checklist(segment, waves, sub_issues, progress)
+          await_wave(segment, wave, waves, sub_issues, progress)
         end
       end
 
       private
 
-      # Build one sub-issue and read its outcome as progress.
+      # Post one sub-issue's child /build, carrying its dependencies' PRs
+      # and the requesting human.
       #
       # @param issue [GitHub::Issue]
       # @param progress [Hash{String => Progress}] ref => progress so far
+      # @return [Progress::Running]
+      sig { params(issue: GitHub::Issue, progress: T::Hash[String, Progress]).returns(Progress::Running) }
+      def post_child(issue, progress)
+        comment = @github.post_issue_comment(issue.repo, issue.number, child_command(issue, progress))
+        Progress::Running.new(repo: issue.repo, comment_id: comment.id, comment_url: comment.html_url)
+      end
+
+      # @param issue [GitHub::Issue]
+      # @param progress [Hash{String => Progress}]
+      # @return [String] the child's command line
+      sig { params(issue: GitHub::Issue, progress: T::Hash[String, Progress]).returns(String) }
+      def child_command(issue, progress)
+        urls = base_prs_for(issue, progress).map(&:html_url)
+        words = ["/build"]
+        words << "--base=#{urls.join(",")}" unless urls.empty?
+        words << "--for=#{@context.commenter_login}" if @context.commenter_login
+        words.join(" ")
+      end
+
+      # Poll the wave's running children until every one has reported,
+      # re-publishing the checklist after each poll — one writer, reading
+      # the children's own comments rather than trusting memory.
+      #
+      # @return [void] mutates `progress` in place
+      sig do
+        params(
+          segment: CommentParser::Segment,
+          wave: T::Array[GitHub::Issue],
+          waves: T::Array[T::Array[GitHub::Issue]],
+          sub_issues: T::Array[GitHub::Issue],
+          progress: T::Hash[String, Progress],
+        ).void
+      end
+      def await_wave(segment, wave, waves, sub_issues, progress)
+        loop do
+          running = wave.select { |issue| progress[ref_of(issue)].is_a?(Progress::Running) }
+          break if running.empty?
+
+          @sleeper.call(@interval)
+          running.each do |issue|
+            entry = T.cast(progress.fetch(ref_of(issue)), Progress::Running)
+            progress[ref_of(issue)] = read_child(entry)
+          end
+          publish_checklist(segment, waves, sub_issues, progress)
+        end
+      end
+
+      # Read a child's comment: no trailer yet means still running;
+      # otherwise the trailer's kind is the node's progress.
+      #
+      # @param entry [Progress::Running]
       # @return [Progress]
-      sig { params(issue: GitHub::Issue, progress: T::Hash[String, Progress]).returns(Progress) }
-      def drive(issue, progress)
-        case (outcome = @build.build_issue(issue, base_prs: base_prs_for(issue, progress)))
-        when Build::Outcome::PrOpened then Progress::Built.new(prs: outcome.prs)
-        when Build::Outcome::NothingToBuild then Progress::NoChanges.new
-        when Build::Outcome::Busy then Progress::Deferred.new(reason: outcome.reason)
-        else T.absurd(outcome)
+      sig { params(entry: Progress::Running).returns(Progress) }
+      def read_child(entry)
+        trailer = Build::Outcome::Trailer.parse(@github.issue_comment(entry.repo, entry.comment_id).body)
+        return entry unless trailer
+
+        case (kind = trailer.kind)
+        when Build::Outcome::Trailer::Kind::PrOpened
+          Progress::Built.new(prs: trailer.pr_urls.map { |url| @github.pull_request(*GitHub.parse_pull_request_url(url)) })
+        when Build::Outcome::Trailer::Kind::NothingToBuild then Progress::NoChanges.new
+        when Build::Outcome::Trailer::Kind::Busy
+          Progress::Deferred.new(reason: "its persistent workspace was held by another run (#{entry.comment_url})")
+        when Build::Outcome::Trailer::Kind::Failed then Progress::Failed.new(comment_url: entry.comment_url)
+        else T.absurd(kind)
         end
       end
 
       # Blockage that arose during this run — a dependency deferred by a
-      # held workspace — which the pre-run pass (undrivable_progress) could
-      # not know. Same reason text as the pre-run blocking, so a reader
-      # sees one notion.
+      # held workspace, or failed — which the pre-run pass
+      # (undrivable_progress) could not know. Same reason text as the
+      # pre-run blocking, so a reader sees one notion.
       #
       # @param issue [GitHub::Issue]
       # @param progress [Hash{String => Progress}] ref => progress so far
@@ -287,7 +425,7 @@ module AiFlow
       sig { params(entry: T.nilable(Progress)).returns(T::Boolean) }
       def undrivable?(entry)
         entry.is_a?(Progress::Skipped) || entry.is_a?(Progress::Manual) || entry.is_a?(Progress::Blocked) ||
-          entry.is_a?(Progress::Deferred)
+          entry.is_a?(Progress::Deferred) || entry.is_a?(Progress::Failed)
       end
 
       # @return [Boolean] whether an out-of-set dependency is still open — a
@@ -393,9 +531,9 @@ module AiFlow
         waves
       end
 
-      # The live checklist: one in-place edit per completed build. Nodes the
-      # run does not drive (skipped, manual, blocked) are listed under the
-      # waves with their reasons — visible, never silent.
+      # The live checklist: one in-place edit per wave posted and per poll.
+      # Nodes the run does not drive (skipped, manual, blocked) are listed
+      # under the waves with their reasons — visible, never silent.
       #
       # @return [void]
       sig do
@@ -433,7 +571,7 @@ module AiFlow
       end
       def checklist_headline(waves, undrivable, progress)
         buildable = waves.flatten
-        done = buildable.all? { |issue| progress.key?(ref_of(issue)) }
+        done = buildable.all? { |issue| progress.key?(ref_of(issue)) && !progress[ref_of(issue)].is_a?(Progress::Running) }
         suffix = undrivable.empty? ? "" : " (#{undrivable.size} not driven by this run)"
         if done
           "#{undrivable.empty? ? "✅" : "⚠️"} **/build --split** — built #{buildable.size} sub-issues " \
@@ -454,6 +592,8 @@ module AiFlow
           when Progress::Skipped then ["[!]", " — #{entry.reason}"]
           when Progress::Manual then ["[ ]", " — manual: a human does this step; close it when done"]
           when Progress::Deferred then ["[ ]", " — deferred: #{entry.reason}; re-run `/build --split` when it is free"]
+          when Progress::Running then ["[ ]", " — running: #{entry.comment_url}"]
+          when Progress::Failed then ["[!]", " — failed: #{entry.comment_url}"]
           when Progress::Blocked then ["[!]", " — #{entry.reason}"]
           else T.absurd(entry)
           end

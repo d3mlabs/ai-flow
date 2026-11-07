@@ -152,6 +152,15 @@ module AiFlow
       ALLOWED_ASSOCIATIONS.include?(author_association) || app_authored?
     end
 
+    # Whether this run has the App (AI_FLOW_APP_ID in the job env) — the
+    # identity fan-out posts as; absent under allow_token_fallback.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def app_configured?
+      !@env["AI_FLOW_APP_ID"].to_s.empty?
+    end
+
     # Whether the ai-flow App performed this comment. Only the dispatcher
     # holds the App key, so an App-performed command comment is an
     # orchestrator's child /build; the id is matched against the job's
