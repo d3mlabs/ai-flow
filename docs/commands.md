@@ -488,7 +488,10 @@ refuse with a near-match listing. Two paired proposal PRs:
 
 Any capture pass — dictated, sweep, scan, or build-time — can judge a lesson
 org-tier itself: it drafts the learning as ordinary files and declares it on
-a final output line, `PROMOTE: <slug>` (comma-separated for several). The
+a final output line, `PROMOTE: <slug>` (comma-separated for several). An
+item is a slug — lowercase words joined by hyphens, the learning's folder
+name; anything else on the line (prose, a later message run straight on)
+is named on the panel as not a slug and ignored, never squeezed into one. The
 tooling then routes each declared slug through the same paired machinery as
 `--promote`: an org proposal PR on the knowledge repo, the local draft
 pruned out of the repo PR, and — when the learning is already admitted
