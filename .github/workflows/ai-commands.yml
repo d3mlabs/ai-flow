@@ -77,7 +77,11 @@ jobs:
   # ai-flow App posts on each sub-issue — dispatch like a human's. The
   # authorize job then admits only comments performed via THIS App (its id
   # against the AI_FLOW_APP_ID secret), which only the dispatcher can
-  # author; every other App's comment is denied like a stranger's.
+  # author; every other App's comment is denied like a stranger's. The
+  # author_association check is the human branch's alone: an App's bot
+  # user is CONTRIBUTOR only where one of its PRs has merged and NONE
+  # elsewhere, so a shared clause dropped cross-repo children on repos the
+  # App had never committed to (ai-flow#125).
   #
   # Review summaries (pull_request_review) are deliberately absent here:
   # reviews have no reactions API, so their acknowledgment is the
@@ -88,8 +92,9 @@ jobs:
   ack:
     if: >-
       (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
-      (github.event.comment.user.type != 'Bot' || github.event.comment.performed_via_github_app != null) &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
+      (github.event.comment.performed_via_github_app != null ||
+       (github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association))) &&
       (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
        contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||
@@ -152,8 +157,9 @@ jobs:
   authorize:
     if: >-
       (github.event_name == 'issue_comment' &&
-       (github.event.comment.user.type != 'Bot' || github.event.comment.performed_via_github_app != null) &&
-       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association) &&
+       (github.event.comment.performed_via_github_app != null ||
+        (github.event.comment.user.type != 'Bot' &&
+         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association))) &&
        (contains(github.event.comment.body, format('/{0}ask', inputs.command_prefix)) ||
         contains(github.event.comment.body, format('/{0}edit', inputs.command_prefix)) ||
         contains(github.event.comment.body, format('/{0}split', inputs.command_prefix)) ||

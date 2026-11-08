@@ -34,6 +34,35 @@ class AiCommandsRoutingTest < Minitest::Test
     "/split --dry"                                                    | ""     | "ai-split"
   end
 
+  # The coarse job-level filter must admit a comment performed via a GitHub
+  # App without an author_association check: the App's bot user is only a
+  # CONTRIBUTOR on repos where one of its PRs has merged (dev), and NONE
+  # elsewhere (cellbound-3d), so an AND'd association clause silently
+  # dropped the orchestrator's cross-repo child /build (ai-flow#125). The
+  # authorize step then admits only THIS App (id against the secret).
+  APP_EXCEPTION = Regexp.new(
+    [
+      Regexp.escape("(github.event.comment.performed_via_github_app != null ||"),
+      Regexp.escape("(github.event.comment.user.type != 'Bot' &&"),
+      Regexp.escape(%q{contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.comment.author_association)))}),
+    ].join('\s*'),
+  )
+
+  test "the #{job} job's coarse filter admits an App-performed comment regardless of author_association, and checks the association only for humans" do
+    Given "the job's if: expression"
+    condition = YAML.safe_load(File.read(WORKFLOW_PATH)).fetch("jobs").fetch(job).fetch("if")
+
+    Expect
+    condition.match?(APP_EXCEPTION)
+    # No association clause survives outside the human branch.
+    condition.scan("github.event.comment.author_association").length == 1
+
+    Where
+    job
+    "ack"
+    "authorize"
+  end
+
   test "the dispatch job takes the scan's runner label and gives the orchestrator route six hours" do
     Given "the dispatch job"
     job = YAML.safe_load(File.read(WORKFLOW_PATH)).fetch("jobs").fetch("dispatch")
