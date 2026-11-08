@@ -66,6 +66,16 @@ class AiFlow::ResultWriterTest < Minitest::Test
     AiFlow::ResultWriter.run_url_of(body).nil?
   end
 
+  test "run_url_of reads the ⏳ running line too — the run is known from the dispatcher's first write, not its last (ai-flow#134)" do
+    Given "a command comment as announced: the running line, with a models note after it"
+    body = "/build --for=jpduchesne\n\n> #{AiFlow::ResultWriter.running_line("https://github.com/d3mlabs/demo/actions/runs/9")} · model: `fake-model`"
+
+    Expect "the running line names the run and yields it"
+    AiFlow::ResultWriter.running_line("https://github.com/d3mlabs/demo/actions/runs/9") ==
+      "⏳ ai-flow is running — [follow the run](https://github.com/d3mlabs/demo/actions/runs/9)"
+    AiFlow::ResultWriter.run_url_of(body) == "https://github.com/d3mlabs/demo/actions/runs/9"
+  end
+
   test "without an appendix the footer gets its own bottom section" do
     Given "a one-segment comment and an Actions run url"
     body = "/edit tighten"

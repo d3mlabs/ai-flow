@@ -124,7 +124,7 @@ module AiFlow
       url = @context.run_url
       return unless url
 
-      status = ["⏳ ai-flow is running — [follow the run](#{url})", ResultWriter.models_note(predicted_models(segments))]
+      status = [ResultWriter.running_line(url), ResultWriter.models_note(predicted_models(segments))]
       @result_writer.announce(@context, status.compact.join(" · "))
     rescue GitHub::Error
       # A failed status line must not block the command.
