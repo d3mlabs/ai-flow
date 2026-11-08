@@ -508,6 +508,20 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     nil
   end
 
+  test "the default log is the job log: stdout, one line each" do
+    Given "the default log"
+    log = AiFlow::Commands::BuildSplit::DEFAULT_LOG
+
+    When "narrating a line"
+    out, _err = capture_io { log.call("d3mlabs/demo#1 posted → somewhere") }
+
+    Then "it reached stdout, newline-terminated"
+    out == "d3mlabs/demo#1 posted → somewhere\n"
+
+    Cleanup
+    nil
+  end
+
   test "every checklist publish also lands on the run page's step summary, latest wins (ai-flow#128)" do
     Given "a step summary file and one child"
     github = FakeGitHub.new

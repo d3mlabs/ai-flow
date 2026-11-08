@@ -35,6 +35,9 @@ module AiFlow
       # read per running child; a child run is minutes long.
       DEFAULT_INTERVAL = 30
 
+      # Where the run narrates itself unless told otherwise: the job log.
+      DEFAULT_LOG = T.let(->(line) { $stdout.puts(line) }, T.proc.params(line: String).void)
+
       class Error < StandardError; end
 
       # No App in the job env: the children would have to be posted as
@@ -208,7 +211,7 @@ module AiFlow
         ).void
       end
       def initialize(context:, github:, result_writer:, interval: DEFAULT_INTERVAL, sleeper: ->(seconds) { sleep(seconds) },
-        log: ->(line) { $stdout.puts(line) }, summary_path: self.class.summary_path_from_env)
+        log: DEFAULT_LOG, summary_path: self.class.summary_path_from_env)
         @context = context
         @github = github
         @result_writer = result_writer
@@ -346,10 +349,13 @@ module AiFlow
         entry.with_run(run_url)
       end
 
+      # What a child's trailer resolves to — a reported node, never Running.
+      Reported = T.type_alias { T.any(Progress::Built, Progress::NoChanges, Progress::Deferred, Progress::Failed) }
+
       # @param trailer [Build::Outcome::Trailer]
       # @param entry [Progress::Running]
-      # @return [Progress] the node's progress, read off the trailer's kind
-      sig { params(trailer: Build::Outcome::Trailer, entry: Progress::Running).returns(Progress) }
+      # @return [Reported] the node's progress, read off the trailer's kind
+      sig { params(trailer: Build::Outcome::Trailer, entry: Progress::Running).returns(Reported) }
       def outcome_of(trailer, entry)
         case (kind = trailer.kind)
         when Build::Outcome::Trailer::Kind::PrOpened
@@ -362,16 +368,16 @@ module AiFlow
         end
       end
 
-      # @param outcome [Progress] a child's read outcome
+      # @param outcome [Reported] a child's read outcome
       # @return [String] its log line, minus the ref
-      sig { params(outcome: Progress).returns(String) }
+      sig { params(outcome: Reported).returns(String) }
       def describe(outcome)
         case outcome
         when Progress::Built then "built: #{outcome.prs.map(&:html_url).join(", ")}"
         when Progress::NoChanges then "no changes"
         when Progress::Deferred then "deferred: #{outcome.reason}"
         when Progress::Failed then "failed: #{outcome.comment_url}"
-        else T.must(outcome.class.name).split("::").fetch(-1).downcase
+        else T.absurd(outcome)
         end
       end
 
