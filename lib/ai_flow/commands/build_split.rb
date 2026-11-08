@@ -126,14 +126,27 @@ module AiFlow
           sig { returns(String) }
           attr_reader :comment_url
 
+          sig { returns(T.nilable(String)) }
+          attr_reader :run_url
+
           # @param repo [String] the sub-issue's repo (the comment's)
           # @param comment_id [Integer] the posted /build comment
           # @param comment_url [String]
-          sig { params(repo: String, comment_id: Integer, comment_url: String).void }
-          def initialize(repo:, comment_id:, comment_url:)
+          # @param run_url [String, nil] the child's Actions run, once its
+          #   dispatcher's panel named it (ai-flow#128)
+          sig { params(repo: String, comment_id: Integer, comment_url: String, run_url: T.nilable(String)).void }
+          def initialize(repo:, comment_id:, comment_url:, run_url: nil)
             @repo = repo
             @comment_id = comment_id
             @comment_url = comment_url
+            @run_url = run_url
+          end
+
+          # @param run_url [String]
+          # @return [Running] the same child, with its run known
+          sig { params(run_url: String).returns(Running) }
+          def with_run(run_url)
+            Running.new(repo: @repo, comment_id: @comment_id, comment_url: @comment_url, run_url: run_url)
           end
         end
 
@@ -177,6 +190,12 @@ module AiFlow
       # @param interval [Integer] seconds between polls
       # @param sleeper [#call] what waits `interval` seconds — Kernel#sleep,
       #   or a recorder in tests
+      # @param log [#call] where the run narrates itself, one line at a
+      #   time — the job log (stdout) in Actions, a recorder in tests
+      #   (ai-flow#128)
+      # @param summary_path [String, nil] the run page's step summary file
+      #   (GITHUB_STEP_SUMMARY); each checklist publish overwrites it so the
+      #   run page shows the latest. nil outside Actions.
       sig do
         params(
           context: Context,
@@ -184,14 +203,30 @@ module AiFlow
           result_writer: ResultWriter,
           interval: Integer,
           sleeper: T.proc.params(seconds: Integer).void,
+          log: T.proc.params(line: String).void,
+          summary_path: T.nilable(String),
         ).void
       end
-      def initialize(context:, github:, result_writer:, interval: DEFAULT_INTERVAL, sleeper: ->(seconds) { sleep(seconds) })
+      def initialize(context:, github:, result_writer:, interval: DEFAULT_INTERVAL, sleeper: ->(seconds) { sleep(seconds) },
+        log: ->(line) { $stdout.puts(line) }, summary_path: self.class.summary_path_from_env)
         @context = context
         @github = github
         @result_writer = result_writer
         @interval = interval
         @sleeper = sleeper
+        @log = log
+        @summary_path = summary_path
+      end
+
+      class << self
+        extend T::Sig
+
+        # @return [String, nil] GITHUB_STEP_SUMMARY when Actions set it
+        sig { returns(T.nilable(String)) }
+        def summary_path_from_env
+          path = ENV["GITHUB_STEP_SUMMARY"].to_s
+          path.empty? ? nil : path
+        end
       end
 
       # @param segment [CommentParser::Segment]
@@ -210,14 +245,17 @@ module AiFlow
         sub_issues = ensure_integration_sub_issue(parent, sub_issues)
         progress = undrivable_progress(parent, sub_issues)
         waves = topological_waves(sub_issues, progress)
+        @log.call("/build --split: #{waves.flatten.size} sub-issues in #{waves.size} waves")
         publish_checklist(segment, waves, sub_issues, progress)
 
-        waves.each do |wave|
+        waves.each_with_index do |wave, index|
+          @log.call("::group::wave #{index + 1}/#{waves.size} — #{wave.size} children")
           wave.each do |issue|
             progress[ref_of(issue)] = blocked_by_run(issue, progress) || post_child(issue, progress)
           end
           publish_checklist(segment, waves, sub_issues, progress)
           await_wave(segment, wave, waves, sub_issues, progress)
+          @log.call("::endgroup::")
         end
       end
 
@@ -232,6 +270,7 @@ module AiFlow
       sig { params(issue: GitHub::Issue, progress: T::Hash[String, Progress]).returns(Progress::Running) }
       def post_child(issue, progress)
         comment = @github.post_issue_comment(issue.repo, issue.number, child_command(issue, progress))
+        @log.call("#{ref_of(issue)} posted → #{comment.html_url}")
         Progress::Running.new(repo: issue.repo, comment_id: comment.id, comment_url: comment.html_url)
       end
 
@@ -269,22 +308,49 @@ module AiFlow
           @sleeper.call(@interval)
           running.each do |issue|
             entry = T.cast(progress.fetch(ref_of(issue)), Progress::Running)
-            progress[ref_of(issue)] = read_child(entry)
+            progress[ref_of(issue)] = read_child(ref_of(issue), entry)
           end
           publish_checklist(segment, waves, sub_issues, progress)
         end
       end
 
       # Read a child's comment: no trailer yet means still running;
-      # otherwise the trailer's kind is the node's progress.
+      # otherwise the trailer's kind is the node's progress. Either way
+      # the same body names the child's run once its dispatcher has
+      # posted a panel — noted the first time it shows (ai-flow#128).
       #
+      # @param ref [String] "owner/repo#n", for the log
       # @param entry [Progress::Running]
       # @return [Progress]
-      sig { params(entry: Progress::Running).returns(Progress) }
-      def read_child(entry)
-        trailer = Build::Outcome::Trailer.parse(@github.issue_comment(entry.repo, entry.comment_id).body)
+      sig { params(ref: String, entry: Progress::Running).returns(Progress) }
+      def read_child(ref, entry)
+        body = @github.issue_comment(entry.repo, entry.comment_id).body
+        entry = note_run(ref, entry, ResultWriter.run_url_of(body))
+        trailer = Build::Outcome::Trailer.parse(body)
         return entry unless trailer
 
+        outcome = outcome_of(trailer, entry)
+        @log.call("#{ref} #{describe(outcome)}")
+        outcome
+      end
+
+      # @param ref [String]
+      # @param entry [Progress::Running]
+      # @param run_url [String, nil] what the child's panel names now
+      # @return [Progress::Running] the entry, with the run once known
+      sig { params(ref: String, entry: Progress::Running, run_url: T.nilable(String)).returns(Progress::Running) }
+      def note_run(ref, entry, run_url)
+        return entry if run_url.nil? || entry.run_url
+
+        @log.call("#{ref} run: #{run_url}")
+        entry.with_run(run_url)
+      end
+
+      # @param trailer [Build::Outcome::Trailer]
+      # @param entry [Progress::Running]
+      # @return [Progress] the node's progress, read off the trailer's kind
+      sig { params(trailer: Build::Outcome::Trailer, entry: Progress::Running).returns(Progress) }
+      def outcome_of(trailer, entry)
         case (kind = trailer.kind)
         when Build::Outcome::Trailer::Kind::PrOpened
           Progress::Built.new(prs: trailer.pr_urls.map { |url| @github.pull_request(*GitHub.parse_pull_request_url(url)) })
@@ -293,6 +359,19 @@ module AiFlow
           Progress::Deferred.new(reason: "its persistent workspace was held by another run (#{entry.comment_url})")
         when Build::Outcome::Trailer::Kind::Failed then Progress::Failed.new(comment_url: entry.comment_url)
         else T.absurd(kind)
+        end
+      end
+
+      # @param outcome [Progress] a child's read outcome
+      # @return [String] its log line, minus the ref
+      sig { params(outcome: Progress).returns(String) }
+      def describe(outcome)
+        case outcome
+        when Progress::Built then "built: #{outcome.prs.map(&:html_url).join(", ")}"
+        when Progress::NoChanges then "no changes"
+        when Progress::Deferred then "deferred: #{outcome.reason}"
+        when Progress::Failed then "failed: #{outcome.comment_url}"
+        else T.must(outcome.class.name).split("::").fetch(-1).downcase
         end
       end
 
@@ -307,7 +386,11 @@ module AiFlow
       sig { params(issue: GitHub::Issue, progress: T::Hash[String, Progress]).returns(T.nilable(Progress::Blocked)) }
       def blocked_by_run(issue, progress)
         blocker = dependencies_of(issue).find { |dep| undrivable?(progress[dep]) }
-        blocker && Progress::Blocked.new(reason: "blocked until #{blocker} is resolved")
+        return nil unless blocker
+
+        blocked = Progress::Blocked.new(reason: "blocked until #{blocker} is resolved")
+        @log.call("#{ref_of(issue)} #{blocked.reason}")
+        blocked
       end
 
       # The dependency PRs a stacked build cuts its branches from: every
@@ -559,6 +642,9 @@ module AiFlow
           undrivable.each { |issue| lines << checklist_line(issue, progress[ref_of(issue)]) }
         end
         @result_writer.write(@context, [[segment, lines.join("\n")]])
+        # The run page too — overwritten, so it shows the latest checklist
+        # (the dispatcher's own summaries append; this one is a status).
+        File.write(@summary_path, "#{lines.join("\n")}\n") if @summary_path
       end
 
       # @return [String]
@@ -592,7 +678,7 @@ module AiFlow
           when Progress::Skipped then ["[!]", " — #{entry.reason}"]
           when Progress::Manual then ["[ ]", " — manual: a human does this step; close it when done"]
           when Progress::Deferred then ["[ ]", " — deferred: #{entry.reason}; re-run `/build --split` when it is free"]
-          when Progress::Running then ["[ ]", " — running: #{entry.comment_url}"]
+          when Progress::Running then ["[ ]", " — running: #{entry.comment_url}#{entry.run_url && " (run: #{entry.run_url})"}"]
           when Progress::Failed then ["[!]", " — failed: #{entry.comment_url}"]
           when Progress::Blocked then ["[!]", " — #{entry.reason}"]
           else T.absurd(entry)

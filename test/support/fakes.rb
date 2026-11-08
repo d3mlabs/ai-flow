@@ -115,11 +115,20 @@ class FakeGitHub < AiFlow::GitHub
     @comment_reads ||= Hash.new(0)
     reads = (@comment_reads[comment_id] += 1)
     trailer = @child_script&.call(repo, number, body, reads)
+    # Once read, the child's dispatcher has posted its panel in place with
+    # the run footer; the ⏳ panel has no trailer yet, the ✅ one has.
+    footer = "⚙️ [workflow run](#{child_run_url(repo, number)})"
+    panel = trailer ? "> ✅ **/build**\n>\n> #{trailer}\n>\n> #{footer}" : "> ⏳ **/build**\n>\n> #{footer}"
     AiFlow::GitHub::Comment.new(
-      id: comment_id, author: "ai-flow", body: trailer ? "#{body}\n\n> ✅ **/build**\n>\n> #{trailer}" : body,
+      id: comment_id, author: "ai-flow", body: "#{body}\n\n#{panel}",
       html_url: "https://github.com/#{repo}/issues/#{number}#issuecomment-#{comment_id}",
       created_at: Time.now,
     )
+  end
+
+  # The Actions run a child's dispatcher reports in its panel footer.
+  def child_run_url(repo, number)
+    "https://github.com/#{repo}/actions/runs/#{9000 + number}"
   end
 
   def seed_issue_comment(owner_repo, number, id:, body:, login: "jpduchesne")

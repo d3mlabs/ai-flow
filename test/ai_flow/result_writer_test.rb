@@ -54,6 +54,18 @@ class AiFlow::ResultWriterTest < Minitest::Test
     nil
   end
 
+  test "run_url_of reads back the run the footer wrote, and nothing before the footer exists (ai-flow#128)" do
+    Given "a rendered comment with a footer, and the bare command"
+    body = "/build --for=jpduchesne"
+    segments = AiFlow::CommentParser.new.parse(body)
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new)
+    rendered = writer.render(body, [[segments.fetch(0), "⏳ **/build**"]], run_url: "https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Expect "the rendered body yields its run; the bare one yields nil"
+    AiFlow::ResultWriter.run_url_of(rendered) == "https://github.com/d3mlabs/demo/actions/runs/9"
+    AiFlow::ResultWriter.run_url_of(body).nil?
+  end
+
   test "without an appendix the footer gets its own bottom section" do
     Given "a one-segment comment and an Actions run url"
     body = "/edit tighten"

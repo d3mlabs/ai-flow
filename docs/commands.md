@@ -306,9 +306,14 @@ kind=… -->`: `pr_opened` with the PR urls, `nothing_to_build`, `busy`,
 `failed`), and a comment without one is a run still going. When every
 member has reported, the next wave is posted with its `--base` computed
 from the children's actual PRs. The checklist has one writer — this job —
-and shows a running child as `[ ] … — running: <comment link>`, a failed
+and shows a running child as `[ ] … — running: <comment link> (run: <its
+Actions run>)` — the run link appears once the child's dispatcher has
+posted its ⏳ panel, read off the same comment as the trailer — and a failed
 one as `[!] … — failed: <comment link>` (its dependents block like any
-undrivable node; the rest of the plan proceeds).
+undrivable node; the rest of the plan proceeds). The orchestrator's own run
+page mirrors this: its job log narrates the run (one group per wave; each
+child posted, its run found, its outcome) and its step summary is the
+latest checklist.
 
 Two valued flags exist for this, on `/build` itself:
 

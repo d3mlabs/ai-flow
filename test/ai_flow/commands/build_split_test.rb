@@ -3,6 +3,8 @@
 
 require "test_helper"
 require "support/fakes"
+require "tmpdir"
+require "fileutils"
 
 transform!(RSpock::AST::Transformation)
 class AiFlow::Commands::BuildSplitTest < Minitest::Test
@@ -49,13 +51,13 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
   # @return [Array(Array<Integer>, Hash{Integer => String})] the sub-issue
   #   numbers in the order their /build was posted, and each one's posted
   #   command body
-  def orchestrate(github, children: Children.new, sleeper: RecordingSleeper.new, body: "/build --split")
+  def orchestrate(github, children: Children.new, sleeper: RecordingSleeper.new, body: "/build --split", log: [], summary_path: nil)
     github.script_children { |_repo, number, _body, reads| children.trailer_for(number, reads) }
     context = ContextBuilder.issue_comment(number: 7, body: body, env: APP_ENV)
     segment = AiFlow::CommentParser.new.parse(body).fetch(0)
     AiFlow::Commands::BuildSplit.new(
       context: context, github: github, result_writer: AiFlow::ResultWriter.new(github: github),
-      interval: 30, sleeper: sleeper.method(:call).to_proc,
+      interval: 30, sleeper: sleeper.method(:call).to_proc, log: ->(line) { log << line }, summary_path: summary_path,
     ).run(segment)
     posted = github.posted_comments.values.reject { |_repo, number, _body| number == 7 }
     [posted.map { |_repo, number, _body| number }, posted.to_h { |_repo, number, body| [number, body] }]
@@ -451,6 +453,80 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  test "once a child's panel names its workflow run, the checklist's running line links it too (ai-flow#128)" do
+    Given "a slow child, whose dispatcher has posted its ⏳ panel by the first poll"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1\n"),
+    ])
+
+    When "orchestrating"
+    orchestrate(github, children: Children.new(slow: [1]))
+    with_run = github.comment_edit_history.find { |body| body.include?("(run: ") }
+
+    Then "the running line carries the comment and the run"
+    T.must(with_run).include?(
+      "[ ] #{REPO}#1 Server API — running: https://github.com/#{REPO}/issues/1#issuecomment-1001 (run: https://github.com/#{REPO}/actions/runs/9001)",
+    )
+
+    Cleanup
+    nil
+  end
+
+  test "the orchestrator narrates the run to its log: waves as groups, each child posted, each run found, each outcome (ai-flow#128)" do
+    Given "two wave-one children (one slow, one failing) and an integration"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(2, "Client UI", "Build the UI.\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #2\n"),
+    ])
+    log = []
+
+    When "orchestrating"
+    orchestrate(github, children: Children.new(slow: [1], failed_on: [2]), log: log)
+
+    Then "the log reads as the run page should: headline, wave groups, posts, runs, outcomes, the blocked dependent"
+    log.first == "/build --split: 3 sub-issues in 2 waves"
+    log.include?("::group::wave 1/2 — 2 children")
+    log.include?("#{REPO}#1 posted → https://github.com/#{REPO}/issues/1#issuecomment-1001")
+    log.include?("#{REPO}#2 posted → https://github.com/#{REPO}/issues/2#issuecomment-1002")
+    log.include?("#{REPO}#1 run: https://github.com/#{REPO}/actions/runs/9001")
+    log.count("#{REPO}#1 run: https://github.com/#{REPO}/actions/runs/9001") == 1
+    log.include?("#{REPO}#1 built: https://github.com/#{REPO}/pull/1")
+    log.include?("#{REPO}#2 failed: https://github.com/#{REPO}/issues/2#issuecomment-1002")
+    log.include?("::endgroup::")
+    log.include?("#{REPO}#4 blocked until #{REPO}#2 is resolved")
+    T.must(log.index("::group::wave 1/2 — 2 children")) < T.must(log.index("::endgroup::"))
+
+    Cleanup
+    nil
+  end
+
+  test "every checklist publish also lands on the run page's step summary, latest wins (ai-flow#128)" do
+    Given "a step summary file and one child"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [sub_issue(1, "Server API", "Build the API.\n")])
+    dir = Dir.mktmpdir
+    path = File.join(dir, "summary.md")
+
+    When "orchestrating"
+    orchestrate(github, summary_path: path)
+    summary = File.read(path)
+
+    Then "the summary is the final checklist, once — not every intermediate one appended"
+    summary.include?("✅ **/build --split**")
+    summary.scan("**/build --split**").length == 1
+    summary.include?("[x] #{REPO}#1 Server API — https://github.com/#{REPO}/pull/1")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "a failed child blocks its dependents like any undrivable node; the rest of the plan proceeds" do
