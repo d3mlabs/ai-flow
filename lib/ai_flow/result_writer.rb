@@ -17,6 +17,9 @@ module AiFlow
   class ResultWriter
     extend T::Sig
 
+    # The footer's run link, as #footer writes it and .run_url_of reads it.
+    FOOTER_RUN_LINK = T.let(%r{⚙️ \[workflow run\]\((\S+)\)}, Regexp)
+
     # @param github [AiFlow::GitHub]
     # @param agent [AiFlow::Agent, nil] source of truth for the models the
     #   run actually used; nil (e.g. in tests) leaves the footer run-link-only
@@ -96,6 +99,17 @@ module AiFlow
         return nil if models.empty?
 
         "model: #{models.values.flatten.uniq.map { |selection| "`#{model_label(selection)}`" }.join(", ")}"
+      end
+
+      # The run the footer in a rendered comment points at — the inverse
+      # of #footer, kept beside it so the shape has one owner. The
+      # orchestrator reads it off each child's panel (ai-flow#128).
+      #
+      # @param body [String] a command comment as rendered
+      # @return [String, nil] nil before the dispatcher posted its panel
+      sig { params(body: String).returns(T.nilable(String)) }
+      def run_url_of(body)
+        body[FOOTER_RUN_LINK, 1]
       end
 
       private
