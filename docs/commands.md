@@ -296,8 +296,10 @@ a child command on that sub-issue, as the ai-flow App:
 
 Each child is an ordinary `/build` run — dispatched by the same workflow,
 in the sub-issue's own repo (cross-repo sub-issues reach their own repo's
-runners, so that repo must be in the `ai-flow` runner group), on whatever
-`ai-build` slots that repo sees. The orchestrator job runs on the
+runners — repo-scoped, or an org group that selects it), on whatever
+`ai-build` slots that repo sees. The orchestrator pool's group is its own
+(`ai-orchestrator`, open to every repo), never the agent slots' `ai-flow`
+group, whose selection is each repo's build concurrency. The orchestrator job runs on the
 `ai-orchestrator` pool and polls the children's comments: every issue-mode
 `/build` panel ends in a hidden outcome trailer (`<!-- ai-flow:outcome
 kind=… -->`: `pr_opened` with the PR urls, `nothing_to_build`, `busy`,

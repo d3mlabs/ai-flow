@@ -305,8 +305,9 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    `/build --split` fans each wave out as one `/build` run per sub-issue
    (comments the App posts, dispatched like a human's, routed to
    `ai-build` in the sub-issue's own repo — so every build slot a host
-   has goes to children, and a cross-repo sub-issue needs its repo in the
-   `ai-flow` runner group). The orchestrator itself is API calls and sleep
+   has goes to children, on whatever `ai-build` runners that repo can see:
+   its own repo-scoped ones, or an org group that selects it). The
+   orchestrator itself is API calls and sleep
    for the plan's whole critical path, so it routes to **`ai-orchestrator`**
    — a pool for an always-on thin box, many slots per host, no agent, no
    agent user, no workspace; what it needs is what every dev runner host
@@ -317,8 +318,12 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    runner to pick up this job…* — the same lines whether the runners are
    busy, offline, in a group that does not select the repo, or never
    enrolled — and cancels after 24 hours. Check the org's Runners page for
-   an Idle runner carrying the label in the `ai-flow` group the first time
-   ([plans#53](https://github.com/d3mlabs/plans/issues/53)).
+   an Idle runner carrying the label in the `ai-orchestrator` group the
+   first time ([plans#53](https://github.com/d3mlabs/plans/issues/53)).
+   That group is the pool's own, open to every repo in the org (dev
+   creates it; [dev#495](https://github.com/d3mlabs/dev/issues/495)) —
+   unlike the `ai-flow` group of the agent slots, whose selected repos are
+   each repo's build concurrency on a host and are admitted deliberately.
 4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
   and make sure it — plus `dev` and shadowenv — is on the runner
    service's PATH. Ruby itself and the dispatcher's gems are not
