@@ -17,8 +17,10 @@ module AiFlow
   class ResultWriter
     extend T::Sig
 
-    # The footer's run link, as #footer writes it and .run_url_of reads it.
-    FOOTER_RUN_LINK = T.let(%r{⚙️ \[workflow run\]\((\S+)\)}, Regexp)
+    # The two places a command comment names its run — the ⏳ running line
+    # while the dispatcher works (.running_line), the ⚙️ footer once it has
+    # reported (#footer) — and the one reader of both (.run_url_of).
+    RUN_LINK = T.let(%r{(?:⏳ ai-flow is running — \[follow the run\]|⚙️ \[workflow run\])\((\S+)\)}, Regexp)
 
     # @param github [AiFlow::GitHub]
     # @param agent [AiFlow::Agent, nil] source of truth for the models the
@@ -101,15 +103,27 @@ module AiFlow
         "model: #{models.values.flatten.uniq.map { |selection| "`#{model_label(selection)}`" }.join(", ")}"
       end
 
-      # The run the footer in a rendered comment points at — the inverse
-      # of #footer, kept beside it so the shape has one owner. The
-      # orchestrator reads it off each child's panel (ai-flow#128).
+      # The ⏳ status the dispatcher writes on the command comment while
+      # it runs; the models note is appended after it.
+      #
+      # @param run_url [String]
+      # @return [String]
+      sig { params(run_url: String).returns(String) }
+      def running_line(run_url)
+        "⏳ ai-flow is running — [follow the run](#{run_url})"
+      end
+
+      # The run a command comment names — the ⏳ running line from the
+      # dispatcher's first write, the ⚙️ footer from its last — the inverse
+      # of .running_line and #footer, beside them so the shapes have one
+      # owner. The orchestrator reads it off each child's comment
+      # (ai-flow#128, #134).
       #
       # @param body [String] a command comment as rendered
-      # @return [String, nil] nil before the dispatcher posted its panel
+      # @return [String, nil] nil before the dispatcher wrote anything
       sig { params(body: String).returns(T.nilable(String)) }
       def run_url_of(body)
-        body[FOOTER_RUN_LINK, 1]
+        body[RUN_LINK, 1]
       end
 
       private
