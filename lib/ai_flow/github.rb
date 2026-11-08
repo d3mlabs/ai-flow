@@ -154,6 +154,23 @@ module AiFlow
       out.empty? ? nil : JSON.parse(out)
     end
 
+    # Every element of a list endpoint, across pages. One page is 30 by
+    # default and a plan's sub-issues grow past it (ai-flow#130); gh walks
+    # the Link headers (--paginate) and --slurp wraps the pages in one
+    # array so the output stays one JSON document.
+    #
+    # @param path [String] the endpoint, without a per_page parameter
+    # @return [Array<Hash>] the pages, flattened, in order
+    sig { params(path: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+    def api_list(path)
+      separator = path.include?("?") ? "&" : "?"
+      out, err, ok = @executor.capture("gh", "api", "--paginate", "--slurp", "#{path}#{separator}per_page=100")
+      raise Error, "gh api #{path} failed: #{err.strip}" unless ok
+      return [] if out.empty?
+
+      T.cast(JSON.parse(out), T::Array[T::Array[T::Hash[String, T.untyped]]]).flatten(1)
+    end
+
     # @param query [String] GraphQL query/mutation with $variables
     # @param variables [Hash]
     # @return [Hash] the "data" object
@@ -360,8 +377,7 @@ module AiFlow
     # @return [Array<Issue>] the issue's native sub-issues
     sig { params(owner_repo: String, number: Integer).returns(T::Array[Issue]) }
     def sub_issues(owner_repo, number)
-      list = api("repos/#{owner_repo}/issues/#{number}/sub_issues") || []
-      list.map { |data| to_issue(data) }
+      api_list("repos/#{owner_repo}/issues/#{number}/sub_issues").map { |data| to_issue(data) }
     end
 
     # Attach an existing issue as a sub-issue of the parent (native sub-issue
