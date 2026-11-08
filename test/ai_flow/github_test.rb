@@ -48,6 +48,27 @@ class AiFlow::GitHubTest < Minitest::Test
     nil
   end
 
+  test "sub_issues reads every page — a plan can grow past one (ai-flow#130)" do
+    Given "a parent whose sub-issues span two pages, the integration issue on the second"
+    issue = lambda do |number, title|
+      { "number" => number, "title" => title, "body" => "", "html_url" => "u#{number}", "state" => "open",
+        "repository_url" => "https://api.github.com/repos/d3mlabs/demo" }
+    end
+    pages = [[issue.call(1, "A"), issue.call(2, "B")], [issue.call(3, "Integration: Parent")]]
+    executor = CannedExecutor.new(out: JSON.generate(pages))
+    github = AiFlow::GitHub.new(executor: executor)
+
+    When "listing the sub-issues"
+    numbers = github.sub_issues("d3mlabs/demo", 7).map(&:number)
+
+    Then "gh paginated and slurped at the largest page, and every page's issues came back in order"
+    executor.command_lines.first == "gh api --paginate --slurp repos/d3mlabs/demo/issues/7/sub_issues?per_page=100"
+    numbers == [1, 2, 3]
+
+    Cleanup
+    nil
+  end
+
   test "review_comments hits the event-sourced review endpoint and returns raw nodes" do
     Given "one comment on the review"
     node = { "id" => 9, "body" => "/ask why?", "user" => { "login" => "jpduchesne" } }
