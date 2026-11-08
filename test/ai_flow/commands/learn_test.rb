@@ -594,6 +594,34 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a PROMOTE item that is not a slug is named as malformed and ignored; the slugs beside it still route (ai-flow#132)" do
+    Given "a pass whose final text ran straight on from the PROMOTE line (a later message with no newline), plus a real slug"
+    dir = org_configured_workdir(Dir.mktmpdir("ai-flow-learn-test-"))
+    github = FakeGitHub.new
+    executor = CaptureSnapshotExecutor.new(staged_queue: [
+      ["index.md", "skills/http-retries/SKILL.md"],
+      [INDEX, ".cursor/skills/learnings/factory-x/SKILL.md"],
+    ])
+    agent = FakeAgent.new(["drafted\nPROMOTE: http-retries, factory-xThat notification is the earlier background run of the suite", "placed"]) do |_prompt, workdir|
+      write_learning(workdir, "http-retries")
+      write_learning(workdir, "factory-x", index_domain: "design")
+    end
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn retries", agent: agent, workdir: dir)
+    panel = github.comment_edits.fetch(55)
+
+    Then "http-retries routed; the run-on item is reported as not a slug, verbatim but short, and nothing was invented from it"
+    github.calls.include?([:create_pull_request, "d3mlabs/knowledge", "ai/learn-promote-demo-http-retries", "main"])
+    panel.include?("🌐 `http-retries` → org-tier proposal on d3mlabs/knowledge")
+    panel.include?("ℹ️ the PROMOTE line carried `factory-xThat notification is the earlier background run of the…` — not a slug (lowercase words joined by hyphens); ignored.")
+    !panel.include?("drafted no")
+    !panel.include?("factory-xThatnotification")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a failed org routing keeps the lesson in the repo proposal (best-effort per slug)" do
     Given "a knowledge-repo config and a routing whose knowledge-repo clone fails"
     dir = org_configured_workdir(Dir.mktmpdir("ai-flow-learn-test-"))

@@ -56,6 +56,22 @@ module AiFlow
       # through several.
       PROMOTE_LINE = T.let(/^PROMOTE:\s*(.+?)\s*$/, Regexp)
 
+      # What one PROMOTE item must be: a learning slug — lowercase words
+      # joined by hyphens, the folder name under SKILLS_DIR. Anything else
+      # on the line (a later message run straight on, prose) is named as
+      # malformed and ignored, never squeezed into a slug (ai-flow#132).
+      SLUG = T.let(/\A[a-z0-9]+(?:-[a-z0-9]+)*\z/, Regexp)
+
+      # How much of a malformed item the panel shows.
+      MALFORMED_ITEM_WIDTH = 64
+
+      # The PROMOTE line, parsed: the slugs to route and the items that
+      # were not slugs.
+      class PromoteLine < T::Struct
+        const :slugs, T::Array[String]
+        const :malformed, T::Array[String]
+      end
+
       # The root-cause gate's escape hatch: a pass that finds a fixable
       # cause declares `FIX: <proposal>` instead of (or alongside) drafting
       # a coping rule. Free text, one proposal per line, every line relayed
@@ -905,32 +921,46 @@ module AiFlow
       # @return [Array<SlugRouting>] one routing per declared slug
       sig { params(worktree: String, agent_output: String).returns(T::Array[SlugRouting]) }
       def route_promotions(worktree, agent_output)
-        slugs = declared_promotions(agent_output)
-        return [] if slugs.empty?
+        line = declared_promotions(agent_output)
+        malformed = line.malformed.map { |item| malformed_routing(item) }
+        return malformed if line.slugs.empty?
 
         knowledge_repo = RepoConfig.load(@workdir).knowledge_repo
         unless knowledge_repo
-          return slugs.map do |slug|
+          return malformed + line.slugs.map do |slug|
             note = "ℹ️ `#{slug}` was judged org-tier, but no `knowledge_repo:` is configured in " \
               "`#{RepoConfig::PATH}` — kept repo-local."
             SlugRouting.new(slug: slug, note: note, routed: false)
           end
         end
 
-        slugs.map { |slug| route_promotion(worktree, slug, knowledge_repo) }
+        malformed + line.slugs.map { |slug| route_promotion(worktree, slug, knowledge_repo) }
       end
 
-      # @return [Array<String>] slugs the pass declared on its PROMOTE line
-      sig { params(agent_output: String).returns(T::Array[String]) }
+      # @param agent_output [String] the pass's result
+      # @return [PromoteLine] the slugs the pass declared on its PROMOTE
+      #   line, and the items that were not slugs; both empty without one
+      sig { params(agent_output: String).returns(PromoteLine) }
       def declared_promotions(agent_output)
         match = agent_output.lines.reverse_each.filter_map { |line| PROMOTE_LINE.match(line) }.first
-        return [] unless match
+        return PromoteLine.new(slugs: [], malformed: []) unless match
 
         # T.must: the group is unconditional in PROMOTE_LINE, so a match
         # always carries it.
-        T.must(match[1]).split(",")
-          .map { |slug| slug.gsub(/[`\s]/, "") }
-          .reject { |slug| slug.empty? || slug == "(none)" }
+        items = T.must(match[1]).split(",")
+          .map { |item| item.delete("`").strip }
+          .reject { |item| item.empty? || item == "(none)" }
+        slugs, malformed = items.partition { |item| SLUG.match?(item) }
+        PromoteLine.new(slugs: slugs, malformed: malformed)
+      end
+
+      # @param item [String] a PROMOTE item that is not a slug
+      # @return [SlugRouting] its panel note; nothing routed
+      sig { params(item: String).returns(SlugRouting) }
+      def malformed_routing(item)
+        shown = item.length > MALFORMED_ITEM_WIDTH ? "#{T.must(item[0, MALFORMED_ITEM_WIDTH]).rstrip}…" : item
+        note = "ℹ️ the PROMOTE line carried `#{shown}` — not a slug (lowercase words joined by hyphens); ignored."
+        SlugRouting.new(slug: item, note: note, routed: false)
       end
 
       # @param worktree [String]
