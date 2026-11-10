@@ -132,14 +132,18 @@ module AiFlow
           end
 
           sig { override.returns(T::Array[Object]) }
-          def equality_members = [@kind, @pr_urls]
+          def equality_members
+            [@kind, @pr_urls]
+          end
 
           class << self
             extend T::Sig
 
             # @return [Trailer] the dispatcher's stamp on a failed /build
             sig { returns(Trailer) }
-            def failed = new(kind: Kind::Failed)
+            def failed
+              new(kind: Kind::Failed)
+            end
 
             # @param body [String] a command comment's body, as fetched
             # @return [Trailer, nil] nil when the body carries no trailer —
@@ -195,10 +199,14 @@ module AiFlow
 
           # @return [Array<String>] the created PRs' html urls, primary first
           sig { returns(T::Array[String]) }
-          def urls = prs.map(&:html_url)
+          def urls
+            prs.map(&:html_url)
+          end
 
           sig { override.returns(Trailer) }
-          def trailer = Trailer.new(kind: Trailer::Kind::PrOpened, pr_urls: urls)
+          def trailer
+            Trailer.new(kind: Trailer::Kind::PrOpened, pr_urls: urls)
+          end
         end
 
         # The agent changed nothing committable — possibly only workflow
@@ -207,7 +215,9 @@ module AiFlow
           extend T::Sig
 
           sig { override.returns(Trailer) }
-          def trailer = Trailer.new(kind: Trailer::Kind::NothingToBuild)
+          def trailer
+            Trailer.new(kind: Trailer::Kind::NothingToBuild)
+          end
         end
 
         # The repo's persistent workspace is held by another run (or an
@@ -231,7 +241,9 @@ module AiFlow
           end
 
           sig { override.returns(Trailer) }
-          def trailer = Trailer.new(kind: Trailer::Kind::Busy)
+          def trailer
+            Trailer.new(kind: Trailer::Kind::Busy)
+          end
         end
       end
 

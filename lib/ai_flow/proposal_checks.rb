@@ -113,7 +113,9 @@ module AiFlow
         #
         # @return [Array<String>] the changed slugs that stayed silent
         sig { returns(T::Array[String]) }
-        def missing = new_slugs - fired
+        def missing
+          new_slugs - fired
+        end
       end
 
       # No skill files added or edited — a structure-only diff (index

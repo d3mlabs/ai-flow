@@ -118,7 +118,9 @@ module AiFlow
 
         # @return [Boolean] a statement was dictated (vs a bare sweep)
         sig { returns(T::Boolean) }
-        def dictated? = @dictated
+        def dictated?
+          @dictated
+        end
       end
 
       # The built surface /build captures learnings from: the branch is the
@@ -181,7 +183,9 @@ module AiFlow
 
           # @return [Boolean] the pass refined an existing draft (vs opened one)
           sig { returns(T::Boolean) }
-          def refined? = @refined
+          def refined?
+            @refined
+          end
         end
       end
 
@@ -203,7 +207,9 @@ module AiFlow
 
         # @return [Boolean] the pass refined an existing draft (vs opened one)
         sig { returns(T::Boolean) }
-        def refined? = @refined
+        def refined?
+          @refined
+        end
       end
 
       # The paired repo-local removal's outcome. Best-effort by contract —

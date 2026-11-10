@@ -132,7 +132,9 @@ module AiFlow
 
     # @return [Boolean] line-anchored PR review comment?
     sig { overridable.returns(T::Boolean) }
-    def review_comment? = false
+    def review_comment?
+      false
+    end
 
     # A review summary supports neither reactions nor in-place edits (no
     # API for either), so the 👀/⏳/result flow rides a bot-owned PR
@@ -140,7 +142,9 @@ module AiFlow
     #
     # @return [Boolean] a submitted review's summary?
     sig { overridable.returns(T::Boolean) }
-    def review_summary? = false
+    def review_summary?
+      false
+    end
 
     # Permission gate: owners/members/collaborators may drive the agent —
     # and so may this App itself, whose only command comments are the
@@ -233,7 +237,9 @@ module AiFlow
       end
 
       sig { override.returns(T::Boolean) }
-      def pull_request? = @pull_request
+      def pull_request?
+        @pull_request
+      end
     end
 
     # A line-anchored PR review comment: always carries the diff anchor and
@@ -266,10 +272,14 @@ module AiFlow
       end
 
       sig { override.returns(T::Boolean) }
-      def pull_request? = true
+      def pull_request?
+        true
+      end
 
       sig { override.returns(T::Boolean) }
-      def review_comment? = true
+      def review_comment?
+        true
+      end
     end
 
     # A submitted review's summary body: on a PR (head branch present) but
@@ -291,10 +301,14 @@ module AiFlow
       end
 
       sig { override.returns(T::Boolean) }
-      def pull_request? = true
+      def pull_request?
+        true
+      end
 
       sig { override.returns(T::Boolean) }
-      def review_summary? = true
+      def review_summary?
+        true
+      end
 
       # Synthesize the ReviewComment context a comment of this review would
       # have arrived as, had its own webhook event dispatched. The review-unit

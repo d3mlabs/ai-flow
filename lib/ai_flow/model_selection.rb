@@ -36,7 +36,9 @@ module AiFlow
       end
 
       sig { override.returns(T::Array[Object]) }
-      def equality_members = [@handle]
+      def equality_members
+        [@handle]
+      end
     end
 
     # No policy resolved anywhere in the chain — the run passes no --model
@@ -48,7 +50,9 @@ module AiFlow
 
       # Stateless: memberwise equality over no members is class identity.
       sig { override.returns(T::Array[Object]) }
-      def equality_members = []
+      def equality_members
+        []
+      end
     end
   end
 end

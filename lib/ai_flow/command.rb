@@ -35,7 +35,9 @@ module AiFlow
 
     # @return [Integer] the class's hash, matching class-identity equality
     sig { override.returns(Integer) }
-    def hash = self.class.hash
+    def hash
+      self.class.hash
+    end
 
     # Answer a question on the thread; no working-tree changes.
     class Ask

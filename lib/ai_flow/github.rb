@@ -37,7 +37,9 @@ module AiFlow
 
       # @return [Boolean] whether the issue is open
       sig { returns(T::Boolean) }
-      def open? = state == "open"
+      def open?
+        state == "open"
+      end
     end
 
     # One conversation comment (issues and PR conversations share the REST
