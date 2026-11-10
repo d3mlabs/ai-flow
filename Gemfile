@@ -8,9 +8,7 @@ gem "sorbet-runtime"
 group :development do
   gem "sorbet"
   gem "tapioca", require: false
-  gem "rubocop", require: false
-  gem "rubocop-shopify", require: false
-  gem "rubocop-sorbet", require: false
+  gem "rubocop-d3mlabs", "~> 1.0", require: false
 end
 
 group :test do

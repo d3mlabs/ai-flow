@@ -24,10 +24,14 @@ class AiFlow::ValueEqualityTest < Minitest::Test
 
     # Populates the memo, mutating internal state that must never
     # participate in equality.
-    def rendered = @render_memo ||= "(#{row},#{column})"
+    def rendered
+      @render_memo ||= "(#{row},#{column})"
+    end
 
     sig { override.returns(T::Array[T.untyped]) }
-    def equality_members = [row, column]
+    def equality_members
+      [row, column]
+    end
   end
 
   # Same member list as Coordinate, different class: proves the derive
@@ -44,7 +48,9 @@ class AiFlow::ValueEqualityTest < Minitest::Test
     attr_reader :row, :column
 
     sig { override.returns(T::Array[T.untyped]) }
-    def equality_members = [row, column]
+    def equality_members
+      [row, column]
+    end
   end
 
   test "a freeloading includer fails loudly instead of inheriting Object identity" do

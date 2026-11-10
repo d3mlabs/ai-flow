@@ -60,7 +60,9 @@ module AiFlow
 
       # @return [Array<Object>]
       sig { override.returns(T::Array[Object]) }
-      def equality_members = [@subject, @reason, @channel]
+      def equality_members
+        [@subject, @reason, @channel]
+      end
     end
 
     # The declared channel's line form, anchored to the line start so prose

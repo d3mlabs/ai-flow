@@ -48,7 +48,9 @@ module AiFlow
     # @param other [BasicObject]
     # @return [Boolean]
     sig { overridable.params(other: BasicObject).returns(T::Boolean) }
-    def eql?(other) = self == other
+    def eql?(other)
+      self == other
+    end
 
     # The derive(PartialEq) analog: opt in explicitly, enumerate the
     # members, and == and hash both generate from that one list — so they
@@ -84,7 +86,9 @@ module AiFlow
       # @return [Integer] combines the class so distinct memberless types
       #   do not collide as Hash keys
       sig { override.returns(Integer) }
-      def hash = [self.class, *equality_members].hash
+      def hash
+        [self.class, *equality_members].hash
+      end
 
       # The members that constitute identity — effectively the struct
       # declaration a compile-time derive would read. Elements are Object
