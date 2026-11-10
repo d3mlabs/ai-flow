@@ -71,9 +71,12 @@ module AiFlow
     READONLY_TOOL_KINDS = T.let(%w[read search fetch think].freeze, T::Array[String])
 
     # @param executor [AiFlow::Executor]
-    sig { params(executor: Executor).void }
-    def initialize(executor: Executor.new)
+    # @param path [String] the PATH a bare agent-CLI name resolves through
+    #   (the dispatcher's own, by default) — see #binary
+    sig { params(executor: Executor, path: String).void }
+    def initialize(executor: Executor.new, path: ENV.fetch("PATH", ""))
       @executor = executor
+      @path = path
       @models_used = T.let({}, T::Hash[Command, T::Array[ModelSelection]])
       @knowledge_applied = T.let([], T::Array[String])
       @wants = T.let([], T::Array[Denials::Want])
@@ -517,12 +520,23 @@ module AiFlow
 
     # The agent CLI to spawn: `cursor-agent`, the one binary the cursor-cli
     # cask installs (a fresh runner slot has nothing else on its PATH —
-    # #118), unless AI_FLOW_AGENT_BIN names another.
+    # #118), unless AI_FLOW_AGENT_BIN names another. A bare name is
+    # resolved through the dispatcher's PATH here, because the spawn goes
+    # through sudo (AgentIsolation#spawn_prefix) and sudo looks the
+    # command up through sudoers' secure_path, not the caller's PATH —
+    # on a Linux host whose CLI lives under a Linuxbrew prefix that is
+    # `sudo: 'cursor-agent': command not found` (#138). A name no
+    # PATH entry holds stays bare so the spawn's own error names it.
     #
     # @return [String]
     sig { returns(String) }
     def binary
-      ENV.fetch("AI_FLOW_AGENT_BIN", "cursor-agent")
+      name = ENV.fetch("AI_FLOW_AGENT_BIN", "cursor-agent")
+      return name if name.include?(File::SEPARATOR)
+
+      found = @path.split(File::PATH_SEPARATOR).map { |dir| File.join(dir, name) }
+        .find { |candidate| File.file?(candidate) && File.executable?(candidate) }
+      found || name
     end
   end
 end
