@@ -305,12 +305,12 @@ class AiFlow::AgentTest < Minitest::Test
   end
 
   test "the launch speaks ACP and the message chunks are the answer" do
-    Given "a server scripted with an answer"
+    Given "a server scripted with an answer, and a PATH holding no agent CLI"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
     executor = AcpFakeExecutor.new(server: FakeAcpServer.new(result_text: "THE ANSWER"))
 
     When "launching"
-    answer = AiFlow::Agent.new(executor: executor).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+    answer = AiFlow::Agent.new(executor: executor, path: dir).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
 
     Then "the accumulated chunks are the answer and the argv is the ACP subcommand of the binary the cask ships"
     answer == "THE ANSWER"
@@ -321,9 +321,53 @@ class AiFlow::AgentTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # The Linux box (plans#63): sudo resolves the command it is given
+  # through sudoers' secure_path, which has no Linuxbrew bin, so a bare
+  # `cursor-agent` died as `sudo: 'cursor-agent': command not found` while
+  # the dispatcher's own PATH had it all along (#138). The dispatcher resolves
+  # the name through its PATH before sudo sees it — a path, never a
+  # lookup sudo performs.
+  test "a bare binary name is resolved through the dispatcher's PATH into the path sudo will run" do
+    Given "a PATH whose second entry holds an executable cursor-agent"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    empty = File.join(dir, "empty")
+    bin = File.join(dir, "linuxbrew-bin")
+    FileUtils.mkdir_p([empty, bin])
+    cli = File.join(bin, "cursor-agent")
+    File.write(cli, "#!/bin/sh\n")
+    File.chmod(0o755, cli)
+    executor = AcpFakeExecutor.new
+
+    When "launching with that PATH"
+    AiFlow::Agent.new(executor: executor, path: [empty, bin].join(File::PATH_SEPARATOR))
+      .launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the argv names the resolved path"
+    executor.captures == [[cli, "acp"]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a name no PATH entry resolves stays bare — the spawn's own error says what is missing" do
+    Given "a PATH with no cursor-agent on it"
+    dir = Dir.mktmpdir("ai-flow-agent-test-")
+    executor = AcpFakeExecutor.new
+
+    When "launching with that PATH"
+    AiFlow::Agent.new(executor: executor, path: dir).launch(prompt: "p", workdir: dir, command: AiFlow::Command::Ask.new)
+
+    Then "the bare name is what spawns"
+    executor.captures == [["cursor-agent", "acp"]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   # The cursor-cli cask installs exactly one binary, `cursor-agent`; a
   # fresh runner slot has nothing else on its PATH (#118). The env key
-  # stays as the override for a host that keeps the CLI elsewhere.
+  # stays as the override for a host that keeps the CLI elsewhere, and a
+  # path is taken as given.
   test "AI_FLOW_AGENT_BIN overrides the binary; unset, it is cursor-agent" do
     Given "a server, and the override set"
     dir = Dir.mktmpdir("ai-flow-agent-test-")
