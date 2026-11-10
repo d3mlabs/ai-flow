@@ -484,8 +484,35 @@ many runners a repo can reach on a host is the runner layer's decision
 lock stays as the backstop for the overlap that layer cannot see.
 
 The workspace root is durable by design: `AI_FLOW_WORKSPACE_ROOT`, default
-`/Users/Shared/ai-flow/workspaces` under isolation — never `/tmp`, which
-macOS purges on reboot and after ~3 days without access.
+under isolation the platform's durable shared root —
+`/Users/Shared/ai-flow/workspaces` on a Mac, `/var/lib/dev/ai-flow/workspaces`
+on a Linux dev host — never `/tmp`, which macOS purges on reboot and after
+~3 days without access and a Linux tmpfs empties on reboot.
+
+## Agent hosts
+
+The OS-user split (plans#26, `AgentIsolation`) has one mechanism and two
+platforms. dev converges the host facts (`dev runner register`) and hands
+ai-flow what it needs through the runner service env; nothing below is
+read from the host directly.
+
+| | Mac (workstation, cellbound-3d's lane) | Linux dev host (the box, plans#59) |
+|---|---|---|
+| Runner user (the service's, the sudoers grantor) | the operator | dev's `runner` (machine identity, dev#310) |
+| Agent user | `ai-agent`, hidden, non-admin | `ai-agent`, no sudo, no password |
+| Shared group (`AI_FLOW_AGENT_GROUP`) | `dev` (`ai` on a Mac registered before plans#59, until its next `register`) | `dev` — the data root's group |
+| Service env carrier | LaunchAgent plist | systemd unit drop-in (`UMask=0002` + `Environment=`) |
+| Workspace base (fresh) / persistent root | `/tmp` / `/Users/Shared/ai-flow/workspaces` | `/tmp` / `/var/lib/dev/ai-flow/workspaces` |
+| Shared data root (category-4/5 denials) | `/Users/Shared/dev` | `/var/lib/dev` |
+| Agent CLI | `cursor-cli` cask, the operator's brew prefix | `cursor-cli` cask, the runner user's Linuxbrew prefix |
+| Container engine for the agent | its own colima VM, when the repo pins an `image` | none — the runner user's docker socket is root-equivalent and never crosses the user line; an image-built repo's agent runs *inside* the project's container (plans#61) |
+
+The spawn is identical on both: `sudo -n -H -u <agent> --preserve-env=<allowlist> --`
+under a NOPASSWD SETENV rule, toolchain writes redirected into the agent's
+home keyed by slot, the fresh workspace leaf `chgrp`'d to the shared group
+and `2770`. What differs is who the grantor is and where durable paths
+live — facts dev owns, named above so a reader can tell which host a log
+line came from.
 
 ## MCP policy: per-identity, per-workdir
 

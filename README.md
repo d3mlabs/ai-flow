@@ -324,9 +324,12 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    creates it; [dev#495](https://github.com/d3mlabs/dev/issues/495)) —
    unlike the `ai-flow` group of the agent slots, whose selected repos are
    each repo's build concurrency on a host and are admitted deliberately.
-4. Install the Cursor `agent` CLI on each runner (`curl https://cursor.com/install -fsS | bash`)
-  and make sure it — plus `dev` and shadowenv — is on the runner
-   service's PATH. Ruby itself and the dispatcher's gems are not
+4. Install the Cursor `agent` CLI on each runner and make sure it — plus
+   `dev` and shadowenv — is on the runner service's PATH. On a dev-managed
+   host the deployment Brewfile's `cursor-cli` cask does it on both
+   platforms (`dev up` in the ai-flow checkout; the upstream cask carries
+   Linux builds, so the binary lands in the Linuxbrew prefix like any
+   other); elsewhere, `curl https://cursor.com/install -fsS | bash`. Ruby itself and the dispatcher's gems are not
    prerequisites: the workflow runs `dev deps install` in the ai-flow
    checkout, which provisions the pinned Ruby (a brew bottle from the
    d3mlabs tap's `ruby@X.Y.Z` family, dev ≥ 0.3) and the locked gem set
@@ -342,11 +345,26 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    runner service's environment and the dispatcher re-executes the agent CLI
    via a non-interactive sudo as that user (plans#26) — the agent's `--force`
    shell then cannot read the runner user's home, gh auth state, or process
-   env. The host needs the agent user, a shared group (`AI_FLOW_AGENT_GROUP`,
-   default `ai`, spanning both users), and one sudoers rule with the `SETENV`
-   tag; on dev-managed boxes `dev runner register` converges all of it and
-   writes the variable into the service env. Unset means dispatcher and agent
-   share one user — today's behavior, and what local dev and tests use.
+   env. The host needs the agent user, a shared group spanning both users
+   (`AI_FLOW_AGENT_GROUP` — the data root's group, `dev` on every
+   dev-managed host; `ai` is assumed only when the variable is absent, a
+   Mac registered before dev wrote it), and one sudoers rule with the
+   `SETENV` tag from the *runner user* (the operator on a Mac, dev's
+   `runner` on a Linux box) to the agent. An agent host is a Mac or a
+   Linux dev host ([plans#59](https://github.com/d3mlabs/plans/issues/59)):
+   `dev runner register` converges all of it on either and writes the
+   three variables (`AI_FLOW_AGENT_USER`, `AI_FLOW_AGENT_GROUP`,
+   `AI_FLOW_RUNNER_SLOT`) into the service env — a LaunchAgent plist on a
+   Mac, a systemd unit drop-in on Linux. The mechanism here is the same on
+   both (sudo `--preserve-env`, a `/tmp` workspace base, a group-shared
+   leaf; the persistent-workspace root sits under the platform's durable
+   shared root, `/Users/Shared` or `/var/lib/dev`). One asymmetry: a Linux
+   host has no container engine of the agent's own, so an image-built repo
+   (one whose lock pins an `image`) cannot `/build` there as a host-side
+   agent — its agent runs inside the project's container, the subject of
+   [plans#61](https://github.com/d3mlabs/plans/issues/61); the Ruby repos
+   need no engine. Unset means dispatcher and agent share one user —
+   today's behavior, and what local dev and tests use.
 6. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
   model policy (`models.default`, per-command overrides — see
    [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));

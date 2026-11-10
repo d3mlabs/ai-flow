@@ -37,13 +37,34 @@ class AiFlow::AgentIsolationTest < Minitest::Test
     When "reading the isolation config"
     isolation = T.must(AiFlow::AgentIsolation.from_env)
 
-    Then "user comes from env, home from passwd, group defaults to ai"
+    Then "user comes from env, home from passwd, group defaults to the legacy name"
     isolation.user == CURRENT_USER
     isolation.redirect_env.fetch("GEM_HOME") == File.join(T.must(Etc.getpwuid(Process.uid)).dir, ".gem")
+    isolation.group == AiFlow::AgentIsolation::LEGACY_GROUP
 
     Cleanup
     saved_user ? ENV["AI_FLOW_AGENT_USER"] = saved_user : ENV.delete("AI_FLOW_AGENT_USER")
     ENV["AI_FLOW_AGENT_GROUP"] = saved_group if saved_group
+  end
+
+  # plans#59: dev writes the data root's group into the service env on
+  # every host it registers; the legacy default is for a Mac from before.
+  test "from_env takes the group dev wrote into the service env over the legacy default" do
+    Given "the service env naming the agent user and the data root's group"
+    saved_user = ENV["AI_FLOW_AGENT_USER"]
+    saved_group = ENV["AI_FLOW_AGENT_GROUP"]
+    ENV["AI_FLOW_AGENT_USER"] = CURRENT_USER
+    ENV["AI_FLOW_AGENT_GROUP"] = "dev"
+
+    When "reading the isolation config"
+    isolation = T.must(AiFlow::AgentIsolation.from_env)
+
+    Then
+    isolation.group == "dev"
+
+    Cleanup
+    saved_user ? ENV["AI_FLOW_AGENT_USER"] = saved_user : ENV.delete("AI_FLOW_AGENT_USER")
+    saved_group ? ENV["AI_FLOW_AGENT_GROUP"] = saved_group : ENV.delete("AI_FLOW_AGENT_GROUP")
   end
 
   test "a configured agent user that does not exist on the host fails closed" do

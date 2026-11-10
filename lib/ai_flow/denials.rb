@@ -101,12 +101,14 @@ module AiFlow
     WRAPPED_PATH_LINE = /\A\s*(?<path>#{TOUCHED_PATH.source})\s*\z/
 
     # Subjects resolved by design rather than by widening (plans#26 access
-    # categories 4–5): the shared data root (dev's DataRoot::SHARED_ROOT —
-    # cross-repo constant, duplicated knowingly), DDC trees, and sockets /
+    # categories 4–5): the shared data root (dev's DataRoot::SHARED_ROOT on
+    # a Mac, DataRoot::LINUX_ROOT on a Linux dev host — cross-repo
+    # constants, duplicated knowingly), DDC trees, and sockets /
     # container-engine endpoints.
     CATEGORY_NOTE_PATTERNS = T.let(
       [
         %r{\A/Users/Shared/dev(/|\z)},
+        %r{\A/var/lib/dev(/|\z)},
         /\bddc\b/i,
         /\.sock\b/,
         /\bsocket\b/i,
