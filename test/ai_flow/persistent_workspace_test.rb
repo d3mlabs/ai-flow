@@ -214,4 +214,29 @@ class AiFlow::PersistentWorkspaceTest < Minitest::Test
     Cleanup
     nil
   end
+
+  # plans#59: an isolated host's root sits under dev's durable shared root
+  # for the platform — a Mac's /Users/Shared, a Linux dev host's
+  # /var/lib/dev — never /tmp on either.
+  test "the isolated root is the platform's durable shared root — #{host_os}" do
+    Expect
+    AiFlow::PersistentWorkspace.isolated_root(host_os: host_os) == root
+    !root.start_with?("/tmp")
+
+    Where
+    host_os           | root
+    "darwin24.0"      | "/Users/Shared/ai-flow/workspaces"
+    "linux-gnu"       | "/var/lib/dev/ai-flow/workspaces"
+    "linux"           | "/var/lib/dev/ai-flow/workspaces"
+  end
+
+  test "under isolation, root is this platform's isolated root" do
+    Given "an executor with isolation on"
+    executor = RecordingExecutor.new
+    executor.define_singleton_method(:isolation) { AiFlow::AgentIsolation.new(user: "ai-agent", group: "dev", home: "/tmp") }
+    ws = workspace(executor: executor)
+
+    Expect
+    ws.root == AiFlow::PersistentWorkspace.isolated_root
+  end
 end

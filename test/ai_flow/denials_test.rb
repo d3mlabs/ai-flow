@@ -258,6 +258,19 @@ class AiFlow::DenialsTest < Minitest::Test
     lines.none? { |line| line.include?("Brewfile") }
   end
 
+  # plans#59: a Linux agent host's data root is the same by-design subject.
+  test "a Linux data-root path want renders the category-4/5 note, never a widening menu" do
+    Given "a want under /var/lib/dev"
+    want = AiFlow::Denials::Want.new(subject: "/var/lib/dev/cache/x", reason: "warm cache", channel: :declared)
+
+    When "rendering"
+    lines = AiFlow::Denials.render([want])
+
+    Then "the by-design note renders, no menu"
+    lines.any? { |line| line.include?("plans#26") }
+    lines.none? { |line| line.include?("Brewfile") }
+  end
+
   test "a socket want renders the category-4/5 note" do
     Given "a socket want"
     want = AiFlow::Denials::Want.new(subject: "/var/run/docker.sock", reason: "build image", channel: :observed)

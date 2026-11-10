@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "rbconfig"
 
 require "ai_flow/runner_slot"
 
@@ -48,14 +49,37 @@ module AiFlow
     # Overrides the workspace root (ops escape hatch on the runner box).
     ROOT_ENV = "AI_FLOW_WORKSPACE_ROOT"
 
-    # The isolated default. /tmp (the tmpdir base) is deliberately NOT
-    # reused here: macOS purges /tmp on reboot and after ~3 days without
-    # access, which would silently evict the warmth this class exists to
-    # keep. /Users/Shared is the org's durable shared-machine root — world
-    # -traversable like /tmp, so the agent user reaches the group-shared
-    # leaf. (Linux isolated hosts set AI_FLOW_WORKSPACE_ROOT; today's only
-    # persistent-workspace lane is the cb3d Mac.)
-    ISOLATED_ROOT = "/Users/Shared/ai-flow/workspaces"
+    # The isolated defaults, per platform. /tmp (the tmpdir base) is
+    # deliberately NOT reused here: macOS purges /tmp on reboot and after
+    # ~3 days without access, and a Linux /tmp may be a tmpfs that a reboot
+    # empties — either would silently evict the warmth this class exists
+    # to keep. Both roots sit under dev's durable shared-machine root for
+    # the platform (dev's DataRoot — cross-repo literals, duplicated
+    # knowingly, as Denials does): `/Users/Shared` on a Mac, `/var/lib/dev`
+    # on a Linux dev host (plans#59) — world-traversable like /tmp, so the
+    # agent user reaches the group-shared leaf, and on Linux group-writable
+    # for the data root's group, which the dispatcher (the runner user) is
+    # in, so no root is needed to create the first workspace.
+    ISOLATED_ROOTS = T.let(
+      {
+        darwin: "/Users/Shared/ai-flow/workspaces",
+        linux: "/var/lib/dev/ai-flow/workspaces",
+      }.freeze,
+      T::Hash[Symbol, String],
+    )
+
+    class << self
+      extend T::Sig
+
+      # @param host_os [String] RbConfig's host_os (injectable for tests)
+      # @return [String] the isolated root for this platform — a Mac's, or
+      #   the Linux dev host's for anything else (no other platform hosts
+      #   an agent)
+      sig { params(host_os: String).returns(String) }
+      def isolated_root(host_os: RbConfig::CONFIG.fetch("host_os"))
+        ISOLATED_ROOTS.fetch(host_os.include?("darwin") ? :darwin : :linux)
+      end
+    end
 
     # @param repo [String] "owner/repo" whose checkout persists
     # @param job_checkout [String] the runner's own repo checkout — the
@@ -80,7 +104,7 @@ module AiFlow
       override = ENV[ROOT_ENV].to_s.strip
       return override unless override.empty?
 
-      @executor.isolation ? ISOLATED_ROOT : File.join(Dir.home, ".ai-flow", "workspaces")
+      @executor.isolation ? self.class.isolated_root : File.join(Dir.home, ".ai-flow", "workspaces")
     end
 
     # @return [String] the stable checkout path — this slot's

@@ -13,8 +13,16 @@ module AiFlow
   # the toolchain-write redirection into the agent's own home, and the
   # group-share applied to fresh workspaces so both identities can work in
   # them. Opt-in via AI_FLOW_AGENT_USER on runner boxes (written into the
-  # runner service env by `dev runner register`); unset means today's
-  # behavior — dispatcher and agent share one user.
+  # runner service env by `dev runner register` — a LaunchAgent plist on a
+  # Mac, a systemd unit drop-in on a Linux dev host, plans#59); unset means
+  # today's behavior — dispatcher and agent share one user.
+  #
+  # Nothing here is platform-specific in mechanism: sudo with
+  # `--preserve-env=<list>` under a SETENV rule, a world-traversable
+  # workspace base, a group share on the leaf. The platform facts dev
+  # converges differ — who the runner user is (the operator on a Mac,
+  # `runner` on Linux), which group both identities share — and arrive
+  # through the service env, never hardcoded here.
   class AgentIsolation
     extend T::Sig
 
@@ -22,6 +30,14 @@ module AiFlow
     # box was never converged (`dev runner register`), so isolation must
     # fail closed rather than silently run the agent as the dispatcher.
     class UnknownAgentUserError < StandardError; end
+
+    # The group assumed when the service env carries no AI_FLOW_AGENT_GROUP:
+    # the Mac agent bootstrap's original group name. dev writes the
+    # variable on every host it registers today (plans#59 — one group,
+    # `dev`, across hosts), so this default serves only a Mac registered
+    # before that and not re-registered since; a Linux host always has the
+    # variable.
+    LEGACY_GROUP = "ai"
 
     # The env keys that survive sudo's env_reset — exactly what
     # Executor injects (the auth header in GIT_CONFIG slot 0, the
@@ -49,12 +65,18 @@ module AiFlow
     sig { returns(String) }
     attr_reader :user
 
+    # @return [String] the group both identities share — what
+    #   #share_workspace hands fresh workspaces to
+    sig { returns(String) }
+    attr_reader :group
+
     class << self
       extend T::Sig
 
       # @return [AiFlow::AgentIsolation, nil] nil when AI_FLOW_AGENT_USER
-      #   is unset (feature off); group from AI_FLOW_AGENT_GROUP, default
-      #   "ai"; slot from AI_FLOW_RUNNER_SLOT (RunnerSlot), default the first
+      #   is unset (feature off); group from AI_FLOW_AGENT_GROUP (the data
+      #   root's group dev writes), LEGACY_GROUP when absent; slot from
+      #   AI_FLOW_RUNNER_SLOT (RunnerSlot), default the first
       # @raise [UnknownAgentUserError] when the configured user does not
       #   exist
       # @raise [RunnerSlot::InvalidSlotError] when dev's slot record is not a
@@ -65,7 +87,7 @@ module AiFlow
         return nil if user.empty?
 
         group = ENV["AI_FLOW_AGENT_GROUP"].to_s.strip
-        new(user: user, group: group.empty? ? "ai" : group, home: home_of(user), slot: RunnerSlot.from_env)
+        new(user: user, group: group.empty? ? LEGACY_GROUP : group, home: home_of(user), slot: RunnerSlot.from_env)
       end
 
       private
@@ -120,7 +142,9 @@ module AiFlow
     # in an owner-only file under the agent's home instead of the macOS
     # keychain — a hidden, never-logged-in user has no login keychain, and
     # securityd raises its "Keychain Not Found" dialog in the *runner
-    # user's* GUI session (caught live at the plans#36 ceremony).
+    # user's* GUI session (caught live at the plans#36 ceremony). On Linux
+    # the file store is the only one a headless user has anyway; the key
+    # is harmless there.
     #
     # One gem tree per host slot (ai-flow#116): two slots run as this same
     # user at the same time, and two bundlers in one tree race on its
@@ -146,7 +170,8 @@ module AiFlow
     # all git matches against (a linked worktree's common dir under the
     # job checkout needs no entry of its own). The realpath, because git
     # compares the resolved worktree (/private/tmp/... on macOS), not the
-    # spelling the dispatcher created it under.
+    # spelling the dispatcher created it under; on Linux the realpath is
+    # the spelling, and the call is a no-op.
     #
     # @param workspace [String] the checkout the agent spawns in
     # @return [Array(String, String)] a git config key and value
@@ -161,7 +186,13 @@ module AiFlow
     # workspace leaf is worthless when the agent user cannot traverse the
     # parents to reach it (uv_cwd EACCES at agent startup, caught live at
     # the plans#36 ceremony). /tmp is world-traversable on every platform;
-    # the 2770 leaf from #share_workspace stays the actual boundary.
+    # the 2770 leaf from #share_workspace stays the actual boundary. On
+    # Linux the same holds: /tmp's sticky bit governs only who removes the
+    # leaf itself (the dispatcher, which created it), and the runner's
+    # systemd unit (svc.sh's) sets no PrivateTmp, so the agent and the
+    # dispatcher see one /tmp. A tmpfs-backed /tmp bounds a workspace by
+    # RAM — fine for the repos that build on a Linux agent host today,
+    # none of which carries an engine tree in its checkout.
     #
     # @return [String]
     sig { returns(String) }
