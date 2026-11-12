@@ -210,6 +210,26 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     nil
   end
 
+  test "the rubric gates on enforcement: a rule the code now keeps is not a learning on its own" do
+    Given "any capture pass"
+    github = FakeGitHub.new
+    agent = FakeAgent.new(["nothing generalizes"])
+
+    When "learning"
+    run_learn(github: github, executor: RecordingExecutor.new(staged: []), body: "/learn x", agent: agent)
+
+    Then "the prompt asks whether the suite would catch a violation, and reserves learnings for the upstream shape"
+    prompt = agent.prompts.first
+    prompt.include?("ENFORCEMENT GATE: a learning guards what tests cannot.")
+    prompt.include?("would the suite or the typecheck catch it?")
+    prompt.include?("only when the WIDE ANGLE below shows that shape more than once")
+    prompt.index("ENFORCEMENT GATE") > prompt.index("ROOT-CAUSE GATE")
+    prompt.index("ENFORCEMENT GATE") < prompt.index("WIDE ANGLE")
+
+    Cleanup
+    nil
+  end
+
   test "the sweep prompt carries the threads and discussion as evidence" do
     Given "a PR surface with a thread and a comment"
     github = FakeGitHub.new
