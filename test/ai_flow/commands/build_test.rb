@@ -36,9 +36,14 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     # multi-target build. `dev_project` makes every checkout the fake
     # populates (worktree add, gh clone) carry a dev.yml — the provisioning
     # gate reads the real file, so the fake must put one there.
+    # `conflicts` are the unmerged paths a stopped rebase leaves: reported
+    # by the first `--diff-filter=U` listing (before the agent), resolved
+    # (empty) by every later one.
     def initialize(dirty: true, workflows_patch: "", capture_patch: "", capture_staged: [], fail_on: [],
-      clean_dirs: [], dev_project: false)
+      clean_dirs: [], dev_project: false, conflicts: [])
       @dirty = dirty
+      @conflicts = conflicts
+      @conflicts_listed = false
       @workflows_patch = workflows_patch
       @capture_patch = capture_patch
       @capture_staged = capture_staged
@@ -107,6 +112,10 @@ class AiFlow::Commands::BuildTest < Minitest::Test
           end
         elsif argv.take(2) == %w[git rev-parse]
           argv.last == "origin/main" ? "#{BASE_SHA}\n" : "abc1234def5678\n"
+        elsif argv.include?("--diff-filter=U")
+          listed = @conflicts_listed
+          @conflicts_listed = true
+          listed ? "" : @conflicts.map { |path| "#{path}\n" }.join
         else
           ""
         end
@@ -132,6 +141,21 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
       FileUtils.mkdir_p(checkout)
       File.write(File.join(checkout, "dev.yml"), "name: demo\n")
+    end
+  end
+
+  # A stopped rebase whose unmerged paths stay unmerged: the agent cleared
+  # nothing.
+  class UnresolvedRebaseExecutor < RecordingExecutor
+    def initialize(conflicts:)
+      super(fail_on: ["rebase origin/main"], conflicts: conflicts)
+      @unresolved = conflicts
+    end
+
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      return [@unresolved.map { |path| "#{path}\n" }.join, "", true] if argv.include?("--diff-filter=U") && @command_lines.push(argv.join(" "))
+
+      super
     end
   end
 
@@ -858,6 +882,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     executor.command_lines.any? { |line| line.include?("commit -m") && line.include?("ai-flow /build: fix the failing CI") }
     executor.command_lines.include?("git add -A -- :(exclude).ai-flow")
     executor.command_lines.include?("git push")
+    executor.command_lines.none? { |line| line.include?(" rebase ") }
     github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
     github.calls.include?([:reply_to_review_comment, REPO, 7, 91])
     !github.calls.include?([:reply_to_review_comment, REPO, 7, 92])
@@ -866,6 +891,134 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github.comments.first.include?("abc1234")
     github.comment_edits.fetch(55).include?("✅ **/build** — committed")
     github.comment_edits.fetch(55).include?("Fixed CI and the quadratic walk.")
+
+    Cleanup
+    nil
+  end
+
+  test "a CONFLICTING PR is rebased onto its base before the agent runs; a clean rebase pushes --force-with-lease" do
+    Given "a PR GitHub reports as not mergeable, whose rebase onto its base applies cleanly"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    github.seed_pull_request_state(REPO, 7, mergeable: false, base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix merge conflicts", pull_request: true)
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nNothing left to resolve."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build fix merge conflicts", context: context, agent: agent)
+
+    Then "the base was fetched and the head rebased as the bot, before the agent; the push is force-with-lease; the panel says so"
+    lines = executor.command_lines
+    lines.include?("git fetch origin main")
+    rebase = lines.index { |line| line.include?(" rebase origin/main") }
+    !rebase.nil?
+    lines.fetch(rebase).start_with?("git -c user.name=ai-flow[bot]")
+    rebase < lines.index { |line| line.include?("git add -A") }
+    !agent.prompts.first.include?("REBASE IN PROGRESS")
+    lines.include?("git push --force-with-lease")
+    !lines.include?("git push")
+    lines.none? { |line| line.include?("rebase --continue") }
+    github.comment_edits.fetch(55).include?("rebased onto `main`")
+
+    Cleanup
+    nil
+  end
+
+  test "a rebase that stops on conflicts hands the markers to the agent, continues the rebase after it, and pushes --force-with-lease" do
+    Given "a CONFLICTING PR whose rebase stops on one file"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    github.seed_pull_request_state(REPO, 7, mergeable: false, base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix merge conflicts", pull_request: true)
+    executor = RecordingExecutor.new(fail_on: ["rebase origin/main"], conflicts: ["docs/DECISIONS.md"])
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nKept both amendments in landing order."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build fix merge conflicts", context: context, agent: agent)
+
+    Then "the agent is told which files carry markers and the rule; the tooling continues the rebase and force-pushes"
+    prompt = agent.prompts.first
+    prompt.include?("REBASE IN PROGRESS")
+    prompt.include?("docs/DECISIONS.md")
+    prompt.include?("never merge")
+    prompt.include?("do not run `git rebase --continue`")
+    lines = executor.command_lines
+    continue_at = lines.index { |line| line.include?(" rebase --continue") }
+    !continue_at.nil?
+    continue_at > lines.index { |line| line.include?("git add -A") }
+    lines.none? { |line| line.include?("rebase --abort") }
+    lines.include?("git push --force-with-lease")
+    github.comment_edits.fetch(55).include?("rebased onto `main` — 1 conflict resolved (docs/DECISIONS.md)")
+
+    Cleanup
+    nil
+  end
+
+  test "a bare /build on a CONFLICTING PR with nothing else outstanding pushes the clean rebase without an agent" do
+    Given "no instruction, no feedback, a PR GitHub cannot merge, a rebase that applies cleanly"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    github.seed_pull_request_state(REPO, 7, mergeable: false, base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build", pull_request: true)
+    executor = RecordingExecutor.new
+    agent = FakeAgent.new([])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build", context: context, agent: agent)
+
+    Then "no agent ran; the rebased head is force-pushed and the panel says nothing else was outstanding"
+    agent.prompts.empty?
+    executor.command_lines.any? { |line| line.include?(" rebase origin/main") }
+    executor.command_lines.include?("git push --force-with-lease")
+    github.comment_edits.fetch(55).include?("rebased onto `main`")
+    github.comment_edits.fetch(55).include?("Nothing else to address.")
+
+    Cleanup
+    nil
+  end
+
+  test "a rebase the agent left unresolved is aborted, the branch untouched, and the run fails naming the files" do
+    Given "a CONFLICTING PR whose markers the agent did not clear"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    github.seed_pull_request_state(REPO, 7, mergeable: false, base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build", pull_request: true)
+    executor = UnresolvedRebaseExecutor.new(conflicts: ["docs/DECISIONS.md"])
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nCould not decide."])
+
+    When "iterating"
+    error = assert_raises(AiFlow::GitHub::Error) do
+      run_build(github: github, executor: executor, body: "/build", context: context, agent: agent)
+    end
+
+    Then "the rebase is aborted, nothing is pushed, and the error names the file"
+    executor.command_lines.any? { |line| line.include?(" rebase --abort") }
+    executor.command_lines.none? { |line| line.start_with?("git push") }
+    error.message.include?("docs/DECISIONS.md")
+
+    Cleanup
+    nil
+  end
+
+  test "a rebase that stops again on a later commit is aborted and the run says to squash or resolve by hand" do
+    Given "a CONFLICTING PR whose rebase stops twice"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    github.seed_pull_request_state(REPO, 7, mergeable: false, base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build", pull_request: true)
+    executor = RecordingExecutor.new(fail_on: ["rebase origin/main", "rebase --continue"], conflicts: ["docs/DECISIONS.md"])
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nResolved."])
+
+    When "iterating"
+    error = assert_raises(AiFlow::GitHub::Error) do
+      run_build(github: github, executor: executor, body: "/build", context: context, agent: agent)
+    end
+
+    Then "aborted, not pushed, and the message names the way out"
+    executor.command_lines.any? { |line| line.include?(" rebase --abort") }
+    executor.command_lines.none? { |line| line.start_with?("git push") }
+    error.message.include?("stopped again")
 
     Cleanup
     nil
