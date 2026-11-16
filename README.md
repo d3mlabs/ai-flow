@@ -429,7 +429,7 @@ the table below says what ai-flow needs on top in each case.
 
 | | **Private repo** | **Public repo** |
 |---|---|---|
-| **Organization** | Org-scoped slots in a pinned runner group (`dev runner register --org --ai-flow --slots N`), or repo-scoped slots for a repo that wants its own (`dev runner register --ai-flow --repo-scope` from its checkout). | Org-scoped slots in a pinned runner group only. The settings below are required. |
+| **Organization** | Org-scoped slots in a pinned runner group (`dev runner register --org --ai-flow --slots N`), or repo-scoped slots for a repo that wants its own (`dev runner register --ai-flow --slots N` from its checkout). | Org-scoped slots in a pinned runner group only. The settings below are required. |
 | **User account** | Repo-scoped slots (`dev runner register --ai-flow --slots N` from the checkout). A user account has no runner groups; none is needed for a private repo. | Self-hosted runners are not supported. Move the repo into an organization — free for public repos, and nothing else about the setup changes — or wait for hosted-runner mode ([ai-flow#142](https://github.com/d3mlabs/ai-flow/issues/142), not yet available). |
 
 **Organization, private repo.** Org-scoped slots take jobs from every
