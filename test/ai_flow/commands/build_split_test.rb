@@ -17,7 +17,7 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
   # failed. `slow` numbers report nothing on their first read, so the
   # orchestrator has to poll again. The orchestrator never sleeps here:
   # the sleeper records the intervals it was asked for.
-  Children = Struct.new(:no_changes_on, :busy_on, :failed_on, :multi_on, :slow, keyword_init: true) do
+  Children = Struct.new(:no_changes_on, :busy_on, :failed_on, :multi_on, :already_open_on, :slow, keyword_init: true) do
     def trailer_for(number, reads)
       return nil if (slow || []).include?(number) && reads < 2
 
@@ -25,11 +25,13 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
         if (busy_on || []).include?(number) then AiFlow::Commands::Build::Outcome::Trailer::Kind::Busy
         elsif (failed_on || []).include?(number) then AiFlow::Commands::Build::Outcome::Trailer::Kind::Failed
         elsif (no_changes_on || []).include?(number) then AiFlow::Commands::Build::Outcome::Trailer::Kind::NothingToBuild
+        elsif (already_open_on || []).include?(number) then AiFlow::Commands::Build::Outcome::Trailer::Kind::AlreadyOpen
         else AiFlow::Commands::Build::Outcome::Trailer::Kind::PrOpened
         end
       repos = ["d3mlabs/demo"]
       repos << "d3mlabs/other" if (multi_on || []).include?(number)
-      urls = kind == AiFlow::Commands::Build::Outcome::Trailer::Kind::PrOpened ? repos.map { |repo| "https://github.com/#{repo}/pull/#{number}" } : []
+      with_prs = [AiFlow::Commands::Build::Outcome::Trailer::Kind::PrOpened, AiFlow::Commands::Build::Outcome::Trailer::Kind::AlreadyOpen]
+      urls = with_prs.include?(kind) ? repos.map { |repo| "https://github.com/#{repo}/pull/#{number}" } : []
       AiFlow::Commands::Build::Outcome::Trailer.new(kind: kind, pr_urls: urls)
     end
   end
@@ -152,6 +154,29 @@ class AiFlow::Commands::BuildSplitTest < Minitest::Test
     checklist.include?("[!] #{REPO}#3 Wiring — blocked until #{REPO}#1 is resolved")
     checklist.include?("[!] #{REPO}#4 Integration: Parent — blocked until #{REPO}#1 is resolved")
     order == [1, 2]
+
+    Cleanup
+    nil
+  end
+
+  test "a sub-issue whose branch already heads an open PR counts as built with that PR, and its dependents stack on it" do
+    Given "two sub-issues, the first already under review"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent\n")
+    github.seed_sub_issues(REPO, 7, [
+      sub_issue(1, "Server API", "Build the API.\n"),
+      sub_issue(3, "Wiring", "Wire them.\n\nDepends on: #1\n"),
+      sub_issue(4, "Integration: Parent", "Integrate.\n\nDepends on: #1, #3\n"),
+    ])
+
+    When "orchestrating"
+    order, commands = orchestrate(github, children: Children.new(already_open_on: [1]))
+    checklist = github.comment_edits.fetch(55)
+
+    Then "the open PR is the node's PR; the dependent's /build stacks on it"
+    checklist.include?("[x] #{REPO}#1 Server API — https://github.com/d3mlabs/demo/pull/1")
+    commands.fetch(3).include?("--base=https://github.com/d3mlabs/demo/pull/1")
+    order == [1, 3, 4]
 
     Cleanup
     nil

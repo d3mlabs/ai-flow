@@ -230,6 +230,11 @@ reads the split state and reacts:
 | No sub-issues, no `## Subtasks` spec | Proceed: agent in isolated checkouts on branch `ai/<n>-<slug>` (one per `Target repos:` entry; no line means the issue's own repo), push, open a PR per changed target. The primary (first) target's PR carries `Closes owner/repo#n`; sibling PRs say `Part of` and every body cross-links the coordinated set. All carry the `ai-flow:build` marker. |
 | Unapplied `## Subtasks` spec staged | **Refuse** — an unapplied proposal makes the plan-of-record ambiguous; building past it would silently discard the human's own staging. |
 | Open sub-issues exist | **Proceed**, with the result panel noting them — `--split` is a scoping choice (blast radius, reviewability), never an obligation. |
+| A PR is open on `ai/<n>-<slug>` | **Refuse** — the PR is the place to iterate (comment `/build` on it); close it to rebuild from scratch. Nothing runs, nothing is pushed. A merged or closed PR on the branch does not count: the branch is rebuilt and a new PR opens. |
+
+The branch is checked again before the push, so a PR that opened on it
+while the agent ran is not overwritten either: the run fails naming the
+PR, and no push happens.
 
 The asymmetry is principled: an unapplied spec is the human's own staging
 left in limbo (refuse); applied sub-issues are a committed valid state
@@ -248,6 +253,10 @@ The refusal, verbatim:
 The open-sub-issues note, verbatim:
 
 > ℹ️ This plan has N open sub-issue(s) (owner/repo#n, …) — this /build covered the whole plan; close or /build them individually if they were meant to scope the work.
+
+The open-PR refusal, verbatim:
+
+> ⏹ **/build** — https://github.com/owner/repo/pull/n is open for this issue — comment on the PR to iterate it, or close it to rebuild.
 
 ### On a PR (top-level conversation comment) — iterate
 
@@ -302,8 +311,10 @@ runners — repo-scoped, or an org group that selects it), on whatever
 group, whose selection is each repo's build concurrency. The orchestrator job runs on the
 `ai-orchestrator` pool and polls the children's comments: every issue-mode
 `/build` panel ends in a hidden outcome trailer (`<!-- ai-flow:outcome
-kind=… -->`: `pr_opened` with the PR urls, `nothing_to_build`, `busy`,
-`failed`), and a comment without one is a run still going. When every
+kind=… -->`: `pr_opened` with the PR urls, `already_open` with the PR
+already on the branch (counted as built, so dependents stack on it),
+`nothing_to_build`, `busy`, `failed`), and a comment without one is a run
+still going. When every
 member has reported, the next wave is posted with its `--base` computed
 from the children's actual PRs. The checklist has one writer — this job —
 and shows a running child as `[ ] … — running: <comment link> (run: <its
