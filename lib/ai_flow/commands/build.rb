@@ -110,6 +110,7 @@ module AiFlow
               NothingToBuild = new("nothing_to_build")
               Busy = new("busy")
               Failed = new("failed")
+              AlreadyOpen = new("already_open")
             end
           end
 
@@ -118,8 +119,8 @@ module AiFlow
           sig { returns(Kind) }
           attr_reader :kind
 
-          # @return [Array<String>] the opened PRs' html urls, primary
-          #   first; empty for every kind but PrOpened
+          # @return [Array<String>] the PRs' html urls, primary first;
+          #   empty for every kind but PrOpened and AlreadyOpen
           sig { returns(T::Array[String]) }
           attr_reader :pr_urls
 
@@ -245,6 +246,29 @@ module AiFlow
             Trailer.new(kind: Trailer::Kind::Busy)
           end
         end
+
+        # The issue's branch already heads an open PR. Nothing ran: a
+        # build would replace that PR's content under its reviewers, so the
+        # PR is the place to iterate, and closing it is how to rebuild.
+        class AlreadyOpen < Outcome
+          extend T::Sig
+
+          # @return [GitHub::PullRequest] the PR open on the branch
+          sig { returns(GitHub::PullRequest) }
+          attr_reader :pull_request
+
+          # @param pull_request [GitHub::PullRequest]
+          sig { params(pull_request: GitHub::PullRequest).void }
+          def initialize(pull_request:)
+            super(capture_notes: [], workflows_patch: nil)
+            @pull_request = pull_request
+          end
+
+          sig { override.returns(Trailer) }
+          def trailer
+            Trailer.new(kind: Trailer::Kind::AlreadyOpen, pr_urls: [pull_request.html_url])
+          end
+        end
       end
 
       # @param context [AiFlow::Context]
@@ -308,6 +332,7 @@ module AiFlow
           when Outcome::PrOpened then "✅ **/build** — opened #{outcome.urls.join(", ")}"
           when Outcome::NothingToBuild then "⚠️ **/build** — the agent made no changes, so no PR was opened."
           when Outcome::Busy then busy_headline(outcome)
+          when Outcome::AlreadyOpen then already_open_headline(outcome)
           else T.absurd(outcome)
           end
         blocks = [headline] + outcome.capture_notes + workflows_notes(outcome) + sub_issues_notes
@@ -335,6 +360,8 @@ module AiFlow
         code_repos = target_repos_for(issue, issue_repo)
         branch = branch_name(issue)
         bases_by_repo = base_prs.group_by(&:repo)
+        open_pr = code_repos.filter_map { |repo| @github.open_pull_request_for_head(repo, branch) }.first
+        return Outcome::AlreadyOpen.new(pull_request: open_pr) if open_pr
 
         build_in_workspaces(code_repos, issue, issue_repo, branch, bases_by_repo, extra_instruction)
       rescue PersistentWorkspace::BusyError => e
@@ -439,6 +466,7 @@ module AiFlow
           end
 
           created = committed.map do |repo, checkout|
+            refuse_open_pull_request!(repo, branch)
             push_branch(checkout, branch)
             pr, body = open_pull_request(
               repo, issue_repo, issue, branch,
@@ -877,9 +905,9 @@ module AiFlow
 
         case outcome
         when Outcome::PrOpened then [workflows_apply_note(outcome.urls.fetch(0), patch)]
-        # A Busy carries no patch (nothing ran), so it never reaches here;
-        # listed for exhaustiveness, not behavior.
-        when Outcome::NothingToBuild, Outcome::Busy then [workflows_diff_note(patch)]
+        # Busy and AlreadyOpen carry no patch (nothing ran), so they never
+        # reach here; listed for exhaustiveness, not behavior.
+        when Outcome::NothingToBuild, Outcome::Busy, Outcome::AlreadyOpen then [workflows_diff_note(patch)]
         else T.absurd(outcome)
         end
       end
@@ -890,6 +918,29 @@ module AiFlow
       def busy_headline(outcome)
         "⏳ **/build** — the persistent workspace for #{@context.owner_repo} is held by another run, so this one " \
           "did not start (#{outcome.reason}); re-run `/build` when it is free."
+      end
+
+      # @param outcome [Outcome::AlreadyOpen]
+      # @return [String]
+      sig { params(outcome: Outcome::AlreadyOpen).returns(String) }
+      def already_open_headline(outcome)
+        "⏹ **/build** — #{outcome.pull_request.html_url} is open for this issue — " \
+          "comment on the PR to iterate it, or close it to rebuild."
+      end
+
+      # The branch is about to be force-pushed: a PR opened on it since the
+      # pre-flight (another run, a human) would have its content replaced.
+      #
+      # @param repo [String]
+      # @param branch [String]
+      # @raise [GitHub::Error] when a PR is open on the branch
+      sig { params(repo: String, branch: String).void }
+      def refuse_open_pull_request!(repo, branch)
+        pr = @github.open_pull_request_for_head(repo, branch)
+        return if pr.nil?
+
+        raise GitHub::Error, "not pushing: #{pr.html_url} is open on #{branch} and would be overwritten — " \
+          "comment on the PR to iterate it, or close it to rebuild"
       end
 
       # A copy-paste command that lands the patch on the PR branch under the

@@ -358,7 +358,7 @@ module AiFlow
       sig { params(trailer: Build::Outcome::Trailer, entry: Progress::Running).returns(Reported) }
       def outcome_of(trailer, entry)
         case (kind = trailer.kind)
-        when Build::Outcome::Trailer::Kind::PrOpened
+        when Build::Outcome::Trailer::Kind::PrOpened, Build::Outcome::Trailer::Kind::AlreadyOpen
           Progress::Built.new(prs: trailer.pr_urls.map { |url| @github.pull_request(*GitHub.parse_pull_request_url(url)) })
         when Build::Outcome::Trailer::Kind::NothingToBuild then Progress::NoChanges.new
         when Build::Outcome::Trailer::Kind::Busy

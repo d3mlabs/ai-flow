@@ -650,7 +650,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     T.must(error).message.include?("dev deps install")
     T.must(error).message.include?("simulated hook failure")
     agent.prompts.empty?
-    github.calls.none? { |call| call.first == :create_pull_request }
+    github.calls.none? { |call| Array(call).first == :create_pull_request }
 
     Cleanup
     nil
@@ -1838,6 +1838,68 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "a /build on an issue whose branch heads an open PR refuses before the agent runs: the panel names the PR, nothing is pushed or opened" do
+    Given "issue 7's branch already carries PR 594 under review"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    github.seed_open_pull_request_for_head("ai/7-carve-system", stack_base_pr(594, REPO, "ai/7-carve-system"))
+    agent = FakeAgent.new(["done"])
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor, agent: agent)
+    result = github.comment_edits.fetch(55)
+
+    Then "refused with the PR and the two ways forward; the agent never launched, no push, no PR"
+    result.include?("⏹ **/build** — https://github.com/#{REPO}/pull/594 is open for this issue — comment on the PR to iterate it, or close it to rebuild.")
+    result.include?("<!-- ai-flow:outcome kind=already_open prs=https://github.com/#{REPO}/pull/594 -->")
+    agent.launches.empty?
+    executor.command_lines.none? { |line| line.include?("git push") }
+    github.calls.none? { |call| Array(call).first == :create_pull_request }
+
+    Cleanup
+    nil
+  end
+
+  test "a PR opened on the branch while the agent ran is not pushed over: the push step refuses, naming the PR" do
+    Given "no PR when the build starts; one appears during the agent's pass"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    agent = FakeAgent.new(["done"]) do |_prompt, _workdir|
+      github.seed_open_pull_request_for_head("ai/7-carve-system", stack_base_pr(594, REPO, "ai/7-carve-system"))
+    end
+    executor = RecordingExecutor.new
+
+    When "building"
+    error = assert_raises(AiFlow::GitHub::Error) { run_build(github: github, executor: executor, agent: agent) }
+
+    Then
+    error.message.include?("https://github.com/#{REPO}/pull/594 is open on ai/7-carve-system")
+    executor.command_lines.none? { |line| line.include?("git push") }
+    github.calls.none? { |call| Array(call).first == :create_pull_request }
+
+    Cleanup
+    nil
+  end
+
+  test "a merged or closed PR on the branch does not stand in the way: the open-PR lookup finds none and the build proceeds" do
+    Given "a branch whose earlier PR is no longer open (the fake lists only open PRs by head)"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+
+    Then "the branch was looked up, then built and opened"
+    github.calls.include?([:open_pull_request_for_head, REPO, "ai/7-carve-system"])
+    github.calls.any? { |call| Array(call).first == :create_pull_request }
+    github.comment_edits.fetch(55).include?("✅ **/build** — opened https://github.com/#{REPO}/pull/900")
+
+    Cleanup
+    nil
+  end
+
   test "the kinds without PRs render and parse; a body without a trailer is a run still going" do
     Given "the three PR-less outcomes"
     trailer = AiFlow::Commands::Build::Outcome::Trailer
@@ -1848,6 +1910,8 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     trailer.parse("> <!-- ai-flow:outcome kind=nothing_to_build -->") == nothing
     trailer.parse("> <!-- ai-flow:outcome kind=busy -->") == busy
     trailer.parse("> <!-- ai-flow:outcome kind=failed -->") == trailer.failed
+    trailer.parse("> <!-- ai-flow:outcome kind=already_open prs=https://github.com/d3mlabs/demo/pull/5 -->") ==
+      AiFlow::Commands::Build::Outcome::AlreadyOpen.new(pull_request: stack_base_pr(5, "d3mlabs/demo", "ai/5-x")).trailer
     trailer.parse("/build\n\n> ⏳ ai-flow is running").nil?
     trailer.parse("").nil?
 
