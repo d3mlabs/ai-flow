@@ -202,8 +202,9 @@ repos using `dev plan`.
 - `docs/` — [commands.md](docs/commands.md) (the normative command
 reference), [plan-lifecycle.md](docs/plan-lifecycle.md) (the end-to-end
 narrative and body conventions), [architecture.md](docs/architecture.md)
-(how it's put together), and [attribution.md](docs/attribution.md) (who
-authors what, and why).
+(how it's put together), [security.md](docs/security.md) (what is at
+stake, who can act, which control closes each gap), and
+[attribution.md](docs/attribution.md) (who authors what, and why).
 
 
 
@@ -404,8 +405,9 @@ boxes we already own); (c) model control — the CLI exposes the full
 `--list-models` menu including parameterized bracket overrides, where Cursor
 Cloud Agents run a curated model subset at API pricing. Hosted-runner mode
 (a CLI install step plus a routing escape hatch) is a possible future
-feature, not a current one — today a job on a runner without the agent CLI
-fails at the first agent invocation.
+feature ([ai-flow#142](https://github.com/d3mlabs/ai-flow/issues/142)),
+not a current one — today a job on a runner without the agent CLI fails
+at the first agent invocation.
 
 Shareability: if this repo is public, any org can reference
 `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` with its own secret
@@ -414,47 +416,84 @@ Callers reference `@main` deliberately: the dispatcher
 checkout inside the workflow always runs main, so pinning the YAML to a tag
 or SHA would only freeze half the system and silently split the two versions.
 
+### Choosing your runner setup
+
+Which runner setup works depends on who owns the repo and whether it is
+public. Self-hosted runners on a public repo need a workflow pin, and
+only org runner groups carry one; see
+[docs/security.md](docs/security.md) for what each control protects.
+
+| | **Private repo** | **Public repo** |
+|---|---|---|
+| **Organization** | Org-scoped slots in a pinned runner group (`dev runner register --org --ai-flow --slots N`), or repo-scoped slots for a repo that wants its own (`dev runner register --ai-flow --repo-scope` from its checkout). | Org-scoped slots in a pinned runner group only. The settings below are required. |
+| **User account** | Repo-scoped slots (`dev runner register --ai-flow --slots N` from the checkout). A user account has no runner groups; none is needed for a private repo. | Self-hosted runners are not supported. Move the repo into an organization — free for public repos, and nothing else about the setup changes — or wait for hosted-runner mode ([ai-flow#142](https://github.com/d3mlabs/ai-flow/issues/142), not yet available). |
+
+**Organization, private repo.** Org-scoped slots take jobs from every
+repo the `ai-flow` group selects, through the two pinned workflows;
+adding a repo to the group's selection is how it gets build capacity.
+Repo-scoped slots take that one repo's jobs through any of its
+workflows, which is fine while the repo is private.
+
+**Organization, public repo.** The pinned runner group is the control
+that holds when a fork PR's workflow is approved by mistake, so a public
+repo may only reach slots registered at the org, in that group. See
+*Public repos* below for the three settings.
+
+**User account, private repo.** Register from the repo's checkout; the
+registration is the repo's whatever the role, since a user account has no
+org to register at. Jobs come from that repo through any of its
+workflows.
+
+**User account, public repo.** Nothing pins which workflows may reach a
+runner here, and GitHub's fork-approval policy is a human gate alone.
+`dev runner register` refuses the registration. An organization is free
+for public repos and gives you runner groups and the pin; moving the
+repo there is the recommended path. Running ai-flow on GitHub-hosted
+runners would remove the exposed host entirely and is the subject of
+[ai-flow#142](https://github.com/d3mlabs/ai-flow/issues/142).
+
 ### Public repos
 
-A public caller repo on self-hosted runners is the combination GitHub
-cautions against — and d3mlabs runs it live (`d3mlabs/dev`), so this
-subsection is the reference deployment, not theory. The workflow ships two
-guards every adopter inherits: a Bot-type filter on the job conditions
-(the bot's own replies never spawn runs) and a hosted `authorize` job that
-checks the command author's repo permission on free hosted seconds, before
-any self-hosted second — unauthorized commands die there, and the
-dispatcher's in-Ruby fail-closed gate stays as defense-in-depth. Prompts
-are provenance-filtered too: auto-ingested context (review threads,
-discussion comments, origin replays) only carries content from
-write-authorized authors — a maintainer includes third-party feedback by
-quoting it — and every assembled prompt prints in the run log. See
-[docs/architecture.md](docs/architecture.md#public-repo-posture) for the
-threat mechanics.
+A public caller repo on self-hosted runners is the configuration GitHub
+cautions against. d3mlabs runs it live (`d3mlabs/dev`), with three
+guards the reusable workflow ships for every adopter and three settings
+the adopter makes.
 
-The org/repo settings are the adopter's half, and for a public caller they
-are required, not suggested:
+Shipped in the workflow: a hosted `authorize` job checks the command
+author's repo permission on free hosted seconds before any self-hosted
+second; a Bot-type filter keeps the bot's own replies from starting
+runs; and a provenance filter keeps auto-ingested text (review threads,
+discussion comments, origin replays) to write-authorized authors — a
+maintainer includes third-party feedback by quoting it. Every assembled
+prompt prints in the run log.
 
-- **Fork-PR approval: "require approval for all outside collaborators"**
-(org or repo Actions setting). Some event types run the *head* branch's
-workflow file, so unreviewed fork YAML must never execute.
+Required settings, the adopter's half:
+
+- **Fork-PR approval: "Require approval for all external contributors"**
+  (org or repo Actions setting). Some event types run the *head*
+  branch's workflow file, so unreviewed fork YAML must never execute.
 - **Runner group restriction**: visibility `selected` with only adopting
-repos, and `restricted_to_workflows` pinned to
-`d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` (jobs defined
-in a reusable workflow are checked against the reusable workflow's
-path/ref). Even an accidentally approved malicious fork workflow then
-gets no self-hosted runner.
+  repos, and `restricted_to_workflows` pinned to
+  `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` (jobs defined
+  in a reusable workflow are checked against the reusable workflow's
+  path/ref). An approved malicious fork workflow then gets no self-hosted
+  runner. `dev runner register --org` converges the group.
 - **CODEOWNERS + required review on the workflow path**: the pin makes
-`ai-commands.yml@main` the runner group's root of trust, so
-`.github/workflows/**` needs a required human review — note PR authors
-can't approve their own PRs but *can* approve bot-authored ones, which
-is exactly the case that matters (a `/build` proposing workflow changes
-must not become runner-trusted on a casual merge). Mirroring the same
-entry on adopters' own `.github/workflows/` guards the caller's
-conditions from quiet loosening.
+  `ai-commands.yml@main` the runner group's root of trust, so
+  `.github/workflows/**` needs a required human review. PR authors
+  can't approve their own PRs but *can* approve bot-authored ones, which
+  is exactly the case that matters (a `/build` proposing workflow
+  changes must not become runner-trusted on a casual merge). Mirror the
+  same entry on your own `.github/workflows/` to guard the caller's
+  conditions from quiet loosening.
 
 Rotation note: the App private key transits the runner host in the
 token-mint step, so treat a runner-host compromise as an App-key rotation
 event.
+
+The mechanics behind each guard — what it protects, and why the approval
+policy alone is not the control for self-hosted runners — are in
+[docs/security.md](docs/security.md).
 
 ## Development
 
