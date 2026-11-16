@@ -2,5 +2,5 @@
 # the self-hosted runners' root of trust: whatever lands on this path is
 # what adopters' runners will execute. Required review on these files is
 # the guard on that trust — see README "Public repos" and
-# docs/architecture.md "Public-repo posture".
+# docs/security.md "The pinned workflow as root of trust".
 /.github/workflows/ @JPDuchesne
