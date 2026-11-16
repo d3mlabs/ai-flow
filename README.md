@@ -421,7 +421,11 @@ or SHA would only freeze half the system and silently split the two versions.
 Which runner setup works depends on who owns the repo and whether it is
 public. Self-hosted runners on a public repo need a workflow pin, and
 only org runner groups carry one; see
-[docs/security.md](docs/security.md) for what each control protects.
+[docs/security.md](docs/security.md) for what each control protects. The
+scope a registration gets — org or repo, and the public-repo refusal — is
+`dev runner register`'s rule, stated in
+[dev's docs/runners.md, *Scope*](https://github.com/d3mlabs/dev/blob/main/docs/runners.md#scope);
+the table below says what ai-flow needs on top in each case.
 
 | | **Private repo** | **Public repo** |
 |---|---|---|
