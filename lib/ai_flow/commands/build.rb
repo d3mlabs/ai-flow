@@ -37,6 +37,11 @@ module AiFlow
       # ensure before this surfaces.
       class McpSessionError < Error; end
 
+      # How many of a failed session hook's stderr lines ride into its
+      # error or warning — the newest ones; the whole stream is in the job
+      # log.
+      HOOK_STDERR_LINES = 5
+
       # A dev project's checkout could not be provisioned (`dev deps
       # install` failed, ai-flow#99): the agent would start without the
       # toolchain the repo declares and improvise one — the dev#350 shape.
@@ -1563,15 +1568,18 @@ module AiFlow
         return yield unless start
 
         begin
-          raise McpSessionError, "mcp session start failed: #{start}" unless session_hook(start, checkout)
+          err, ok = session_hook(start, checkout)
+          raise McpSessionError, with_stderr_tail("mcp session start failed: #{start}", err) unless ok
 
           yield
         ensure
           # Best-effort by design: a failed stop must never mask the pass's
           # own outcome (the warn line is the signal).
           if (stop = config.mcp_session_stop)
-            $stdout.puts "ai-flow mcp session: stop failed — the session may need manual teardown" unless
-              session_hook(stop, checkout)
+            err, ok = session_hook(stop, checkout)
+            unless ok
+              $stdout.puts with_stderr_tail("ai-flow mcp session: stop failed — the session may need manual teardown", err)
+            end
           end
         end
       end
@@ -1581,16 +1589,35 @@ module AiFlow
       #
       # @param command [String] the hook as declared (shell-split here)
       # @param checkout [String]
-      # @return [Boolean] success
-      sig { params(command: String, checkout: String).returns(T::Boolean) }
+      # @return [Array(String, Boolean)] the hook's stderr, and success
+      sig { params(command: String, checkout: String).returns([String, T::Boolean]) }
       def session_hook(command, checkout)
         $stdout.puts "ai-flow mcp session: #{command}"
         # T.unsafe: splatting a runtime-built argv (srb.help/7019).
         err, ok = T.unsafe(@executor).stream(*Shellwords.split(command), chdir: checkout) do |line|
           $stdout.puts(line)
         end
-        $stdout.puts err unless err.to_s.strip.empty?
-        ok
+        err = err.to_s
+        $stdout.puts err unless err.strip.empty?
+        [err, ok]
+      end
+
+      # A hook's failure line with the hook's last non-empty stderr lines
+      # under it, indented — the comment is where the failure is read, and
+      # the cause is in the hook's stderr, not in its name. Bounded to the
+      # newest HOOK_STDERR_LINES lines, a cut marked with `…`.
+      #
+      # @param headline [String]
+      # @param stderr [String] the hook's stderr
+      # @return [String]
+      sig { params(headline: String, stderr: String).returns(String) }
+      def with_stderr_tail(headline, stderr)
+        lines = stderr.split("\n").map(&:rstrip).reject(&:empty?)
+        return headline if lines.empty?
+
+        tail = lines.last(HOOK_STDERR_LINES)
+        tail.unshift("…") if lines.size > HOOK_STDERR_LINES
+        ([headline] + tail.map { |line| "  #{line}" }).join("\n")
       end
 
       # @param argv [Array<String>] command and arguments
