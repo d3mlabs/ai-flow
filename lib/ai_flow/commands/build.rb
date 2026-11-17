@@ -48,39 +48,6 @@ module AiFlow
       # child command was malformed (ai-flow#115).
       class BadBaseError < Error; end
 
-      # The head branch of a CONFLICTING PR, rebased onto its base before
-      # the agent runs (ai-flow#148). A PR GitHub can merge is never
-      # rebased; one it cannot is, dispatcher-side, as the bot — a clean
-      # rebase runs straight through, one that stops leaves its unmerged
-      # paths for the agent to resolve in the working tree, and the
-      # tooling continues it after the pass. Either way the push is
-      # `--force-with-lease`: the head moved. Resolution never takes the
-      # shape of a merge of the base into the branch (the org's
-      # rebase-onto-base rule).
-      class Rebase < T::Struct
-        extend T::Sig
-
-        # The base branch the head was rebased onto.
-        const :base, String
-        # The paths the rebase stopped on; empty when it applied cleanly.
-        const :conflicts, T::Array[String]
-
-        # @return [Boolean] whether the rebase is waiting on the agent
-        sig { returns(T::Boolean) }
-        def stopped?
-          !conflicts.empty?
-        end
-
-        # @return [String] the panel's clause
-        sig { returns(String) }
-        def note
-          return "rebased onto `#{base}`" unless stopped?
-
-          "rebased onto `#{base}` — #{conflicts.size} conflict#{"s" unless conflicts.size == 1} resolved " \
-            "(#{conflicts.join(", ")})"
-        end
-      end
-
       # The App deliberately lacks the `workflows` permission (see
       # docs/attribution.md): GitHub rejects any App push touching workflow
       # files wholesale, and a workflow pushed to a branch could execute on
@@ -580,7 +547,7 @@ module AiFlow
       sig { params(segment: CommentParser::Segment).void }
       def iterate_on_pull_request(segment)
         branch = checkout_head_branch
-        rebase = rebase_onto_base(branch)
+        rebase = rebase_onto_base
         threads = sweepable_threads
         comments = fresh_conversation_comments
         if segment.instruction.empty? && threads.empty? && comments.empty?
@@ -594,11 +561,11 @@ module AiFlow
                          "threads, and no new discussion since the last ai-flow commit."]],
             )
             return
-          elsif !rebase.stopped?
+          elsif !rebase.in_progress?
             sha = commit_and_push(segment, rebased: true)
             @result_writer.write(
               @context,
-              [[segment, "✅ **/build** — #{rebase.note}; head is #{commit_link(T.must(sha))}. Nothing else to address."]],
+              [[segment, "✅ **/build** — #{rebase_note(rebase)}; head is #{commit_link(T.must(sha))}. Nothing else to address."]],
             )
             return
           end
@@ -620,7 +587,7 @@ module AiFlow
         run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: @workdir)
         @learn.extract_capture(@workdir) if capture
         workflows_patch = extract_workflows_patch(@workdir)
-        continue_rebase!(rebase) if rebase&.stopped?
+        rebase.continue! if rebase&.in_progress?
         sha = commit_and_push(segment, rebased: !rebase.nil?)
         capture_notes = landed_capture_notes(capture, output)
         reply_to_threads(threads, parsed, sha)
@@ -630,86 +597,38 @@ module AiFlow
         )
       end
 
-      # Rebase the head onto its base when GitHub reports the PR as not
-      # mergeable (`mergeable: false`; `null` is "still computing" and
-      # reads as mergeable — the next iteration will see the verdict). The
-      # rebase runs as the bot, so replayed commits carry its committer.
-      # Stopped on conflicts, the markers stay in the working tree for the
-      # agent and the unmerged paths are the Rebase's; any other failure
-      # aborts and raises, leaving the branch as it was.
+      # A PR GitHub reports as not mergeable (`mergeable: false`; `null` is
+      # "still computing" and reads as mergeable — the next iteration sees
+      # the verdict) is rebased onto its base before the agent runs
+      # (ai-flow#148): the policy is here, the git is Rebase's. Stopped on
+      # conflicts, the markers stay in the working tree for the agent;
+      # Build continues the rebase after the pass. Resolution never takes
+      # the shape of a merge of the base into the branch (the org's
+      # rebase-onto-base rule).
       #
-      # @param branch [String] the head branch, checked out
       # @return [Rebase, nil] nil when the PR needs no rebase
-      # @raise [GitHub::Error] a rebase that failed for a reason other than conflicts
-      sig { params(branch: String).returns(T.nilable(Rebase)) }
-      def rebase_onto_base(branch)
+      # @raise [Rebase::FailedError] a rebase that stopped for any reason but conflicts
+      sig { returns(T.nilable(Rebase)) }
+      def rebase_onto_base
         pull = @github.api("repos/#{@context.owner_repo}/pulls/#{@context.number}")
         return nil unless pull["mergeable"] == false
 
         base = pull.dig("base", "ref") || @github.default_branch(@context.owner_repo)
-        run!(["git", "fetch", "origin", base], chdir: @workdir)
-        _out, err, ok = T.unsafe(@executor).capture(*git_rebase_argv("origin/#{base}"), chdir: @workdir, env: NO_EDITOR)
-        return Rebase.new(base: base, conflicts: []) if ok
-
-        conflicts = unmerged_paths
-        if conflicts.empty?
-          abort_rebase!
-          raise GitHub::Error, "git rebase origin/#{base} of #{branch} failed: #{err.strip}"
-        end
-
-        Rebase.new(base: base, conflicts: conflicts)
+        Rebase.onto(base, executor: @executor, workdir: @workdir, identity: CommitIdentity.git_flags(@github))
       end
 
-      # Finish a rebase the agent resolved: every path must be merged (the
-      # tree is already staged), and the replay must run through to the
-      # end — a stop on a later commit is not something a second agent pass
-      # in this run can take, so it is aborted and reported. Either failure
-      # leaves the branch untouched.
+      # The panel's clause for a rebase this run made.
       #
-      # @param rebase [Rebase] a stopped rebase
-      # @raise [GitHub::Error] markers left, or a later commit conflicting
-      sig { params(rebase: Rebase).void }
-      def continue_rebase!(rebase)
-        unresolved = unmerged_paths
-        unless unresolved.empty?
-          abort_rebase!
-          raise GitHub::Error, "the rebase onto #{rebase.base} was left unresolved (#{unresolved.join(", ")}) — " \
-                               "aborted; the branch is as it was"
-        end
+      # @param rebase [Rebase]
+      # @return [String]
+      sig { params(rebase: Rebase).returns(String) }
+      def rebase_note(rebase)
+        conflicts = rebase.conflicts
+        return "rebased onto `#{rebase.base}`" if conflicts.empty?
 
-        _out, err, ok = T.unsafe(@executor).capture(*git_rebase_argv("--continue"), chdir: @workdir, env: NO_EDITOR)
-        return if ok
-
-        abort_rebase!
-        raise GitHub::Error, "the rebase onto #{rebase.base} stopped again on a later commit (#{err.strip}) — " \
-                             "aborted; squash the branch or resolve it by hand, then /build again"
+        "rebased onto `#{rebase.base}` — #{conflicts.size} conflict#{"s" unless conflicts.size == 1} resolved " \
+          "(#{conflicts.join(", ")})"
       end
-
-      # `git rebase` with the bot's identity: replayed commits keep their
-      # author, the committer is the App.
-      #
-      # @param args [Array<String>] `origin/<base>`, `--continue`, `--abort`
-      # @return [Array<String>]
-      sig { params(args: String).returns(T::Array[String]) }
-      def git_rebase_argv(*args)
-        ["git", *CommitIdentity.git_flags(@github), "rebase", *args]
-      end
-
-      # @return [Array<String>] the working tree's unmerged paths
-      sig { returns(T::Array[String]) }
-      def unmerged_paths
-        out, = @executor.capture("git", "diff", "--name-only", "--diff-filter=U", chdir: @workdir)
-        out.split("\n").map(&:strip).reject(&:empty?)
-      end
-
-      # @return [void]
-      sig { void }
-      def abort_rebase!
-        @executor.capture(*T.unsafe(git_rebase_argv("--abort")), chdir: @workdir)
-      end
-
-      # `rebase --continue` would open an editor for the replayed message.
-      NO_EDITOR = T.let({ "GIT_EDITOR" => "true" }.freeze, T::Hash[String, String])
 
       # @return [String] the PR head branch, checked out in the job checkout
       sig { returns(String) }
@@ -894,7 +813,7 @@ module AiFlow
       #   rebase is waiting on the agent
       sig { params(rebase: T.nilable(Rebase)).returns(String) }
       def rebase_section(rebase)
-        return "" unless rebase&.stopped?
+        return "" unless rebase&.in_progress?
 
         <<~SECTION
           REBASE IN PROGRESS: this branch is being rebased onto `#{rebase.base}` and stopped on conflicts. These files carry conflict markers:
@@ -993,7 +912,7 @@ module AiFlow
         summary = parsed.segments[threads.size + 1]
         headline =
           if sha && rebase
-            "✅ **/build** — #{rebase.note}; head is #{commit_link(sha)}."
+            "✅ **/build** — #{rebase_note(rebase)}; head is #{commit_link(sha)}."
           elsif sha
             "✅ **/build** — committed #{commit_link(sha)}."
           else

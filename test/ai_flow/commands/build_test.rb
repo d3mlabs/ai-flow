@@ -988,7 +988,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nCould not decide."])
 
     When "iterating"
-    error = assert_raises(AiFlow::GitHub::Error) do
+    error = assert_raises(AiFlow::Rebase::UnresolvedError) do
       run_build(github: github, executor: executor, body: "/build", context: context, agent: agent)
     end
 
@@ -1011,7 +1011,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nResolved."])
 
     When "iterating"
-    error = assert_raises(AiFlow::GitHub::Error) do
+    error = assert_raises(AiFlow::Rebase::StoppedAgainError) do
       run_build(github: github, executor: executor, body: "/build", context: context, agent: agent)
     end
 
