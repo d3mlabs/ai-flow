@@ -36,12 +36,14 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     # multi-target build. `dev_project` makes every checkout the fake
     # populates (worktree add, gh clone) carry a dev.yml — the provisioning
     # gate reads the real file, so the fake must put one there.
+    # `hook_stderr` is what a failing session hook says on stderr.
     # `conflicts` are the unmerged paths a stopped rebase leaves: reported
     # by the first `--diff-filter=U` listing (before the agent), resolved
     # (empty) by every later one.
     def initialize(dirty: true, workflows_patch: "", capture_patch: "", capture_staged: [], fail_on: [],
-      clean_dirs: [], dev_project: false, conflicts: [])
+      clean_dirs: [], dev_project: false, conflicts: [], hook_stderr: "simulated hook failure")
       @dirty = dirty
+      @hook_stderr = hook_stderr
       @conflicts = conflicts
       @conflicts_listed = false
       @workflows_patch = workflows_patch
@@ -83,7 +85,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       line = argv.join(" ")
       @command_lines << line
       @stream_chdirs << chdir
-      return ["simulated hook failure", false] if @fail_on.any? { |needle| line.include?(needle) }
+      return [@hook_stderr, false] if @fail_on.any? { |needle| line.include?(needle) }
 
       # The real stream yields output lines live — the session hooks relay
       # them to the job log, which the hook-output test pins.
@@ -589,6 +591,97 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     agent.prompts.empty?
     executor.command_lines.include?("bin/agent-editor stop")
     T.must(error).message.include?("bin/agent-editor start")
+
+    Cleanup
+    nil
+  end
+
+  test "a failed start hook's error carries the hook's last stderr lines, so the comment says why" do
+    Given "a start hook whose stderr names the cause, with blank lines around it"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    stderr = "\ndev: image cellbound-3d-linux was locked by another dev — run: dev deps update\n\n" \
+      "agent-editor: failed to build the sim artifact: dev build opencell-macos-release\n"
+    executor = RecordingExecutor.new(fail_on: ["agent-editor start"], hook_stderr: stderr)
+
+    When "building"
+    error = assert_raises(AiFlow::Commands::Build::McpSessionError) do
+      with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
+        run_build(github: github, executor: executor, workdir: dir)
+      end
+    end
+
+    Then "the message is the hook line, then each stderr line indented, blanks dropped"
+    error.message == "mcp session start failed: bin/agent-editor start\n  " \
+      "dev: image cellbound-3d-linux was locked by another dev — run: dev deps update\n  " \
+      "agent-editor: failed to build the sim artifact: dev build opencell-macos-release"
+
+    Cleanup
+    nil
+  end
+
+  test "a long hook stderr is cut to its newest lines within the bound" do
+    Given "a start hook that says forty lines"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    stderr = (1..40).map { |n| "line #{n}" }.join("\n")
+    executor = RecordingExecutor.new(fail_on: ["agent-editor start"], hook_stderr: stderr)
+
+    When "building"
+    error = assert_raises(AiFlow::Commands::Build::McpSessionError) do
+      with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
+        run_build(github: github, executor: executor, workdir: dir)
+      end
+    end
+
+    Then "the last lines survive, the first do not, and the cut is marked"
+    error.message.include?("  line 40")
+    error.message.include?("  line #{41 - AiFlow::Commands::Build::HOOK_STDERR_LINES}")
+    !error.message.include?("  line 1\n")
+    error.message.include?("  …")
+
+    Cleanup
+    nil
+  end
+
+  test "a failed start hook with silent stderr names the hook alone" do
+    Given
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(fail_on: ["agent-editor start"], hook_stderr: "  \n")
+
+    When "building"
+    error = assert_raises(AiFlow::Commands::Build::McpSessionError) do
+      with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
+        run_build(github: github, executor: executor, workdir: dir)
+      end
+    end
+
+    Then
+    error.message == "mcp session start failed: bin/agent-editor start"
+
+    Cleanup
+    nil
+  end
+
+  test "a failed stop hook's warning carries its stderr the same way" do
+    Given "a stop hook that fails saying why"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(fail_on: ["agent-editor stop"], hook_stderr: "agent-editor: editor pid 42 would not exit\n")
+    agent = FakeAgent.new(["done"])
+
+    When "building"
+    stdout_text = T.let("", String)
+    with_session_workspace(SESSION_CONFIG) do |dir, _workspace|
+      stdout_text, _stderr = capture_io do
+        run_build(github: github, executor: executor, agent: agent, workdir: dir)
+      end
+    end
+
+    Then
+    stdout_text.include?("ai-flow mcp session: stop failed — the session may need manual teardown\n  " \
+      "agent-editor: editor pid 42 would not exit")
 
     Cleanup
     nil

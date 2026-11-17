@@ -496,5 +496,10 @@ never sudo, because what it manages (a GUI editor) lives in the
 dispatcher's session — and the stop hook in an `ensure`. A failed start
 refuses the pass (`Build::McpSessionError`) rather than launching
 half-equipped; a failed stop warns without masking the pass's outcome.
+Either message carries the hook's last stderr lines (five; the job log
+has them all), since the hook's name says what failed and its stderr
+says why — `dev: image … was locked by another dev — run: dev deps
+update` is what the issue comment shows, not just `bin/agent-editor
+start`.
 ai-flow never learns what the hooks do — they are opaque repo-owned
 commands, the same posture as every other repo-owned surface.
