@@ -272,6 +272,24 @@ With nothing outstanding and no instruction:
 
 > ℹ️ **/build** — nothing to address: no instruction, no unresolved review threads, and no new discussion since the last ai-flow commit.
 
+A PR GitHub reports as not mergeable is rebased onto its base first,
+dispatcher-side, as the App (ai-flow#148): a rebase that applies cleanly
+runs straight through; one that stops leaves its conflict markers in the
+working tree, the agent is told which files carry them and that the
+tooling owns the rebase (resolve in place, never merge the base in, no
+`--continue`), and the tooling continues the rebase after the pass. The
+push is then `--force-with-lease` — the head moved — against the
+`origin/<branch>` the run fetched, so a push that landed on the PR
+meanwhile is refused rather than overwritten. Markers the agent left, or
+a stop on a later commit of the branch, abort the rebase and fail the run
+naming the files (squash or resolve by hand, then `/build` again); the
+branch is as it was. The panel's headline carries the rebase:
+
+> ✅ **/build** — rebased onto `main` — 1 conflict resolved (docs/DECISIONS.md); head is abc1234.
+
+A bare `/build` on a conflicting PR with nothing else outstanding pushes a
+clean rebase without launching an agent.
+
 ### In a review thread — refused
 
 `/build` is PR-scoped (the sweep), so firing it from one thread would look

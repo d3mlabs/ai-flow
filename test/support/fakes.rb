@@ -210,6 +210,13 @@ class FakeGitHub < AiFlow::GitHub
     @review_threads[[owner_repo, number]] = threads
   end
 
+  # What `repos/<repo>/pulls/<n>` answers about the PR's mergeability and
+  # base — the iterate path reads both before touching the head branch.
+  def seed_pull_request_state(owner_repo, number, mergeable:, base_ref: "main")
+    @pull_states ||= {}
+    @pull_states[[owner_repo, number]] = { "mergeable" => mergeable, "base" => { "ref" => base_ref } }
+  end
+
   def unresolved_review_threads(owner_repo, number)
     @calls << [:unresolved_review_threads, owner_repo, number]
     (@review_threads || {})[[owner_repo, number]] || []
@@ -352,6 +359,9 @@ class FakeGitHub < AiFlow::GitHub
       raise AiFlow::GitHub::Error, "gh api #{path} failed: HTTP 404" unless @issues.key?([repo, number])
 
       { "id" => 400_000 + number }
+    elsif method.nil? && (match = path.match(%r{\Arepos/([^/]+/[^/]+)/pulls/(\d+)\z})) &&
+          (state = (@pull_states || {})[[match[1], Integer(match[2])]])
+      { "id" => 424_242, "head" => { "ref" => "feature-branch" } }.merge(state)
     else
       { "id" => 424_242, "head" => { "ref" => "feature-branch" } }
     end
