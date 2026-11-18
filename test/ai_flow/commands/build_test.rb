@@ -24,7 +24,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
   # .github/workflows (the exclusion path). Subclasses the real class so
   # sorbet-runtime's sig checks accept it at the injection seam.
   class RecordingExecutor < AiFlow::Executor
-    attr_reader :command_lines, :refreshes, :shared_workspaces
+    attr_reader :command_lines, :refreshes, :shared_workspaces, :released_workspaces
 
     # `capture_patch` seeds a staged diff under the learning paths (build-time
     # capture); `capture_staged` is what the landing worktree stages after
@@ -55,6 +55,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       @command_lines = []
       @refreshes = 0
       @shared_workspaces = []
+      @released_workspaces = []
       @stream_chdirs = []
     end
 
@@ -77,6 +78,15 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     # nil = unisolated: mktmpdir keeps its default base.
     def workspace_base
       nil
+    end
+
+    # The release is the real one's job (the fake owns no agent); recorded
+    # so the ensure path and its ordering after the worktree remove are
+    # assertable, and the tmpdir removed so tests leave nothing behind.
+    def release_workspace(dir)
+      @command_lines << "release_workspace"
+      @released_workspaces << dir
+      FileUtils.rm_rf(dir)
     end
 
     # Session hooks stream (live editor-build output); recorded in the same
@@ -220,6 +230,37 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     Cleanup
     nil
+  end
+
+  test "the workspace parent is released through the executor after the worktrees are removed, once" do
+    Given "an issue to build"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+    command_lines = executor.command_lines
+
+    Then "one release, of the shared parent, after the worktree remove; the parent is gone"
+    executor.released_workspaces == executor.shared_workspaces
+    T.must(command_lines.index("release_workspace")) >
+      T.must(command_lines.index { |line| line.start_with?("git worktree remove") })
+    !File.exist?(T.must(executor.released_workspaces.first))
+  end
+
+  test "a build that raises still releases its workspace parent" do
+    Given "an issue whose build fails before the agent runs"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    executor = RecordingExecutor.new(fail_on: ["git worktree add"])
+
+    When "building"
+    assert_raises(AiFlow::GitHub::Error) { run_build(github: github, executor: executor) }
+
+    Then "the parent was released all the same"
+    executor.released_workspaces == executor.shared_workspaces
+    executor.released_workspaces.size == 1
   end
 
   test "a stacked build cuts its branch from the dependency PR's head and opens against it" do

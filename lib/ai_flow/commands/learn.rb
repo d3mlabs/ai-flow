@@ -1465,7 +1465,10 @@ module AiFlow
           ).returns(T.type_parameter(:Result))
       end
       def worktree_at(branch, start_point, &blk)
-        Dir.mktmpdir("ai-flow-learn-", @executor.workspace_base) do |dir|
+        # Not mktmpdir's block form: the executor's release removes what
+        # both identities wrote and never raises (ai-flow#154).
+        dir = Dir.mktmpdir("ai-flow-learn-", @executor.workspace_base)
+        begin
           # Shared while still empty: everything populated inside inherits
           # the agent-shared group via setgid (plans#26; no-op unisolated).
           # The base comes from the executor too — the agent user must be
@@ -1480,6 +1483,8 @@ module AiFlow
           ensure
             @executor.capture("git", "worktree", "remove", "--force", worktree, chdir: @workdir)
           end
+        ensure
+          @executor.release_workspace(dir)
         end
       end
 
@@ -1499,7 +1504,8 @@ module AiFlow
           ).returns(T.type_parameter(:Result))
       end
       def in_clone(repo, branch, refine:, &blk)
-        Dir.mktmpdir("ai-flow-learn-", @executor.workspace_base) do |dir|
+        dir = Dir.mktmpdir("ai-flow-learn-", @executor.workspace_base)
+        begin
           # Shared while still empty, same as in_worktree (plans#26).
           @executor.share_workspace(dir)
           clone = File.join(dir, "clone")
@@ -1507,6 +1513,8 @@ module AiFlow
           base = refine ? ["origin/#{branch}"] : []
           run!(["git", "checkout", "-B", branch, *base], chdir: clone)
           yield clone
+        ensure
+          @executor.release_workspace(dir)
         end
       end
 

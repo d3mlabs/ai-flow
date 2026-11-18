@@ -48,6 +48,10 @@ class AiFlow::DispatcherTest < Minitest::Test
     def refresh_auth!; end
     def share_workspace(_dir); end
 
+    def release_workspace(dir)
+      FileUtils.rm_rf(dir)
+    end
+
     def workspace_base
       nil
     end
