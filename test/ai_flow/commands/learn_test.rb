@@ -49,6 +49,13 @@ class AiFlow::Commands::LearnTest < Minitest::Test
       nil
     end
 
+    # The release is the real one's job; the fake removes the tmpdir so
+    # tests leave nothing behind.
+    def release_workspace(dir)
+      @command_lines << "release_workspace"
+      FileUtils.rm_rf(dir)
+    end
+
     def capture(*argv, stdin: nil, chdir: nil, env: {})
       @command_lines << argv.join(" ")
       return ["", "simulated failure", false] if @fail_on.any? { |needle| argv.join(" ").include?(needle) }

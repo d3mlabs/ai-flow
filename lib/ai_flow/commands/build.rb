@@ -1184,7 +1184,12 @@ module AiFlow
           ).returns(T.type_parameter(:Result))
       end
       def in_disposable_workspaces(code_repos, &blk)
-        Dir.mktmpdir("ai-flow-build-", @executor.workspace_base) do |dir|
+        # Not mktmpdir's block form: its implicit removal runs as the
+        # dispatcher alone and raises on anything the agent left
+        # undeletable, failing a build that already landed (#154). The
+        # executor's release knows both identities and never raises.
+        dir = Dir.mktmpdir("ai-flow-build-", @executor.workspace_base)
+        begin
           # Shared while still empty: everything populated inside inherits
           # the agent-shared group via setgid (plans#26; no-op unisolated).
           # The base comes from the executor too — the agent user must be
@@ -1215,6 +1220,8 @@ module AiFlow
               @executor.capture("git", "worktree", "remove", "--force", worktree, chdir: @workdir)
             end
           end
+        ensure
+          @executor.release_workspace(dir)
         end
       end
 
@@ -1241,7 +1248,8 @@ module AiFlow
           secondaries = code_repos - [primary]
           next yield checkouts if secondaries.empty?
 
-          Dir.mktmpdir("ai-flow-build-", @executor.workspace_base) do |dir|
+          dir = Dir.mktmpdir("ai-flow-build-", @executor.workspace_base)
+          begin
             @executor.share_workspace(dir)
             secondaries.each do |repo|
               checkout = File.join(dir, repo.tr("/", "-"))
@@ -1249,6 +1257,8 @@ module AiFlow
               checkouts[repo] = checkout
             end
             yield checkouts
+          ensure
+            @executor.release_workspace(dir)
           end
         end
       end

@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 
 module AiFlow
@@ -65,6 +66,29 @@ module AiFlow
     sig { returns(T.nilable(String)) }
     def workspace_base
       @isolation&.workspace_base
+    end
+
+    # Remove a workspace parent the command is done with — the counterpart
+    # of share_workspace. Under isolation the tree holds files from both
+    # identities, and unlinking needs write permission on the containing
+    # directory: a directory the agent created (its umask, no group write)
+    # is one the dispatcher cannot empty. So the agent first opens what it
+    # owns to the group (chmod skips what it does not own; the dispatcher's
+    # own directories are already writable by it), then the dispatcher
+    # removes the whole tree. Whatever still resists is reported on stderr
+    # and left under the base — the command's work is done by the time
+    # this runs, and a stray tmpdir is never worth failing it for.
+    #
+    # @param dir [String] the parent share_workspace opened
+    # @return [void]
+    sig { params(dir: String).void }
+    def release_workspace(dir)
+      stream("chmod", "-R", "g+rwX", dir, isolate: true) { |_line| } if @isolation
+      FileUtils.rm_rf(dir)
+      return unless File.exist?(dir)
+
+      leftovers = Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH).reject { |path| File.directory?(path) }
+      $stderr.puts "ai-flow: workspace #{dir} could not be fully removed; left behind: #{leftovers.join(", ")}"
     end
 
     # Unconditional re-mint (no-op without App credentials) — commands call

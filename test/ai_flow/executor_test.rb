@@ -541,4 +541,61 @@ class AiFlow::ExecutorTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "release_workspace removes a populated workspace parent" do
+    Given "an executor with isolation off and a populated workspace"
+    executor = AiFlow::Executor.new(isolation: nil)
+    dir = Dir.mktmpdir("ai-flow-executor-release-")
+    FileUtils.mkdir_p(File.join(dir, "repo", "share", "skill"))
+    File.write(File.join(dir, "repo", "share", "skill", "SKILL.md"), "x")
+
+    When "releasing it"
+    executor.release_workspace(dir)
+
+    Then "nothing is left"
+    !File.exist?(dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "release_workspace under isolation empties the parent as the agent, then removes the leaf itself" do
+    Given "an executor with a benign isolation and a populated workspace"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    executor = AiFlow::Executor.new(isolation: isolation)
+    dir = Dir.mktmpdir("ai-flow-executor-release-")
+    FileUtils.mkdir_p(File.join(dir, "repo", "share", "skill"))
+    File.write(File.join(dir, "repo", "share", "skill", "SKILL.md"), "x")
+
+    When "releasing it"
+    executor.release_workspace(dir)
+
+    Then "nothing is left"
+    !File.exist?(dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a workspace the dispatcher cannot fully remove is reported, never raised — the build already finished" do
+    Given "a workspace with a directory nobody may unlink from"
+    executor = AiFlow::Executor.new(isolation: nil)
+    dir = Dir.mktmpdir("ai-flow-executor-release-")
+    locked = File.join(dir, "repo", "share", "skill")
+    FileUtils.mkdir_p(locked)
+    File.write(File.join(locked, "SKILL.md"), "x")
+    File.chmod(0o555, locked)
+
+    When "releasing it"
+    err = capture_io { executor.release_workspace(dir) }.last
+
+    Then "the leftover is named on stderr and the file is still there"
+    err.include?(dir)
+    err.include?("SKILL.md")
+    File.exist?(File.join(locked, "SKILL.md"))
+
+    Cleanup
+    File.chmod(0o755, locked)
+    FileUtils.rm_rf(dir)
+  end
 end
