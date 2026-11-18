@@ -1834,6 +1834,30 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "iterating a learning proposal PR keeps the agent's learning-file edits in the PR's own commit — no capture" do
+    Given "a /build on an ai/learn-* PR whose pass edits a skill digest (the PR's own content)"
+    github = FakeGitHub.new
+    github.seed_pull_request_state(REPO, 637, head_ref: "ai/learn-issue-633")
+    context = ContextBuilder.issue_comment(number: 637, body: "/build fix CI", pull_request: true)
+    executor = RecordingExecutor.new(capture_patch: LEARNING_PATCH)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nCondensed the digest."])
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build fix CI", context: context, agent: agent)
+
+    Then "nothing was seeded or extracted, the edits were committed and pushed on the PR branch, no learning branch touched"
+    executor.command_lines.none? { |line| line.include?("ai/learn-pr-637") }
+    executor.command_lines.none? { |line| line.start_with?("git diff --cached --binary -- .cursor/") }
+    executor.command_lines.none? { |line| line.start_with?("git reset -q HEAD -- .cursor/") }
+    executor.command_lines.any? { |line| line.include?(" commit -m ") }
+    executor.command_lines.include?("git push")
+    github.comment_edits.fetch(55).include?("✅ **/build** — committed")
+    !github.comment_edits.fetch(55).include?("🧠")
+
+    Cleanup
+    nil
+  end
+
   test "a PR iteration's capture refines the surface's open learning draft (linked update)" do
     Given "a PR iteration with an open ai/learn-pr-7 draft and a pass that re-staged learning files"
     github = FakeGitHub.new

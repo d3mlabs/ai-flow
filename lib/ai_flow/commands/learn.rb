@@ -88,6 +88,25 @@ module AiFlow
         T::Array[String],
       )
 
+      # Every learning proposal branch this command opens starts here —
+      # issue/PR captures, dictated and sweep drafts, scans, promotions.
+      PROPOSAL_BRANCH_PREFIX = "ai/learn-"
+
+      class << self
+        extend T::Sig
+
+        # Whether a branch is a learning proposal of this command's — a PR
+        # on it carries learning files as its content, so a /build
+        # iterating it edits them in place and captures nothing.
+        #
+        # @param branch [String]
+        # @return [Boolean]
+        sig { params(branch: String).returns(T::Boolean) }
+        def proposal_branch?(branch)
+          branch.start_with?(PROPOSAL_BRANCH_PREFIX)
+        end
+      end
+
       # Where a learn-form draft comes from (dictated, sweep, or scan): the
       # branch is the refine key, the marker records surface + form in the
       # PR body, the title names the proposal PR, and dictated? switches the
