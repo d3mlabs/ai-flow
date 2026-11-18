@@ -30,7 +30,7 @@ class AiFlow::GitHubTest < Minitest::Test
     executor = CannedExecutor.new(out: JSON.generate([{
       "number" => 12, "html_url" => "u",
       "head" => { "ref" => "ai/learn-pr-7" },
-      "base" => { "repo" => { "full_name" => "d3mlabs/demo" } },
+      "base" => { "ref" => "main", "repo" => { "full_name" => "d3mlabs/demo" } },
     }]))
     github = AiFlow::GitHub.new(executor: executor)
 
@@ -129,7 +129,7 @@ class AiFlow::GitHubTest < Minitest::Test
     executor = CannedExecutor.new(out: JSON.generate({
       "number" => 7, "html_url" => "u",
       "head" => { "ref" => "ai/7-x" },
-      "base" => { "repo" => { "full_name" => "d3mlabs/demo" } },
+      "base" => { "ref" => "main", "repo" => { "full_name" => "d3mlabs/demo" } },
     }))
     github = AiFlow::GitHub.new(executor: executor)
 
@@ -225,7 +225,7 @@ class AiFlow::GitHubTest < Minitest::Test
     executor = CannedExecutor.new(out: JSON.generate({
       "number" => 12, "html_url" => "https://github.com/d3mlabs/demo/pull/12",
       "head" => { "ref" => "ai/12-x" },
-      "base" => { "repo" => { "full_name" => "d3mlabs/demo" } },
+      "base" => { "ref" => "main", "repo" => { "full_name" => "d3mlabs/demo" } },
     }))
     github = AiFlow::GitHub.new(executor: executor)
 

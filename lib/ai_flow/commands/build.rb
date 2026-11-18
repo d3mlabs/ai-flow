@@ -364,7 +364,10 @@ module AiFlow
         issue_repo = issue.repo
         code_repos = target_repos_for(issue, issue_repo)
         branch = branch_name(issue)
-        bases_by_repo = base_prs.group_by(&:repo)
+        # Re-read, whatever the caller held: a dependency PR that merged
+        # since (the orchestrator queued this child a wave ago; a human
+        # merged in between) has no head branch to stack on any more.
+        bases_by_repo = base_prs.map { |pr| @github.pull_request(pr.repo, pr.number) }.group_by(&:repo)
         open_pr = code_repos.filter_map { |repo| @github.open_pull_request_for_head(repo, branch) }.first
         return Outcome::AlreadyOpen.new(pull_request: open_pr) if open_pr
 
@@ -476,7 +479,7 @@ module AiFlow
             pr, body = open_pull_request(
               repo, issue_repo, issue, branch,
               primary: repo == primary_repo,
-              base: bases_by_repo.fetch(repo, []).last&.head_ref,
+              base: base_branch_for(repo, bases_by_repo.fetch(repo, [])),
             )
             [repo, pr, body]
           end
@@ -1304,6 +1307,23 @@ module AiFlow
           "#{repo} could not be provisioned — dev deps install failed: #{err.strip}"
       end
 
+      # The branch the new PR opens against: the last dependency's head
+      # while that PR is open, its base once it merged — re-read now, the
+      # build may have outlasted the dependency (ai-flow#158). No
+      # dependency in this repo means the default branch.
+      #
+      # @param repo [String]
+      # @param base_prs [Array<GitHub::PullRequest>] dependency PRs in this
+      #   repo, dependency order
+      # @return [String, nil] nil for the default branch
+      sig { params(repo: String, base_prs: T::Array[GitHub::PullRequest]).returns(T.nilable(String)) }
+      def base_branch_for(repo, base_prs)
+        last = base_prs.last
+        return nil unless last
+
+        @github.pull_request(repo, last.number).current_ref
+      end
+
       # Move a checkout onto its stacked base before the issue branch is
       # cut: detach on the first dependency head, then merge the rest
       # (fan-in — several dependency PRs in one repo — hands the pass the
@@ -1319,7 +1339,20 @@ module AiFlow
       def stack_on_bases(checkout, base_prs)
         return if base_prs.empty?
 
-        heads = base_prs.map(&:head_ref)
+        # A merged dependency is already on its base branch; its head is
+        # gone. Stack on the open ones; with none left, start from the
+        # branch the last dependency merged into (ai-flow#158).
+        open_bases, merged_bases = base_prs.partition { |pr| !pr.merged? }
+        merged_bases.each do |pr|
+          $stderr.puts "ai-flow: --base #{pr.html_url} has merged into #{pr.base_ref} — building on that, not its branch"
+        end
+        heads = open_bases.map(&:head_ref)
+        if heads.empty?
+          start = T.must(merged_bases.last).base_ref
+          run!(["git", "fetch", "origin", start], chdir: checkout)
+          run!(["git", "checkout", "--detach", "origin/#{start}"], chdir: checkout)
+          return
+        end
         run!(["git", "fetch", "origin", *heads], chdir: checkout)
         run!(["git", "checkout", "--detach", "origin/#{heads.fetch(0)}"], chdir: checkout)
         heads.drop(1).each do |head|

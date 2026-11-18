@@ -425,6 +425,11 @@ Mechanics, per target repo of the dependent:
 - **None** — the dependency produced no changes, is a satisfied external,
   or lives in another repo (a branch cannot be based across repos): the
   checkout forks from the default branch, as before.
+- **A dependency PR that has merged** — before the build was dispatched or
+  while it ran — has no head branch left to stack on or open against. The
+  build re-reads every base at dispatch and again when it opens its PR:
+  a merged dependency is skipped for stacking (its work is on its base
+  branch already) and the PR opens against that base branch.
 
 Merging is meant to follow the dependency order, and GitHub makes that
 mechanical: when a base branch is deleted on merge, GitHub retargets the

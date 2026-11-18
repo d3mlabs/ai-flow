@@ -206,10 +206,13 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     )
   end
 
-  def stack_base_pr(number, repo, head_ref)
+  # A dependency PR as the orchestrator hands it over; seeded in the fake
+  # too when one is given, since the build re-reads every base at dispatch.
+  def stack_base_pr(number, repo, head_ref, github: nil)
+    github&.seed_pull_request(repo, number, head_ref: head_ref)
     AiFlow::GitHub::PullRequest.new(
       number: number, html_url: "https://github.com/#{repo}/pull/#{number}",
-      repo: repo, head_ref: head_ref,
+      repo: repo, head_ref: head_ref, base_ref: "main",
     )
   end
 
@@ -289,7 +292,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     When "building on the dependency's head"
     build_command(github: github, executor: executor)
-      .build_issue(github.issue(REPO, 7), base_prs: [stack_base_pr(1, REPO, "ai/1-server-api")])
+      .build_issue(github.issue(REPO, 7), base_prs: [stack_base_pr(1, REPO, "ai/1-server-api", github: github)])
     command_lines = executor.command_lines
 
     Then "the checkout moves to the base head before branching and the PR opens against it"
@@ -303,12 +306,54 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "a --base PR merged while the build ran opens against that PR's base, not its deleted branch (ai-flow#158)" do
+    Given "an issue, a dependency PR open at dispatch, and a human who merges it while the agent works"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    github.seed_pull_request(REPO, 1, head_ref: "ai/1-server-api", base_ref: "main")
+    executor = RecordingExecutor.new
+    merge_during_run = proc { github.merge_pull_request!(REPO, 1) }
+    agent = FakeAgent.new(["done"], &merge_during_run)
+
+    When "building on the dependency's head"
+    build_command(github: github, executor: executor, agent: agent)
+      .build_issue(github.issue(REPO, 7), base_prs: [github.pull_request(REPO, 1)])
+    command_lines = executor.command_lines
+
+    Then "the branch was cut from the dependency's head, and the PR opened against main"
+    command_lines.include?("git checkout --detach origin/ai/1-server-api")
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
+  test "a --base PR already merged at dispatch is not stacked on; the build starts from and opens against its base" do
+    Given "an issue and a dependency PR that merged before the build was dispatched"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    github.seed_pull_request(REPO, 1, head_ref: "ai/1-server-api", base_ref: "main", merged_at: "2026-11-18T18:35:55Z")
+    executor = RecordingExecutor.new
+
+    When "building on it"
+    build_command(github: github, executor: executor)
+      .build_issue(github.issue(REPO, 7), base_prs: [github.pull_request(REPO, 1)])
+    command_lines = executor.command_lines
+
+    Then "its branch is never fetched (it is gone) and the PR opens against main"
+    command_lines.none? { |line| line.include?("ai/1-server-api") }
+    github.calls.include?([:create_pull_request, REPO, "ai/7-carve-system", "main"])
+
+    Cleanup
+    nil
+  end
+
   test "a fan-in build merges the remaining dependency heads and opens against the last one" do
     Given "two dependency PRs in the same repo"
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
     executor = RecordingExecutor.new
-    bases = [stack_base_pr(1, REPO, "ai/1-server-api"), stack_base_pr(2, REPO, "ai/2-client-ui")]
+    bases = [stack_base_pr(1, REPO, "ai/1-server-api", github: github), stack_base_pr(2, REPO, "ai/2-client-ui", github: github)]
 
     When "building on both heads"
     build_command(github: github, executor: executor).build_issue(github.issue(REPO, 7), base_prs: bases)
@@ -425,7 +470,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
 
     When "building"
     build_command(github: github, executor: executor)
-      .build_issue(github.issue(REPO, 7), base_prs: [stack_base_pr(1, "d3mlabs/other", "ai/1-server-api")])
+      .build_issue(github.issue(REPO, 7), base_prs: [stack_base_pr(1, "d3mlabs/other", "ai/1-server-api", github: github)])
     command_lines = executor.command_lines
 
     Then "no checkout moves to a base head and the PR opens against the default branch"
@@ -1922,7 +1967,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
       AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500",
-        repo: REPO, head_ref: "ai/learn-pr-7"))
+        repo: REPO, head_ref: "ai/learn-pr-7", base_ref: "main"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
     executor = RecordingExecutor.new(
       capture_patch: LEARNING_PATCH,
@@ -1948,7 +1993,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
       AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500",
-        repo: REPO, head_ref: "ai/learn-pr-7"))
+        repo: REPO, head_ref: "ai/learn-pr-7", base_ref: "main"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
@@ -1970,7 +2015,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     github = FakeGitHub.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
       AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500",
-        repo: REPO, head_ref: "ai/learn-pr-7"))
+        repo: REPO, head_ref: "ai/learn-pr-7", base_ref: "main"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "", fail_on: ["fetch origin ai/learn-pr-7"])
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
@@ -2018,7 +2063,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     end.new
     github.seed_open_pull_request_for_head("ai/learn-pr-7",
       AiFlow::GitHub::PullRequest.new(number: 500, html_url: "https://github.com/#{REPO}/pull/500",
-        repo: REPO, head_ref: "ai/learn-pr-7"))
+        repo: REPO, head_ref: "ai/learn-pr-7", base_ref: "main"))
     context = ContextBuilder.issue_comment(number: 7, body: "/build simplify", pull_request: true)
     executor = RecordingExecutor.new(capture_patch: "")
     agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nSimplified."])
@@ -2146,11 +2191,9 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     Given "an outcome"
     prs = [
       AiFlow::GitHub::PullRequest.new(
-        number: 900, html_url: "https://github.com/#{REPO}/pull/900", head_ref: "ai/7-x", repo: REPO,
-      ),
+        number: 900, html_url: "https://github.com/#{REPO}/pull/900", head_ref: "ai/7-x", repo: REPO, base_ref: "main"),
       AiFlow::GitHub::PullRequest.new(
-        number: 901, html_url: "https://github.com/d3mlabs/other/pull/901", head_ref: "ai/7-x", repo: "d3mlabs/other",
-      ),
+        number: 901, html_url: "https://github.com/d3mlabs/other/pull/901", head_ref: "ai/7-x", repo: "d3mlabs/other", base_ref: "main"),
     ]
     outcome = AiFlow::Commands::Build::Outcome::PrOpened.new(prs: prs, capture_notes: [], workflows_patch: nil)
 

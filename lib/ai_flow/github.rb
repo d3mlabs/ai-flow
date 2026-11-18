@@ -135,11 +135,32 @@ module AiFlow
     # calls (close, assign), the URL lands in result comments, and the
     # repo/head pair is what a stacked follow-up build cuts its branch from
     # (--split builds dependents on their dependencies' PR heads).
+    # `merged_at` is nil until the PR merges; a merged PR's head branch is
+    # ordinarily gone (GitHub deletes it on merge), so anything that would
+    # fetch or target the head must look at `merged?` first and use
+    # `base_ref` instead — the work is on that branch now.
     class PullRequest < T::Struct
+      extend T::Sig
+
       const :number, Integer
       const :html_url, String
       const :repo, String
       const :head_ref, String
+      const :base_ref, String
+      const :merged_at, T.nilable(String), default: nil
+
+      # @return [Boolean] whether the PR has merged
+      sig { returns(T::Boolean) }
+      def merged?
+        !merged_at.nil?
+      end
+
+      # @return [String] the branch a build should sit on today: the head
+      #   while the PR is open, its base once it has merged into it
+      sig { returns(String) }
+      def current_ref
+        merged? ? base_ref : head_ref
+      end
     end
 
     class << self
@@ -596,6 +617,8 @@ module AiFlow
         # be a fork.
         repo: data.fetch("base").fetch("repo").fetch("full_name"),
         head_ref: data.fetch("head").fetch("ref"),
+        base_ref: data.fetch("base").fetch("ref"),
+        merged_at: data["merged_at"],
       )
     end
 
