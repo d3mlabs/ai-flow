@@ -278,7 +278,7 @@ class FakeGitHub < AiFlow::GitHub
     @pull_request_drafts << draft
     AiFlow::GitHub::PullRequest.new(
       number: 900, html_url: "https://github.com/#{owner_repo}/pull/900",
-      repo: owner_repo, head_ref: head,
+      repo: owner_repo, head_ref: head, base_ref: base,
     )
   end
 
@@ -304,11 +304,19 @@ class FakeGitHub < AiFlow::GitHub
     (@open_prs_by_head || {})[branch]
   end
 
-  def seed_pull_request(owner_repo, number, head_ref:)
+  def seed_pull_request(owner_repo, number, head_ref:, base_ref: "main", merged_at: nil)
     @pull_requests ||= {}
     @pull_requests[[owner_repo, number]] = AiFlow::GitHub::PullRequest.new(
-      number: number, html_url: "https://github.com/#{owner_repo}/pull/#{number}", repo: owner_repo, head_ref: head_ref,
+      number: number, html_url: "https://github.com/#{owner_repo}/pull/#{number}", repo: owner_repo,
+      head_ref: head_ref, base_ref: base_ref, merged_at: merged_at,
     )
+  end
+
+  # What a human merging the PR mid-run looks like to the next read: merged,
+  # its head branch gone (GitHub deletes it on merge by default).
+  def merge_pull_request!(owner_repo, number)
+    pr = pull_request(owner_repo, number)
+    seed_pull_request(owner_repo, number, head_ref: pr.head_ref, base_ref: pr.base_ref, merged_at: "2026-11-18T18:35:55Z")
   end
 
   # Unseeded PRs synthesize (head `ai/<n>-branch`): the orchestrator fetches
@@ -318,7 +326,7 @@ class FakeGitHub < AiFlow::GitHub
     (@pull_requests || {}).fetch([owner_repo, number]) do
       AiFlow::GitHub::PullRequest.new(
         number: number, html_url: "https://github.com/#{owner_repo}/pull/#{number}", repo: owner_repo,
-        head_ref: "ai/#{number}-branch",
+        head_ref: "ai/#{number}-branch", base_ref: "main",
       )
     end
   end
