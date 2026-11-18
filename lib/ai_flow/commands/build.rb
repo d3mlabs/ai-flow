@@ -1522,7 +1522,7 @@ module AiFlow
         BODY
         pr = @github.create_pull_request(
           code_repo,
-          title: issue.title,
+          title: GitHub::Title.fit(issue.title),
           body: body,
           head: branch,
           base: base || @github.default_branch(code_repo),

@@ -14,6 +14,40 @@ module AiFlow
 
     PULL_REQUEST_URL = %r{\Ahttps://github\.com/(?<repo>[\w.-]+/[\w.-]+)/pull/(?<number>\d+)\z}
 
+    # The title GitHub accepts for a pull request: at most LIMIT characters
+    # (the REST API answers 422 Validation Failed above it). Issue titles
+    # are not bound the same way, and /build opens a PR under the issue's
+    # title verbatim — so a title born in /split has to fit a PR, and a
+    # title that reaches /build too long is clipped rather than failing a
+    # finished build at its last step (ai-flow#156).
+    module Title
+      extend T::Sig
+
+      LIMIT = 256
+      ELLIPSIS = "…"
+
+      class << self
+        extend T::Sig
+
+        # @param title [String]
+        # @return [Boolean] whether a PR may carry this title as is
+        sig { params(title: String).returns(T::Boolean) }
+        def fits?(title)
+          title.length <= LIMIT
+        end
+
+        # @param title [String]
+        # @return [String] the title unchanged when it fits, else clipped
+        #   to within LIMIT characters and ended with an ellipsis
+        sig { params(title: String).returns(String) }
+        def fit(title)
+          return title if fits?(title)
+
+          "#{T.must(title[0, LIMIT - ELLIPSIS.length]).rstrip}#{ELLIPSIS}"
+        end
+      end
+    end
+
     # `repo` is the "owner/repo" the issue lives in (derived from
     # repository_url) — sub-issues may live in a different repo than their
     # parent, so it can't be assumed from context. `body` and `state` are

@@ -373,4 +373,34 @@ class AiFlow::GitHubTest < Minitest::Test
     Cleanup
     nil
   end
+
+  test "Title.fit passes a title GitHub accepts through unchanged" do
+    Given "titles at and under the limit"
+    short = "Carve system"
+    at_limit = "x" * AiFlow::GitHub::Title::LIMIT
+
+    Expect
+    AiFlow::GitHub::Title.fit(short) == short
+    AiFlow::GitHub::Title.fit(at_limit) == at_limit
+    AiFlow::GitHub::Title.fits?(at_limit)
+  end
+
+  test "Title.fit clips a title GitHub would refuse to within the limit, ending in an ellipsis" do
+    Given "titles past the limit, one breaking on a space"
+    over = "x" * (AiFlow::GitHub::Title::LIMIT + 1)
+    wordy = "#{"word " * 100}tail"
+
+    When "fitting them"
+    fitted_over = AiFlow::GitHub::Title.fit(over)
+    fitted_wordy = AiFlow::GitHub::Title.fit(wordy)
+
+    Then "exactly the limit for the solid one; no trailing space before the ellipsis for the wordy one"
+    fitted_over == "#{"x" * (AiFlow::GitHub::Title::LIMIT - 1)}…"
+    fitted_wordy.end_with?("word…")
+    AiFlow::GitHub::Title.fits?(fitted_wordy)
+    wordy.start_with?(fitted_wordy.delete_suffix("…"))
+
+    Cleanup
+    nil
+  end
 end
