@@ -212,9 +212,11 @@ class FakeGitHub < AiFlow::GitHub
 
   # What `repos/<repo>/pulls/<n>` answers about the PR's mergeability and
   # base — the iterate path reads both before touching the head branch.
-  def seed_pull_request_state(owner_repo, number, mergeable:, base_ref: "main")
+  def seed_pull_request_state(owner_repo, number, mergeable: nil, base_ref: "main", head_ref: "feature-branch")
     @pull_states ||= {}
-    @pull_states[[owner_repo, number]] = { "mergeable" => mergeable, "base" => { "ref" => base_ref } }
+    @pull_states[[owner_repo, number]] = {
+      "mergeable" => mergeable, "base" => { "ref" => base_ref }, "head" => { "ref" => head_ref },
+    }
   end
 
   def unresolved_review_threads(owner_repo, number)

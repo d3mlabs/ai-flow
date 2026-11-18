@@ -577,7 +577,9 @@ module AiFlow
         end
 
         provision_workspace(@context.owner_repo, @workdir)
-        capture = RepoConfig.load(@workdir).learn_on_build?
+        # A learning proposal PR's learning files are its content: the pass
+        # edits them on the branch, and nothing is split out to a capture.
+        capture = RepoConfig.load(@workdir).learn_on_build? && !Learn.proposal_branch?(branch)
         @learn.seed_capture(@workdir, pr_capture_source) if capture
         output = @agent.launch(
           prompt: iteration_prompt(segment, branch, threads, comments, capture: capture, rebase: rebase),

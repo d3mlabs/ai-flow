@@ -568,6 +568,10 @@ means "codify the lesson — don't touch this PR"** (general feedback worth
 keeping that needs no code change). Both share the surface's learning
 branch, so either order refines the same draft.
 
+On a learning proposal PR itself (an `ai/learn-*` branch), `/build` runs
+with capture off: the learning files are the PR's content, so the pass
+edits them on the branch and nothing is split out to a second draft.
+
 ### Proposal tracking (the linked-update rule)
 
 Every learning proposal PR carries a `learned-from: <repo>#<n>
