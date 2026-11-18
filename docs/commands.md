@@ -163,9 +163,11 @@ same-repo form visually).
 
 - Entries are **title-only** — the parent plan is the spec, and sub-issues
   are thin tracking shards of it, so titles must be self-explanatory about
-  their scope. There is no per-subtask body in the interface; keys outside
-  it are ignored. Bespoke context belongs on the created sub-issue, added
-  after apply.
+  their scope. A title is at most 256 characters: `/build` opens the
+  sub-issue's PR under it, and GitHub refuses longer PR titles — both
+  `--dry` and `--apply` refuse a longer one. There is no per-subtask body
+  in the interface; keys outside it are ignored. Bespoke context belongs
+  on the created sub-issue, added after apply.
 - `title` is the reconciliation key — editing a title means "different
   subtask" (the old one closes as stale, a new one is created). Because
   matching sub-issues are kept untouched, context added directly to a

@@ -228,6 +228,36 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     nil
   end
 
+  test "/split --apply refuses a subtask title longer than a PR title may be — /build uses it verbatim (ai-flow#156)" do
+    Given "a staged spec with one over-long title"
+    github = FakeGitHub.new
+    github.seed_app_installed_repos(["d3mlabs/server"])
+    github.seed_issue(REPO, 7, title: "Parent", body: <<~BODY)
+      # Parent plan
+
+      ## Subtasks
+      #{AiFlow::SubtasksSection::SPEC_MARKER}
+
+      ```yaml
+      - title: "#{"Server API " * 30}"
+        repo: d3mlabs/server
+      ```
+    BODY
+
+    When "applying"
+    error = assert_raises(AiFlow::SubtasksSection::Error) do
+      run_split(github: github, agent: FakeAgent.new([]), comment: "/split --apply")
+    end
+
+    Then "the refusal names the limit and the offending title's start; nothing was created"
+    error.message.include?(AiFlow::GitHub::Title::LIMIT.to_s)
+    error.message.include?("Server API Server API")
+    github.calls.none? { |call| call.first == :graphql && call.last.key?(:parentIssueId) }
+
+    Cleanup
+    nil
+  end
+
   test "/split --apply without a staged spec refuses with guidance" do
     Given "a plan with no Subtasks section"
     github = FakeGitHub.new

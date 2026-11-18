@@ -263,6 +263,24 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     executor.released_workspaces.size == 1
   end
 
+  test "an issue title longer than GitHub's PR title limit is clipped, not sent verbatim (ai-flow#156)" do
+    Given "an issue whose title is longer than a PR title may be"
+    github = FakeGitHub.new
+    long_title = "dev: " + ("LocalContainer delivers by bind-mounting the checkout; " * 10)
+    github.seed_issue(REPO, 7, title: long_title, body: "# Carve system\n")
+    executor = RecordingExecutor.new
+
+    When "building"
+    run_build(github: github, executor: executor)
+
+    Then "the PR opened with the clipped title"
+    github.pull_request_titles == [AiFlow::GitHub::Title.fit(long_title)]
+    AiFlow::GitHub::Title.fits?(T.must(github.pull_request_titles.first))
+
+    Cleanup
+    nil
+  end
+
   test "a stacked build cuts its branch from the dependency PR's head and opens against it" do
     Given "an issue and a dependency PR already open in the same repo"
     github = FakeGitHub.new

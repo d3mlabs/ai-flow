@@ -176,6 +176,15 @@ module AiFlow
 
       title = entry["title"].to_s.strip
       raise Error, "a subtask is missing its title: #{entry.inspect}" if title.empty?
+      # /build opens the sub-issue's PR under this title verbatim, and
+      # GitHub refuses PR titles past the limit — refuse here, before a
+      # build spends its time (ai-flow#156).
+      unless GitHub::Title.fits?(title)
+        raise Error,
+          "a subtask title is #{title.length} characters; a PR title may be at most " \
+          "#{GitHub::Title::LIMIT} — shorten it (the plan is the spec, the title only names the scope): " \
+          "#{title[0, 60]}…"
+      end
 
       existing = entry["existing"]
       if existing && !existing.to_s.match?(/\A#{ISSUE_REF_PATTERN}\z/)
