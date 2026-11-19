@@ -258,6 +258,53 @@ class AiFlow::Commands::SplitTest < Minitest::Test
     nil
   end
 
+  test "/split --dry gives a refused proposal one repair round carrying the refusal (ai-flow#162)" do
+    Given "an agent whose first proposal has an over-long title and whose second fits"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent plan\n\nTarget repos: #{REPO}\n")
+    long_title = "Server API " * 30
+    agent = FakeAgent.new([<<~FIRST, <<~SECOND])
+      [{"title": "#{long_title.strip}"}, {"title": "Client"}]
+    FIRST
+      [{"title": "Server API"}, {"title": "Client"}]
+    SECOND
+
+    When "staging"
+    run_split(github: github, agent: agent, comment: "/split --dry")
+
+    Then "the second prompt is the first plus the refusal, and the corrected proposal is what got staged"
+    agent.prompts.size == 2
+    agent.prompts.fetch(1).start_with?(agent.prompts.fetch(0))
+    agent.prompts.fetch(1).include?("a subtask title is #{long_title.strip.length} characters")
+    agent.prompts.fetch(1).include?("FULL corrected list")
+    github.issue(REPO, 7).body.include?("- title: \"Server API\"\n")
+    !github.issue(REPO, 7).body.include?(long_title.strip)
+
+    Cleanup
+    nil
+  end
+
+  test "/split --dry propagates a second refusal — the repair round is bounded, not a loop (ai-flow#162)" do
+    Given "an agent that overruns the title cap twice"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Parent", body: "# Parent plan\n\nTarget repos: #{REPO}\n")
+    long = "Server API " * 30
+    agent = FakeAgent.new(["[{\"title\": \"#{long}\"}]", "[{\"title\": \"#{long}\"}]", "[{\"title\": \"ok\"}]"])
+
+    When "staging"
+    error = assert_raises(AiFlow::SubtasksSection::Error) do
+      run_split(github: github, agent: agent, comment: "/split --dry")
+    end
+
+    Then "the agent ran exactly twice, the refusal is the second one's, and nothing was staged"
+    agent.prompts.size == 2
+    error.message.include?(AiFlow::GitHub::Title::LIMIT.to_s)
+    !github.issue(REPO, 7).body.include?(AiFlow::SubtasksSection::SPEC_MARKER)
+
+    Cleanup
+    nil
+  end
+
   test "/split --apply without a staged spec refuses with guidance" do
     Given "a plan with no Subtasks section"
     github = FakeGitHub.new
