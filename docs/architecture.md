@@ -185,6 +185,9 @@ flowchart TD
     buildCmd --> resultWriter
     buildSplitCmd --> resultWriter
     buildCmd --> commitIdentity["CommitIdentity<br/>(bot author, human co-author<br/>trailer — attribution.md)"]
+    batchCmd --> provisioner["WorkspaceProvisioner<br/>(dev deps install in any dev.yml<br/>checkout before the agent spawns)"]
+    buildCmd --> provisioner
+    resultWriter --> hostPosture["HostPosture<br/>(dev runner status --check verdict,<br/>one drift line in the reply)"]
 
     batchCmd --> agent["Agent#launch<br/>(the one seam invoking the CLI;<br/>swap the backend here)"]
     splitCmd --> agent
@@ -195,6 +198,7 @@ flowchart TD
     buildSplitCmd --> gh
     agent --> exec["Executor<br/>(subprocess boundary;<br/>injects fresh auth per spawn)"]
     gh --> exec
+    provisioner --> exec
     exec --> tokenProvider["TokenProvider<br/>(lazy App-token mint,<br/>50-min age check per call)"]
 ```
 

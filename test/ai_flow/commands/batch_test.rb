@@ -21,7 +21,22 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     Chunks stream in 64m cells.
   BODY
 
-  def build_batch(github:, agent:, context:, workdir:)
+  # Records the provisioning shell-out (`dev deps install`) and where it
+  # ran. Subclasses the real class so sorbet-runtime's sig checks accept it.
+  class ProvisioningExecutor < AiFlow::Executor
+    attr_reader :streamed
+
+    def initialize
+      @streamed = []
+    end
+
+    def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
+      @streamed << [argv.join(" "), chdir]
+      ["", true]
+    end
+  end
+
+  def build_batch(github:, agent:, context:, workdir:, executor: ProvisioningExecutor.new)
     AiFlow::Commands::Batch.new(
       context: context,
       github: github,
@@ -29,6 +44,7 @@ class AiFlow::Commands::BatchTest < Minitest::Test
       rich_diff: AiFlow::RichDiff.new,
       result_writer: AiFlow::ResultWriter.new(github: github, agent: agent),
       workdir: workdir,
+      provisioner: AiFlow::WorkspaceProvisioner.new(executor: executor),
     )
   end
 
@@ -217,6 +233,54 @@ class AiFlow::Commands::BatchTest < Minitest::Test
     edited = github.comment_edits.fetch(55)
     edited.index("> ✅ **/edit** — Recorded the command as out of scope.") > edited.index("/edit record it as out of scope")
     edited.index("> ✅ **/edit** — Reduced streaming cells to 32m.") > edited.index("/edit make cells 32m")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # ---- workspace provisioning (ai-flow#140) ----
+
+  test "an /edit on a dev project provisions the job checkout before the pass, as /build does" do
+    Given "a plan issue whose checkout carries a dev.yml, and an edit"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
+    File.write(File.join(dir, "dev.yml"), "name: demo\n")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
+    comment = "> The carve system uses LOD0 only.\n\n/edit cover LOD1 too"
+    context = ContextBuilder.issue_comment(body: comment)
+    executor = ProvisioningExecutor.new
+    provisioned_before_launch = T.let(nil, T.nilable(T::Boolean))
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nExtended."]) do
+      provisioned_before_launch = executor.streamed.any?
+      File.write(File.join(dir, PLAN_FILE), SNAPSHOT.sub("LOD0 only", "LOD0 and LOD1"))
+    end
+
+    When "running the batch"
+    build_batch(github:, agent:, context:, workdir: dir, executor: executor).run(parse(comment))
+
+    Then "dev deps install ran once, in the checkout, before the agent spawned"
+    executor.streamed == [["dev deps install", dir]]
+    provisioned_before_launch == true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an /ask provisions nothing — a read-only pass needs no toolchain" do
+    Given "a plan issue whose checkout carries a dev.yml, and a question"
+    dir = Dir.mktmpdir("ai-flow-batch-test-")
+    File.write(File.join(dir, "dev.yml"), "name: demo\n")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: SNAPSHOT)
+    context = ContextBuilder.issue_comment(body: "/ask why LOD0 only?")
+    executor = ProvisioningExecutor.new
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nBecause."])
+
+    When "running"
+    build_batch(github:, agent:, context:, workdir: dir, executor: executor).run(parse("/ask why LOD0 only?"))
+
+    Then "no dev call"
+    executor.streamed.empty?
 
     Cleanup
     FileUtils.rm_rf(dir)

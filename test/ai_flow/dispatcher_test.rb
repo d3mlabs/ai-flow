@@ -10,9 +10,11 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::DispatcherTest < Minitest::Test
   REPO = "d3mlabs/demo"
 
-  def build_dispatcher(github:, agent:, context:, workdir: Dir.pwd, executor: AiFlow::Executor.new)
+  def build_dispatcher(github:, agent:, context:, workdir: Dir.pwd, executor: AiFlow::Executor.new,
+    host_posture: AiFlow::HostPosture.from_env({}))
     AiFlow::Dispatcher.new(
       context: context, workdir: workdir, github: github, agent: agent, executor: executor,
+      host_posture: host_posture,
     )
   end
 
@@ -187,6 +189,30 @@ class AiFlow::DispatcherTest < Minitest::Test
       "#{comment}\n\n> ⏳ ai-flow is running — [follow the run](#{RUN_URL}) · model: `strong-edit-model`"
     github.comment_edit_history.last.include?("model: `strong-edit-model`")
     !github.comment_edit_history.last.include?("cheap-ask-model")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a drifted host posture reaches the command's reply as one line; the command still runs (ai-flow#140)" do
+    Given "a batch /edit inside Actions on a host whose posture check went red"
+    dir = Dir.mktmpdir("ai-flow-dispatcher-test-")
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Plan", body: "# Plan\n\nBody.\n")
+    context = ContextBuilder.issue_comment(body: "/edit tighten the plan", env: ACTIONS_ENV)
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nTightened."]) do
+      File.write(File.join(dir, "ai-flow-plan-7.md"), "# Plan\n\nTighter body.\n")
+    end
+    posture = AiFlow::HostPosture.from_env("AI_FLOW_HOST_POSTURE" => "drifted", "RUNNER_NAME" => "mac1-agent")
+
+    When "dispatching"
+    success = build_dispatcher(github: github, agent: agent, context: context, workdir: dir, host_posture: posture).run
+
+    Then "the pass ran and succeeded; the final comment carries the drift line and the footer"
+    success == true
+    agent.prompts.size == 1
+    github.comment_edit_history.last.include?("host posture drifted on `mac1-agent` — re-run `dev runner register` there")
+    github.comment_edit_history.last.include?("⚙️ [workflow run](#{RUN_URL})")
 
     Cleanup
     FileUtils.rm_rf(dir)

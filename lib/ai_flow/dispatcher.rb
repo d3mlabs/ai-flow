@@ -15,6 +15,8 @@ module AiFlow
     # @param github [AiFlow::GitHub]
     # @param agent [AiFlow::Agent]
     # @param executor [AiFlow::Executor]
+    # @param host_posture [AiFlow::HostPosture] the host's posture as the
+    #   job found it; drift lands in the command's reply (ai-flow#140)
     sig do
       params(
         context: Context,
@@ -23,17 +25,20 @@ module AiFlow
         executor: Executor,
         github: GitHub,
         agent: Agent,
+        host_posture: HostPosture,
       ).void
     end
     def initialize(context:, workdir:, prefix: "", executor: Executor.new,
-                   github: GitHub.new(executor: executor), agent: Agent.new(executor: executor))
+                   github: GitHub.new(executor: executor), agent: Agent.new(executor: executor),
+                   host_posture: HostPosture.from_env({}))
       @context = context
       @workdir = workdir
       @prefix = prefix
       @executor = executor
       @github = github
       @agent = agent
-      @result_writer = T.let(ResultWriter.new(github: github, agent: agent), ResultWriter)
+      @result_writer = T.let(ResultWriter.new(github: github, agent: agent, host_posture: host_posture), ResultWriter)
+      @provisioner = T.let(WorkspaceProvisioner.new(executor: executor), WorkspaceProvisioner)
     end
 
     # The exit decision belongs to the caller (bin/dispatch.rb), which may
@@ -64,7 +69,7 @@ module AiFlow
       warn "ai-flow: one or more segments failed — see the command comment."
       false
     rescue CommentParser::ParseError, GitHub::Error, Agent::Error, SubtasksSection::Error, RepoConfig::Error,
-           Commands::Build::Error, Commands::BuildSplit::Error => e
+           WorkspaceProvisioner::ProvisionError, Commands::Build::Error, Commands::BuildSplit::Error => e
       report_failure(segments, e)
       false
     end
@@ -195,7 +200,7 @@ module AiFlow
       Commands::Batch.new(
         context: @context, github: @github, agent: @agent,
         rich_diff: RichDiff.new(executor: @executor),
-        result_writer: @result_writer, workdir: @workdir,
+        result_writer: @result_writer, workdir: @workdir, provisioner: @provisioner,
       )
     end
 
@@ -213,7 +218,7 @@ module AiFlow
     def build
       Commands::Build.new(
         context: @context, github: @github, agent: @agent, executor: @executor,
-        result_writer: @result_writer, workdir: @workdir, prefix: @prefix,
+        result_writer: @result_writer, workdir: @workdir, prefix: @prefix, provisioner: @provisioner,
       )
     end
 
@@ -228,7 +233,7 @@ module AiFlow
     def learn
       Commands::Learn.new(
         context: @context, github: @github, agent: @agent, executor: @executor,
-        result_writer: @result_writer, workdir: @workdir, prefix: @prefix,
+        result_writer: @result_writer, workdir: @workdir, prefix: @prefix, provisioner: @provisioner,
       )
     end
 

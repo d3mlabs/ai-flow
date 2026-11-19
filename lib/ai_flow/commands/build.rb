@@ -42,13 +42,6 @@ module AiFlow
       # log.
       HOOK_STDERR_LINES = 5
 
-      # A dev project's checkout could not be provisioned (`dev deps
-      # install` failed, ai-flow#99): the agent would start without the
-      # toolchain the repo declares and improvise one — the dev#350 shape.
-      # Refusing here keeps the boundary legible: the failure is the
-      # dispatcher's, with dev's stderr, before any agent spawns.
-      class WorkspaceProvisionError < Error; end
-
       # A `--base` value that names no pull request — the orchestrator's
       # child command was malformed (ai-flow#115).
       class BadBaseError < Error; end
@@ -289,6 +282,8 @@ module AiFlow
       #   dev-rendered org-invariants.mdc is never present (see plans#13)
       # @param learn [AiFlow::Commands::Learn] owns build-time learning
       #   capture (the rubric section, the seed/extract/land mechanics)
+      # @param provisioner [AiFlow::WorkspaceProvisioner] equips each target
+      #   checkout before the pass
       sig do
         params(
           context: Context,
@@ -300,6 +295,7 @@ module AiFlow
           prefix: String,
           org_invariants: OrgInvariants,
           learn: Learn,
+          provisioner: WorkspaceProvisioner,
         ).void
       end
       def initialize(context:, github:, agent:, result_writer:, executor:, workdir:, prefix: "",
@@ -307,7 +303,8 @@ module AiFlow
         learn: Learn.new(
           context: context, github: github, agent: agent, result_writer: result_writer,
           executor: executor, workdir: workdir, prefix: prefix, org_invariants: org_invariants,
-        ))
+        ),
+        provisioner: WorkspaceProvisioner.new(executor: executor))
         @context = context
         @github = github
         @agent = agent
@@ -317,6 +314,7 @@ module AiFlow
         @prefix = prefix
         @org_invariants = org_invariants
         @learn = learn
+        @provisioner = provisioner
         @provenance = T.let(Provenance.new(github: github, owner_repo: context.owner_repo), Provenance)
       end
 
@@ -436,7 +434,7 @@ module AiFlow
           checkouts.each do |repo, checkout|
             stack_on_bases(checkout, bases_by_repo.fetch(repo, []))
             create_branch(checkout, branch)
-            provision_workspace(repo, checkout)
+            @provisioner.provision(repo, checkout)
           end
           # The first declared target is the primary: the agent's working
           # directory, the capture surface, and the PR that closes the plan.
@@ -579,7 +577,7 @@ module AiFlow
           end
         end
 
-        provision_workspace(@context.owner_repo, @workdir)
+        @provisioner.provision(@context.owner_repo, @workdir)
         # A learning proposal PR's learning files are its content: the pass
         # edits them on the branch, and nothing is split out to a capture.
         capture = RepoConfig.load(@workdir).learn_on_build? && !Learn.proposal_branch?(branch)
@@ -1272,39 +1270,6 @@ module AiFlow
       sig { params(worktree: String, branch: String).void }
       def create_branch(worktree, branch)
         run!(["git", "checkout", "-B", branch], chdir: worktree)
-      end
-
-      # The marker of a dev project: the repo declares its toolchain through
-      # dev, so the checkout needs provisioning before an agent can work in
-      # it.
-      DEV_PROJECT_FILE = "dev.yml"
-
-      # Provision a dev project's checkout before the pass (ai-flow#99):
-      # `dev deps install` — the headless install the runner job already
-      # uses for ai-flow's own toolchain — brings the repo's pinned Ruby
-      # and locked gems in from the declarative layers. It runs
-      # dispatcher-side, as the runner user: that is the user whose brew
-      # prefix (and sudoers edge, dev#361) the box was converged for, so
-      # the agent's own later `dev up` finds everything installed and has
-      # nothing to write. Streamed live — a first install can run minutes
-      # and the run page follows stdout. A checkout without dev.yml is not
-      # a dev project and needs nothing.
-      #
-      # @param repo [String] owner/repo, for the error message
-      # @param checkout [String]
-      # @return [void]
-      # @raise [WorkspaceProvisionError] when the install fails, carrying
-      #   dev's stderr
-      sig { params(repo: String, checkout: String).void }
-      def provision_workspace(repo, checkout)
-        return unless File.exist?(File.join(checkout, DEV_PROJECT_FILE))
-
-        $stdout.puts "ai-flow provision: dev deps install (#{repo})"
-        err, ok = @executor.stream("dev", "deps", "install", chdir: checkout) { |line| $stdout.puts(line) }
-        return if ok
-
-        raise WorkspaceProvisionError,
-          "#{repo} could not be provisioned — dev deps install failed: #{err.strip}"
       end
 
       # The branch the new PR opens against: the last dependency's head

@@ -125,6 +125,8 @@ module AiFlow
       # @param rich_diff [AiFlow::RichDiff]
       # @param result_writer [AiFlow::ResultWriter]
       # @param workdir [String] the job's repo checkout
+      # @param provisioner [AiFlow::WorkspaceProvisioner] equips the job
+      #   checkout before an edit pass
       sig do
         params(
           context: Context,
@@ -133,15 +135,17 @@ module AiFlow
           rich_diff: RichDiff,
           result_writer: ResultWriter,
           workdir: String,
+          provisioner: WorkspaceProvisioner,
         ).void
       end
-      def initialize(context:, github:, agent:, rich_diff:, result_writer:, workdir:)
+      def initialize(context:, github:, agent:, rich_diff:, result_writer:, workdir:, provisioner:)
         @context = context
         @github = github
         @agent = agent
         @rich_diff = rich_diff
         @result_writer = result_writer
         @workdir = workdir
+        @provisioner = provisioner
         @provenance = T.let(Provenance.new(github: github, owner_repo: context.owner_repo), Provenance)
       end
 
@@ -192,6 +196,9 @@ module AiFlow
         path = File.join(@workdir, plan_filename)
         File.write(path, snapshot)
 
+        # An edit pass may run the repo's own tooling (ai-flow#140); a
+        # read-only answer needs none of it.
+        @provisioner.provision(@context.owner_repo, @workdir) if edits?(resolved)
         output = @agent.launch(
           prompt: batch_prompt(resolved),
           workdir: @workdir,
