@@ -134,6 +134,40 @@ class AiFlow::ResultWriterTest < Minitest::Test
     nil
   end
 
+  test "a drifted host posture renders as one bottom-section line naming the runner and the remedy (ai-flow#140)" do
+    Given "a job whose posture check went red"
+    posture = AiFlow::HostPosture.from_env("AI_FLOW_HOST_POSTURE" => "drifted", "RUNNER_NAME" => "box-agent-2")
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, host_posture: posture)
+    body = "/edit tighten"
+    segments = AiFlow::CommentParser.new.parse(body)
+
+    When "rendering with a run url"
+    updated = writer.render(body, [[segments.fetch(0), "RESULT"]], run_url: "https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then "the line sits in the bottom section, above the footer"
+    updated.include?("host posture drifted on `box-agent-2` — re-run `dev runner register` there")
+    T.must(updated.index("host posture drifted")) < T.must(updated.index("⚙️"))
+
+    Cleanup
+    nil
+  end
+
+  test "a converged host posture renders nothing" do
+    Given "a job whose posture check passed"
+    writer = AiFlow::ResultWriter.new(github: FakeGitHub.new, host_posture: AiFlow::HostPosture.from_env({}))
+    body = "/edit tighten"
+    segments = AiFlow::CommentParser.new.parse(body)
+
+    When "rendering"
+    updated = writer.render(body, [[segments.fetch(0), "RESULT"]], run_url: "https://github.com/d3mlabs/demo/actions/runs/9")
+
+    Then "no posture line"
+    !updated.include?("host posture")
+
+    Cleanup
+    nil
+  end
+
   test "no wants block when the agent surfaced nothing" do
     Given "a wantless agent"
     agent = FakeAgent.new([])

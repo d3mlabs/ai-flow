@@ -632,6 +632,9 @@ second opinion. Rationale and the follow-up statistical form:
   results). Both the ⏳ line (as a pre-launch prediction) and the footer
   name the model the agent runs on — one model per job, since a batch is a
   single agent pass (run under the /edit policy when any edit is present).
-  Standalone `/ask` is the one reply exception.
+  When the workflow's `dev runner status --check` found the host drifted,
+  one 🩺 line above the footer names the runner and the remedy (`dev runner
+  register` there); the ledger itself is in the job log. Standalone `/ask`
+  is the one reply exception.
 - **Failures land on the comment** as a ⚠️ panel and the Actions run goes
   red — never silent.

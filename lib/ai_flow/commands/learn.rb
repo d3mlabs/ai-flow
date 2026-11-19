@@ -337,6 +337,8 @@ module AiFlow
       # @param org_invariants [AiFlow::OrgInvariants] injected into the prompt
       #   — the learning worktree is fresh, so the rendered org-invariants.mdc
       #   is never present (same reasoning as /build, plans#13)
+      # @param provisioner [AiFlow::WorkspaceProvisioner] equips the worktree
+      #   or clone before the pass
       sig do
         params(
           context: Context,
@@ -347,10 +349,12 @@ module AiFlow
           workdir: String,
           prefix: String,
           org_invariants: OrgInvariants,
+          provisioner: WorkspaceProvisioner,
         ).void
       end
       def initialize(context:, github:, agent:, result_writer:, executor:, workdir:, prefix: "",
-        org_invariants: OrgInvariants.new(executor: executor))
+        org_invariants: OrgInvariants.new(executor: executor),
+        provisioner: WorkspaceProvisioner.new(executor: executor))
         @context = context
         @github = github
         @agent = agent
@@ -359,6 +363,7 @@ module AiFlow
         @workdir = workdir
         @prefix = prefix
         @org_invariants = org_invariants
+        @provisioner = provisioner
         @provenance = T.let(Provenance.new(github: github, owner_repo: context.owner_repo), Provenance)
         # Build-capture in flight; nil between build passes.
         @capture = T.let(nil, T.nilable(Capture))
@@ -694,6 +699,7 @@ module AiFlow
         branch = "ai/learn-promote-#{@context.owner_repo.split("/").last}-#{slug}"
         existing = @github.open_pull_request_for_head(knowledge_repo, branch)
         in_clone(knowledge_repo, branch, refine: !existing.nil?) do |clone|
+          @provisioner.provision(knowledge_repo, clone)
           # policy_root: the promote pass is the tail of the source repo's
           # /learn — its model policy travels with the request, not with the
           # knowledge clone it executes in (#49).
@@ -1015,6 +1021,7 @@ module AiFlow
         fixes = T.let([], T::Array[String])
         outcome = in_worktree(source.branch, refine: !existing.nil?) do |worktree|
           scaffold_index(worktree)
+          @provisioner.provision(@context.owner_repo, worktree)
           result = @agent.launch(
             prompt: prompt, workdir: worktree, command: Command::Learn.new, force: true,
           )

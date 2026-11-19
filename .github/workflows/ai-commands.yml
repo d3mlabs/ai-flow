@@ -383,6 +383,16 @@ jobs:
         working-directory: .ai-flow
         run: dev deps install
 
+      # Inspect, never converge: a job runs as the runner user and has no
+      # business rewriting host posture. dev's ledger (each red line with
+      # its remedy) goes to the job log; drift must not fail a command the
+      # host can still run, so the verdict reaches the dispatcher as an
+      # outcome and lands as one line in the command's reply (ai-flow#140).
+      - name: Check host posture
+        id: posture
+        continue-on-error: true
+        run: dev runner status --check
+
       # The run must record exactly what code ran — the job log is ai-flow's
       # observability surface. Two ai-flow versions are in play and can
       # drift: this workflow YAML resolves from the caller's pin (the
@@ -421,5 +431,6 @@ jobs:
           # App names are globally unique, so an adopter's App may not be
           # named ai-flow — derive the bot login from the actual slug.
           AI_FLOW_BOT_LOGIN: ${{ format('{0}[bot]', steps.app-token.outputs.app-slug || 'ai-flow') }}
+          AI_FLOW_HOST_POSTURE: ${{ steps.posture.outcome == 'failure' && 'drifted' || 'converged' }}
         working-directory: .ai-flow
         run: dev dispatch

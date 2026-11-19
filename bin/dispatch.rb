@@ -33,6 +33,9 @@ File.umask(0o002) if executor.isolation
 
 github = AiFlow::GitHub.new(executor: executor)
 prefix = ENV.fetch("AI_FLOW_COMMAND_PREFIX", "")
+# The workflow ran `dev runner status --check` before this and wrote its
+# verdict; drift reaches the command's reply, never fails the run.
+host_posture = AiFlow::HostPosture.from_env
 
 # A submitted review is one command surface carrying N comment bodies
 # (ai-flow#73): expand it into per-comment dispatches and run them all in
@@ -47,6 +50,7 @@ results = contexts.map do |dispatch_context|
     prefix: prefix,
     executor: executor,
     github: github,
+    host_posture: host_posture,
   ).run
 end
 exit 1 unless results.all?

@@ -851,7 +851,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
-  test "a failed provisioning refuses the pass (WorkspaceProvisionError): no launch, no PR, dev's stderr carried" do
+  test "a failed provisioning refuses the pass (ProvisionError): no launch, no PR, dev's stderr carried" do
     Given "a dev project whose dev deps install fails"
     github = FakeGitHub.new
     github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
@@ -862,7 +862,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     error = T.let(nil, T.nilable(StandardError))
     begin
       run_build(github: github, executor: executor, agent: agent)
-    rescue AiFlow::Commands::Build::WorkspaceProvisionError => e
+    rescue AiFlow::WorkspaceProvisioner::ProvisionError => e
       error = e
     end
 

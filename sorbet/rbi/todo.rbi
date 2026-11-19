@@ -79,3 +79,4 @@ module AiFlow::RunnerSlotTest::Where; end
 module AiFlow::TokenProviderTest::Cleanup; end
 module AiFlow::TokenProviderTest::Then; end
 module AiFlow::ValueEqualityTest::Where; end
+module AiFlow::WorkspaceProvisionerTest::Cleanup; end

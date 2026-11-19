@@ -64,6 +64,18 @@ class AiFlow::Commands::LearnTest < Minitest::Test
       [out, "", true]
     end
 
+    # The provisioning shell-out streams; recorded with its chdir so the
+    # worktree it ran in is assertable.
+    def stream(*argv, stdin: nil, chdir: nil, env: {}, isolate: false)
+      @command_lines << argv.join(" ")
+      stream_chdirs << chdir
+      ["", true]
+    end
+
+    def stream_chdirs
+      @stream_chdirs ||= []
+    end
+
     private
 
     sig { returns(T::Array[String]) }
@@ -96,6 +108,19 @@ class AiFlow::Commands::LearnTest < Minitest::Test
       if argv.take(2) == %w[git push]
         index = File.join(chdir.to_s, INDEX_RELATIVE_PATH)
         @index_after_removal = File.read(index) if File.exist?(index)
+      end
+      super
+    end
+  end
+
+  # A surface whose repo is a dev project: the fake `git worktree add`
+  # leaves a dev.yml in the worktree, as a real one checks out — the
+  # provisioning gate reads the real file.
+  class DevProjectExecutor < RecordingExecutor
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      if argv.take(3) == %w[git worktree add]
+        FileUtils.mkdir_p(argv.fetch(4))
+        File.write(File.join(argv.fetch(4), "dev.yml"), "name: demo\n")
       end
       super
     end
@@ -185,6 +210,27 @@ class AiFlow::Commands::LearnTest < Minitest::Test
     github.comment_edits.fetch(55).include?("✅ **/learn** — drafted")
     github.comment_edits.fetch(55).include?("factory-over-class-methods")
     executor.command_lines.any? { |line| line.include?("push -u origin ai/learn-c55") }
+
+    Cleanup
+    nil
+  end
+
+  test "a /learn on a dev project provisions its worktree before the pass, as /build does (ai-flow#140)" do
+    Given "a dictated lesson on a repo that carries a dev.yml"
+    github = FakeGitHub.new
+    executor = DevProjectExecutor.new(staged: [INDEX, SKILL])
+    provisioned_before_launch = T.let(nil, T.nilable(T::Boolean))
+    agent = FakeAgent.new(["drafted design/factory-over-class-methods"]) do
+      provisioned_before_launch = executor.command_lines.include?("dev deps install")
+    end
+
+    When "learning"
+    run_learn(github: github, executor: executor, body: "/learn prefer a factory over class methods", agent: agent)
+
+    Then "dev deps install ran once, in the worktree, before the agent spawned"
+    executor.command_lines.count("dev deps install") == 1
+    provisioned_before_launch == true
+    executor.stream_chdirs.first == agent.launches.first[:workdir]
 
     Cleanup
     nil

@@ -25,10 +25,14 @@ module AiFlow
     # @param github [AiFlow::GitHub]
     # @param agent [AiFlow::Agent, nil] source of truth for the models the
     #   run actually used; nil (e.g. in tests) leaves the footer run-link-only
-    sig { params(github: GitHub, agent: T.nilable(Agent)).void }
-    def initialize(github:, agent: nil)
+    # @param host_posture [AiFlow::HostPosture] the host's posture as the
+    #   job found it; converged by default, so only a job that checked and
+    #   found drift renders the line
+    sig { params(github: GitHub, agent: T.nilable(Agent), host_posture: HostPosture).void }
+    def initialize(github:, agent: nil, host_posture: HostPosture.from_env({}))
       @github = github
       @agent = agent
+      @host_posture = host_posture
       # Set on the review-panel surface's first write (see
       # upsert_review_panel); later writes edit that comment in place.
       @review_panel_comment_id = T.let(nil, T.nilable(Integer))
@@ -64,7 +68,7 @@ module AiFlow
       end
 
       body = lines.join("\n").rstrip
-      bottom = [appendix, wants_block, footer(run_url)].compact.join("\n\n")
+      bottom = [appendix, wants_block, host_posture_line, footer(run_url)].compact.join("\n\n")
       body = "#{body}\n\n---\n\n#{blockquote(bottom).join("\n")}" unless bottom.empty?
       body
     end
@@ -213,7 +217,7 @@ module AiFlow
       end
 
       body = [review_panel_header(context), "", *lines].join("\n").rstrip
-      bottom = [appendix, wants_block, footer(context.run_url)].compact.join("\n\n")
+      bottom = [appendix, wants_block, host_posture_line, footer(context.run_url)].compact.join("\n\n")
       body = "#{body}\n\n---\n\n#{bottom}" unless bottom.empty?
       body
     end
@@ -248,6 +252,19 @@ module AiFlow
       return nil if wants.empty?
 
       ["🚧 **Boundary wants** — a human decides each:", *Denials.render(wants)].join("\n")
+    end
+
+    # Host drift (ai-flow#140) where the human reads the outcome: the job
+    # log carries `dev runner status --check`'s ledger, this line says a
+    # ledger exists and what to run. Posture is `register`'s to converge,
+    # so the remedy names it.
+    #
+    # @return [String, nil] nil when the host is converged
+    sig { returns(T.nilable(String)) }
+    def host_posture_line
+      return nil unless @host_posture.drifted?
+
+      "🩺 host posture drifted on `#{@host_posture.runner_name}` — re-run `dev runner register` there"
     end
 
     # @return [String] the panel's attribution line — the panel is a bot

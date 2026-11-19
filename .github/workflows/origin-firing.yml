@@ -81,6 +81,13 @@ jobs:
         working-directory: .ai-flow
         run: dev deps install
 
+      # Inspect, never converge (same reasoning as ai-commands.yml): the
+      # ledger lands in the job log; drift does not fail the check, and the
+      # checker has no reply surface, so the log is where it is read.
+      - name: Check host posture
+        continue-on-error: true
+        run: dev runner status --check
+
       - name: Origin-firing check
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}

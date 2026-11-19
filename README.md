@@ -334,11 +334,17 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    prerequisites: the workflow runs `dev deps install` in the ai-flow
    checkout, which provisions the pinned Ruby (a brew bottle from the
    d3mlabs tap's `ruby@X.Y.Z` family, dev ≥ 0.3) and the locked gem set
-   from `dependencies.rb`. /build does the same for every target checkout
-   that carries a `dev.yml`, dispatcher-side, before the agent spawns — a
+   from `dependencies.rb`. Every command that spawns the agent in a
+   checkout carrying a `dev.yml` does the same for that checkout,
+   dispatcher-side, before the agent spawns — /build its worktrees and
+   clones, /edit the job checkout, /learn its worktree and clone — and a
    checkout that cannot be provisioned fails the run with dev's stderr on
    the comment rather than handing the agent a half-equipped workspace
-   (ai-flow#99). A leftover `~/.rbenv/shims` on the service's
+   (ai-flow#99, ai-flow#140). After installing, the workflow runs `dev
+   runner status --check`: the ledger goes to the job log, and when the
+   host has drifted the command's reply carries one line naming the runner
+   and the remedy (`dev runner register` there). Drift never fails a run.
+   A leftover `~/.rbenv/shims` on the service's
    PATH must go: its `gem` shim shadows the keg's once rbenv is gone.
 5. Recommended on any box that also holds a human's credentials (a
   workstation doubling as a runner, or a dedicated box with the owner's gh
