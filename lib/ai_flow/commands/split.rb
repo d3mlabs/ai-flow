@@ -223,12 +223,36 @@ module AiFlow
       def propose(parent, existing, segment)
         menu = repo_menu(parent)
         pool = discovery_pool(menu, parent, existing)
-        output = @agent.launch(
-          prompt: propose_prompt(parent, existing, segment, menu, pool),
-          workdir: @workdir, command: Command::Split.new,
-        )
-        entries = parse_proposal(output)
+        prompt = propose_prompt(parent, existing, segment, menu, pool)
+        entries = begin
+          parse_proposal(launch_proposal(prompt))
+        rescue SubtasksSection::Error => refusal
+          # The schema's refusals (a title past the PR cap, a malformed
+          # key) are constraints the agent satisfies once told which entry
+          # failed; one repair round carries the refusal back rather than
+          # losing the pass (ai-flow#162). A second refusal propagates —
+          # bounded, not a loop.
+          parse_proposal(launch_proposal(repair_prompt(prompt, refusal)))
+        end
         [entries, possible_matches(entries, pool)]
+      end
+
+      # @return [String] the agent's raw output for a propose prompt
+      sig { params(prompt: String).returns(String) }
+      def launch_proposal(prompt)
+        @agent.launch(prompt: prompt, workdir: @workdir, command: Command::Split.new)
+      end
+
+      # @return [String] the propose prompt with the refusal appended
+      sig { params(prompt: String, refusal: SubtasksSection::Error).returns(String) }
+      def repair_prompt(prompt, refusal)
+        <<~PROMPT
+          #{prompt}
+
+          Your previous proposal was refused: #{refusal.message}
+
+          Return the FULL corrected list (every subtask, not just the one that failed), in the same JSON shape.
+        PROMPT
       end
 
       # @return [String] the propose pass's prompt

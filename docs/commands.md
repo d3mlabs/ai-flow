@@ -165,9 +165,13 @@ same-repo form visually).
   are thin tracking shards of it, so titles must be self-explanatory about
   their scope. A title is at most 256 characters: `/build` opens the
   sub-issue's PR under it, and GitHub refuses longer PR titles — both
-  `--dry` and `--apply` refuse a longer one. There is no per-subtask body
-  in the interface; keys outside it are ignored. Bespoke context belongs
-  on the created sub-issue, added after apply.
+  `--dry` and `--apply` refuse a longer one. On `--dry` the agent's
+  proposal gets one repair round first: the refusal goes back to the agent
+  with the request for a full corrected list, and only a second refusal
+  fails the pass. A hand-edited spec on `--apply` is the human's to fix.
+  There is no per-subtask body in the interface; keys outside it are
+  ignored. Bespoke context belongs on the created sub-issue, added after
+  apply.
 - `title` is the reconciliation key — editing a title means "different
   subtask" (the old one closes as stale, a new one is created). Because
   matching sub-issues are kept untouched, context added directly to a
@@ -216,6 +220,11 @@ runs must keep synced — re-splitting later means a fresh `--dry`.
 
 (A malformed hand-edit fails `--apply` loudly by design — the desired
 failure mode for an executable artifact.)
+
+> a subtask title is N characters; a PR title may be at most 256 — shorten it (the plan is the spec, the title only names the scope): …
+
+(On `--dry`, this is what the agent sees in its repair round; it reaches
+the comment only when the agent overruns twice.)
 
 > the plan body changed while /split was running — nothing was written; retry
 
