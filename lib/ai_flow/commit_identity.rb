@@ -12,7 +12,10 @@ module AiFlow
   module CommitIdentity
     extend T::Sig
 
-    DEFAULT_BOT_LOGIN = "ai-flow[bot]"
+    # The org's App slug when the workflow reports none; the bot login is
+    # the slug GitHub suffixes with [bot].
+    DEFAULT_APP_SLUG = "ai-flow"
+    DEFAULT_BOT_LOGIN = T.let("#{DEFAULT_APP_SLUG}[bot]".freeze, String)
 
     # extend self (not module_function): module_function copies methods onto
     # the singleton before sorbet-runtime wraps them, silently skipping every

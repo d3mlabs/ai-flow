@@ -353,6 +353,76 @@ class FakeGitHub < AiFlow::GitHub
     "main"
   end
 
+  # The org-side adoption reads (ai-flow#160): repositories, org secrets
+  # and App installations are seeded; unseeded ones answer NotFound the
+  # way gh does.
+  def seed_repository(owner_repo, id:, visibility: "private")
+    @repositories ||= {}
+    @repositories[owner_repo] = AiFlow::GitHub::Repository.new(id: id, full_name: owner_repo, visibility: visibility)
+  end
+
+  def repository(owner_repo)
+    @calls << [:repository, owner_repo]
+    (@repositories || {}).fetch(owner_repo) { raise AiFlow::GitHub::NotFound, "gh api repos/#{owner_repo} failed: HTTP 404" }
+  end
+
+  def seed_org_secret(org, name, visibility:, repositories: [])
+    @org_secrets ||= {}
+    @org_secrets[[org, name]] = AiFlow::GitHub::OrgSecret.new(
+      name: name, visibility: AiFlow::GitHub::OrgSecret::Visibility.deserialize(visibility),
+    )
+    @org_secret_repositories ||= {}
+    @org_secret_repositories[[org, name]] = repositories.dup
+  end
+
+  def org_secret(org, name)
+    @calls << [:org_secret, org, name]
+    (@org_secrets || {}).fetch([org, name]) do
+      raise AiFlow::GitHub::NotFound, "gh api orgs/#{org}/actions/secrets/#{name} failed: HTTP 404"
+    end
+  end
+
+  def org_secret_repositories(org, name)
+    @calls << [:org_secret_repositories, org, name]
+    (@org_secret_repositories || {}).fetch([org, name])
+  end
+
+  def add_org_secret_repository(org, name, repository_id)
+    @calls << [:add_org_secret_repository, org, name, repository_id]
+    repo = (@repositories || {}).values.find { |candidate| candidate.id == repository_id }
+    (@org_secret_repositories || {}).fetch([org, name]) << repo.full_name if repo
+  end
+
+  def seed_app_installation(org, id:, app_slug:, repository_selection:, repositories: [])
+    @app_installations ||= Hash.new { |hash, key| hash[key] = [] }
+    @app_installations[org] << AiFlow::GitHub::AppInstallation.new(
+      id: id, app_slug: app_slug,
+      repository_selection: AiFlow::GitHub::AppInstallation::RepositorySelection.deserialize(repository_selection),
+    )
+    @installation_repositories ||= {}
+    @installation_repositories[id] = repositories
+  end
+
+  # An org the fake knows about answers an empty list; an unknown owner
+  # answers NotFound, as the endpoint does for a user account.
+  def seed_org(org)
+    @app_installations ||= Hash.new { |hash, key| hash[key] = [] }
+    @app_installations[org]
+  end
+
+  def org_app_installations(org)
+    @calls << [:org_app_installations, org]
+    installations = @app_installations || {}
+    raise AiFlow::GitHub::NotFound, "gh api orgs/#{org}/installations failed: HTTP 404" unless installations.key?(org)
+
+    installations.fetch(org)
+  end
+
+  def installation_repositories(installation_id)
+    @calls << [:installation_repositories, installation_id]
+    (@installation_repositories || {}).fetch(installation_id)
+  end
+
   def api(path, method: nil, payload: nil)
     @calls << [:api, path, method]
     # Payloads ride a separate log: @calls keeps its triple shape, which
