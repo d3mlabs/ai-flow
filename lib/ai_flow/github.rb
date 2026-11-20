@@ -12,7 +12,16 @@ module AiFlow
 
     class Error < StandardError; end
 
+    # The endpoint answered 404: the resource does not exist, or this
+    # token cannot see it (GitHub hides both behind one status). Typed
+    # apart from Error because `adopt` reads absence as a fact to report —
+    # a secret not created, an App not installed — never as a crash.
+    class NotFound < Error; end
+
     PULL_REQUEST_URL = %r{\Ahttps://github\.com/(?<repo>[\w.-]+/[\w.-]+)/pull/(?<number>\d+)\z}
+
+    # How gh spells a 404 on stderr (`gh: Not Found (HTTP 404)`).
+    NOT_FOUND_STATUS = "HTTP 404"
 
     # The title GitHub accepts for a pull request: at most LIMIT characters
     # (the REST API answers 422 Validation Failed above it). Issue titles
@@ -163,6 +172,63 @@ module AiFlow
       end
     end
 
+    # A repository as the org-side adoption steps need it: the numeric id
+    # is what the org-secret selected-repositories API keys on, and the
+    # visibility decides whether a `private` org secret can reach it.
+    class Repository < T::Struct
+      extend T::Sig
+
+      const :id, Integer
+      const :full_name, String
+      # GitHub's word: "public", "private", or "internal" (enterprise).
+      const :visibility, String
+
+      # @return [String] the owner half of full_name — the org, for an
+      #   org-owned repo
+      sig { returns(String) }
+      def owner
+        full_name.split("/", 2).fetch(0)
+      end
+
+      # @return [Boolean] whether the repo is public
+      sig { returns(T::Boolean) }
+      def public?
+        visibility == "public"
+      end
+    end
+
+    # An organization Actions secret: its name and which repos see it.
+    class OrgSecret < T::Struct
+      # GitHub's three visibilities for an org secret.
+      class Visibility < T::Enum
+        enums do
+          All = new("all")
+          Private = new("private")
+          Selected = new("selected")
+        end
+      end
+
+      const :name, String
+      const :visibility, Visibility
+    end
+
+    # One GitHub App installed in an organization, as the org's owner sees
+    # it: which App (by slug), and whether it covers every repo or a
+    # selected list.
+    class AppInstallation < T::Struct
+      # GitHub's two repository selections for an installation.
+      class RepositorySelection < T::Enum
+        enums do
+          All = new("all")
+          Selected = new("selected")
+        end
+      end
+
+      const :id, Integer
+      const :app_slug, String
+      const :repository_selection, RepositorySelection
+    end
+
     class << self
       extend T::Sig
 
@@ -206,7 +272,7 @@ module AiFlow
       # T.unsafe: splatting a runtime-built argv into capture's rest param
       # is beyond Sorbet's static splat support (srb.help/7019).
       out, err, ok = T.unsafe(@executor).capture(*argv, stdin: payload && JSON.generate(payload))
-      raise Error, "gh api #{path} failed: #{err.strip}" unless ok
+      raise_api_error(path, err) unless ok
 
       out.empty? ? nil : JSON.parse(out)
     end
@@ -222,10 +288,29 @@ module AiFlow
     def api_list(path)
       separator = path.include?("?") ? "&" : "?"
       out, err, ok = @executor.capture("gh", "api", "--paginate", "--slurp", "#{path}#{separator}per_page=100")
-      raise Error, "gh api #{path} failed: #{err.strip}" unless ok
+      raise_api_error(path, err) unless ok
       return [] if out.empty?
 
       T.cast(JSON.parse(out), T::Array[T::Array[T::Hash[String, T.untyped]]]).flatten(1)
+    end
+
+    # Every element of a list endpoint whose pages are objects carrying the
+    # list under one key (`{total_count, repositories: [...]}` — the shape
+    # of the secrets and installations listings), across pages. Same
+    # --paginate --slurp walk as api_list; the pages are unwrapped here.
+    #
+    # @param path [String] the endpoint, without a per_page parameter
+    # @param key [String] the list's key inside each page
+    # @return [Array<Hash>] the pages' lists, concatenated in order
+    sig { params(path: String, key: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+    def api_keyed_list(path, key)
+      separator = path.include?("?") ? "&" : "?"
+      out, err, ok = @executor.capture("gh", "api", "--paginate", "--slurp", "#{path}#{separator}per_page=100")
+      raise_api_error(path, err) unless ok
+      return [] if out.empty?
+
+      pages = T.cast(JSON.parse(out), T::Array[T::Hash[String, T.untyped]])
+      pages.flat_map { |page| T.cast(page.fetch(key), T::Array[T::Hash[String, T.untyped]]) }
     end
 
     # @param query [String] GraphQL query/mutation with $variables
@@ -506,6 +591,86 @@ module AiFlow
       api("repos/#{owner_repo}").fetch("default_branch")
     end
 
+    # @param owner_repo [String]
+    # @return [Repository]
+    # @raise [NotFound] when the repo does not exist or is out of reach
+    sig { params(owner_repo: String).returns(Repository) }
+    def repository(owner_repo)
+      data = api("repos/#{owner_repo}")
+      Repository.new(id: data.fetch("id"), full_name: data.fetch("full_name"), visibility: data.fetch("visibility"))
+    end
+
+    # An organization Actions secret's metadata (never its value — the API
+    # has no read for that). Org-owner auth.
+    #
+    # @param org [String]
+    # @param name [String] the secret's name
+    # @return [OrgSecret]
+    # @raise [NotFound] when the org has no secret by that name (or the
+    #   owner is not an organization)
+    sig { params(org: String, name: String).returns(OrgSecret) }
+    def org_secret(org, name)
+      data = api("orgs/#{org}/actions/secrets/#{name}")
+      OrgSecret.new(
+        name: data.fetch("name"),
+        visibility: OrgSecret::Visibility.deserialize(data.fetch("visibility")),
+      )
+    end
+
+    # The repositories a `selected`-visibility org secret is shared with.
+    #
+    # @param org [String]
+    # @param name [String] the secret's name
+    # @return [Array<String>] "owner/repo" names
+    sig { params(org: String, name: String).returns(T::Array[String]) }
+    def org_secret_repositories(org, name)
+      api_keyed_list("orgs/#{org}/actions/secrets/#{name}/repositories", "repositories")
+        .map { |repo| repo.fetch("full_name") }
+    end
+
+    # Share a `selected`-visibility org secret with one more repository.
+    # Idempotent on GitHub's side: re-adding a selected repo is a 204.
+    #
+    # @param org [String]
+    # @param name [String] the secret's name
+    # @param repository_id [Integer] the repo's numeric id
+    # @return [void]
+    sig { params(org: String, name: String, repository_id: Integer).void }
+    def add_org_secret_repository(org, name, repository_id)
+      api("orgs/#{org}/actions/secrets/#{name}/repositories/#{repository_id}", method: "PUT")
+    end
+
+    # The GitHub Apps installed in an organization, as its owner sees them.
+    # The App's own `repos/<r>/installation` lookup needs the App's JWT;
+    # this is the read a human's org-admin token has.
+    #
+    # @param org [String]
+    # @return [Array<AppInstallation>]
+    # @raise [NotFound] when the owner is not an organization this token
+    #   administers
+    sig { params(org: String).returns(T::Array[AppInstallation]) }
+    def org_app_installations(org)
+      api_keyed_list("orgs/#{org}/installations", "installations").map do |data|
+        AppInstallation.new(
+          id: data.fetch("id"),
+          app_slug: data.fetch("app_slug"),
+          repository_selection: AppInstallation::RepositorySelection.deserialize(data.fetch("repository_selection")),
+        )
+      end
+    end
+
+    # The repositories one installation grants access to, among those the
+    # authenticated user can see — for an org owner, the installation's
+    # whole selected list.
+    #
+    # @param installation_id [Integer]
+    # @return [Array<String>] "owner/repo" names
+    sig { params(installation_id: Integer).returns(T::Array[String]) }
+    def installation_repositories(installation_id)
+      api_keyed_list("user/installations/#{installation_id}/repositories", "repositories")
+        .map { |repo| repo.fetch("full_name") }
+    end
+
     # @return [PullRequest]
     sig { params(owner_repo: String, number: Integer).returns(PullRequest) }
     def pull_request(owner_repo, number)
@@ -570,6 +735,22 @@ module AiFlow
     end
 
     private
+
+    # The one place a failed `gh api` becomes a typed error, so a 404 is
+    # distinguishable from every other failure at every call site.
+    #
+    # @param path [String] the REST path that failed
+    # @param err [String] gh's stderr
+    # @return [void]
+    # @raise [NotFound] on a 404
+    # @raise [Error] on any other failure
+    sig { params(path: String, err: String).void }
+    def raise_api_error(path, err)
+      message = "gh api #{path} failed: #{err.strip}"
+      raise NotFound, message if err.include?(NOT_FOUND_STATUS)
+
+      raise Error, message
+    end
 
     # @param thread [Hash] a GraphQL reviewThreads node
     # @return [ReviewThread]
