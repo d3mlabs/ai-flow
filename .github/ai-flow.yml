@@ -1,0 +1,13 @@
+# ai-flow per-repo configuration (see templates/ai-flow.yml).
+#
+# models: command name => agent model, plus an optional `default` blanket
+# covering unlisted commands. Valid names come from the ACP session
+# catalog, NOT from `agent --list-models` (ai-flow#84); a handle that
+# fails to resolve dumps the catalog (names + modelIds) in the run error.
+# Precedence per command: models.<command> > models.default > CLI default.
+models:
+  default: claude-fable-5-1
+
+# The org knowledge repo that /learn --promote and capture-declared
+# PROMOTE: route org-tier lessons to.
+knowledge_repo: d3mlabs/knowledge

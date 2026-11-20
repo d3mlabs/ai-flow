@@ -192,6 +192,10 @@ Architecture (system diagram, job lifecycle, module map, command flows):
 see [docs/architecture.md](docs/architecture.md).
 
 - `.github/workflows/ai-commands.yml` — the reusable workflow (`workflow_call`).
+- `.github/workflows/ai-commands-caller.yml` — this repo's own caller: ai-flow
+is an adopter of itself (the template under the only free name). The
+dispatcher a job runs and the checkout it edits are different trees; see
+[docs/security.md](docs/security.md).
 - `bin/dispatch.rb` — job entry point; parses the event, gates, routes.
 - `lib/ai_flow/` — comment parsing, anchor resolution, the `Agent#launch`
 seam (the one place that invokes the `agent` CLI — swap the backend here),

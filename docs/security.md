@@ -78,6 +78,22 @@ merge. *Human gate, on a path with a small, known set of writers.*
 Adopters mirror the same entry on their own `.github/workflows/` to keep
 the caller workflow's conditions from quiet loosening.
 
+### ai-flow as its own adopter
+
+ai-flow carries a caller (`ai-commands-caller.yml`) and takes `/build`s on
+its own issues. The job holds two trees of this repo: the dispatcher
+checkout at `.ai-flow/` (`main`; after plans#76, the deployed release),
+which runs, and the target checkout on a build branch, which the agent
+edits. The agent's only output is a PR; `main` — what the next job runs —
+moves only on a human merge. Workflow-file edits are lifted out of the
+commit as a patch (`Build#extract_workflows_patch`) and need the code-owner
+review above, so the bot cannot author the root of trust even on its own
+repo. The agent subprocess's read-only token cannot post a command, so a
+`/build` on ai-flow cannot trigger another. `.ai-flow/` is gitignored here
+so the dispatcher's copy of the source never reads as part of the target.
+`ci.yml` runs on GitHub-hosted runners: a test change the bot proposes
+never executes on an agent host.
+
 ### Unauthorized commenters
 
 On a public repo anyone can comment, and the job-level `if` has to admit
