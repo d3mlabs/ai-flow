@@ -13,5 +13,10 @@ tmp/
 # SimpleCov output
 /coverage/
 
+# The reusable workflow checks the dispatcher out here inside the target
+# repo; when the target is ai-flow itself that is a second copy of this
+# source tree, and the agent must not mistake it for the one it edits.
+.ai-flow/
+
 # IDE state
 .idea/
