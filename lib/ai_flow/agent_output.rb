@@ -16,6 +16,14 @@ module AiFlow
 
     SEGMENT_DELIMITER = /<<<AI-FLOW:SEGMENT (\d+)>>>/
 
+    # The root-cause gate's escape hatch (the learn prompt): a pass that
+    # finds a fixable cause declares `FIX: <proposal>`, one per line, in its
+    # final output. The line is protocol, not segment text: Learn#fix_notes
+    # reads the declarations from the raw output and renders each once as a
+    # panel note; parse drops them from the segments so the summary does
+    # not carry them a second time (ai-flow#169).
+    FIX_LINE = /^FIX:\s*(.+?)\s*$/
+
     # Segment-index → text map.
     class Parsed < T::Struct
       const :segments, T::Hash[Integer, String]
@@ -43,7 +51,7 @@ module AiFlow
         if (match = SEGMENT_DELIMITER.match(line.strip)) && match[0] == line.strip
           flush.call
           current = Integer(match[1])
-        else
+        elsif !FIX_LINE.match?(line)
           buffer << line
         end
       end
