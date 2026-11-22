@@ -86,6 +86,10 @@ jobs:
       # checker has no reply surface, so the log is where it is read.
       - name: Check host posture
         continue-on-error: true
+        # In the dispatcher checkout, whose dependencies the step above just
+        # installed: in a target that is itself a dev project, dev's
+        # staleness gate would fire first and read as drift (ai-flow#166).
+        working-directory: .ai-flow
         run: dev runner status --check
 
       - name: Origin-firing check

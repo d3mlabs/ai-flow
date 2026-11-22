@@ -80,6 +80,17 @@ class AiFlow::Commands::BuildTest < Minitest::Test
       nil
     end
 
+    # `git rev-parse --git-path <x>` answers under a real throwaway git dir,
+    # so what Build writes there (the dispatcher-checkout exclude) is a
+    # real file the test reads back. Made on first ask, removed at exit.
+    def git_dir
+      @git_dir ||= Pathname(Dir.mktmpdir("fake-git-dir")).tap { |dir| at_exit { FileUtils.rm_rf(dir) } }
+    end
+
+    def exclude_file
+      git_dir / "info" / "exclude"
+    end
+
     # The release is the real one's job (the fake owns no agent); recorded
     # so the ensure path and its ordering after the worktree remove are
     # assertable, and the tmpdir removed so tests leave nothing behind.
@@ -122,6 +133,8 @@ class AiFlow::Commands::BuildTest < Minitest::Test
           else
             "lib/thing.rb\n"
           end
+        elsif argv.take(3) == %w[git rev-parse --git-path]
+          "#{git_dir / argv.fetch(3)}\n"
         elsif argv.take(2) == %w[git rev-parse]
           argv.last == "origin/main" ? "#{BASE_SHA}\n" : "abc1234def5678\n"
         elsif argv.include?("--diff-filter=U")
@@ -1077,7 +1090,8 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     agent.prompts.first.include?("<<<THREAD 1>>> (lib/thing.rb)")
     agent.prompts.first.include?("this walk is O(n^2)")
     executor.command_lines.any? { |line| line.include?("commit -m") && line.include?("ai-flow /build: fix the failing CI") }
-    executor.command_lines.include?("git add -A -- :(exclude).ai-flow")
+    executor.command_lines.include?("git add -A")
+    executor.command_lines.none? { |line| line.include?(":(exclude)") }
     executor.command_lines.include?("git push")
     executor.command_lines.none? { |line| line.include?(" rebase ") }
     github.calls.map(&:first).none? { |kind| kind == :create_pull_request }
@@ -1093,6 +1107,51 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+
+  test "a PR iteration excludes the dispatcher checkout through the checkout's own info/exclude, before the agent runs (ai-flow#166)" do
+    Given "a PR with an instruction, and an agent that reads the exclude file as it launches"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Fix", body: "")
+    github.seed_pull_request(REPO, 7, head_ref: "feature-branch", base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build tidy", pull_request: true)
+    executor = RecordingExecutor.new
+    seen_at_launch = T.let(nil, T.nilable(String))
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\ndone"]) do |_prompt, _workdir|
+      seen_at_launch = executor.exclude_file.exist? ? executor.exclude_file.read : nil
+    end
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build tidy", context: context, agent: agent)
+
+    Then "the exclude names .ai-flow/ when the agent starts, and staging carries no pathspec"
+    seen_at_launch == ".ai-flow/\n"
+    executor.command_lines.include?("git rev-parse --git-path info/exclude")
+    executor.command_lines.include?("git add -A")
+    executor.command_lines.none? { |line| line.include?(":(exclude)") }
+
+    Cleanup
+    FileUtils.rm_rf(executor.git_dir)
+  end
+
+  test "the dispatcher-checkout exclude is written once: a checkout that already carries it is left alone (ai-flow#166)" do
+    Given "an exclude file that already lists .ai-flow/ beside another entry"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Fix", body: "")
+    github.seed_pull_request(REPO, 7, head_ref: "feature-branch", base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build tidy", pull_request: true)
+    executor = RecordingExecutor.new
+    executor.exclude_file.dirname.mkpath
+    executor.exclude_file.write("*.swp\n.ai-flow/\n")
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build tidy", context: context)
+
+    Then "the file is unchanged"
+    executor.exclude_file.read == "*.swp\n.ai-flow/\n"
+
+    Cleanup
+    FileUtils.rm_rf(executor.git_dir)
+  end
   test "a CONFLICTING PR is rebased onto its base before the agent runs; a clean rebase pushes --force-with-lease" do
     Given "a PR GitHub reports as not mergeable, whose rebase onto its base applies cleanly"
     github = FakeGitHub.new
