@@ -355,6 +355,30 @@ flowchart TD
 - **Identity**: the App secrets; the bot login self-configures from the
   App's slug (`AI_FLOW_BOT_LOGIN`).
 
+## Adoption: `ai-flow adopt`
+
+`exe/ai-flow adopt <owner/repo>` is the one command ai-flow ships for a
+human's terminal. `Cli` turns argv into the subcommand and is the one place
+a typed error becomes an exit status; `Adoption` runs four steps in order
+and returns one `Outcome` per step — `Changed`, `Settled`, or `Finding`
+with a remedy — which `Cli::Adopt` renders. The steps own what ai-flow can
+derive: `CallerWorkflow` writes `.github/workflows/ai-commands.yml` from
+the caller template when absent and, when present, compares the ref its
+job `uses:` against the template's (a different ref is a finding, never a
+rewrite); `RepoConfigFile` writes `.github/ai-flow.yml` from its template,
+`knowledge_repo:` filled from `--knowledge-repo`; `SecretAccess` puts the
+repo on each of `Adoption::SECRETS`' selected-repositories list through
+`GitHub#add_org_secret_repository`, idempotently; `AppInstallation` reads
+the org's installations and reports whether the App covers the repo —
+installing needs the App's own credentials, so there is no write.
+
+`Adoption::SECRETS` is the documented literal for the three names the
+reusable workflow declares under `workflow_call.secrets` and the caller
+template forwards; a test holds the three lists equal. The expected
+`uses:` is read from the template at run time, so moving the template's
+ref moves the drift check with it. Runner-group admission is dev's
+(`dev runner register --org` from the repo's checkout) and is not a step.
+
 ## Per-repo config: .github/ai-flow.yml
 
 Knobs split by consumer: values read by workflow-engine expressions

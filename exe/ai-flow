@@ -1,0 +1,15 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The ai-flow executable. `bin/` is written by dev's closure install (the
+# wrappers), so the executable lives in `exe/`, as a gem's does.
+# `ai-flow adopt <owner/repo>` is the first subcommand; the dispatcher and
+# the origin-firing check keep their bin/ entry points until they move
+# here. Runs with the Ruby ai-flow's own environment provides (`dev up` in
+# this checkout, or the deployed tree's closure).
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "ai_flow"
+
+exit AiFlow::Cli.new(root: File.expand_path("..", __dir__)).run(ARGV)

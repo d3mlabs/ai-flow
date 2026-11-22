@@ -403,4 +403,147 @@ class AiFlow::GitHubTest < Minitest::Test
     Cleanup
     nil
   end
+
+  # Fails every gh call the way gh reports an HTTP error on stderr.
+  class FailingExecutor < AiFlow::Executor
+    def initialize(stderr:)
+      @stderr = stderr
+    end
+
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      ["", @stderr, false]
+    end
+  end
+
+  test "a gh 404 is a NotFound carrying gh's words" do
+    Given "gh answering Not Found"
+    github = AiFlow::GitHub.new(executor: FailingExecutor.new(stderr: "gh: Not Found (HTTP 404)\n"))
+
+    When "reading a repository"
+    read = -> { github.repository("acme/widgets") }
+
+    Then "the typed error carries gh's words"
+    error = assert_raises(AiFlow::GitHub::NotFound) { read.call }
+    error.message == "gh api repos/acme/widgets failed: gh: Not Found (HTTP 404)"
+  end
+
+  test "any other gh failure stays the plain Error — a 403 is not an absence" do
+    Given "gh answering Forbidden"
+    github = AiFlow::GitHub.new(executor: FailingExecutor.new(stderr: "gh: Resource not accessible by integration (HTTP 403)\n"))
+
+    When "reading a repository"
+    error = begin
+      github.repository("acme/widgets")
+    rescue AiFlow::GitHub::Error => e
+      e
+    end
+
+    Then
+    error.instance_of?(AiFlow::GitHub::Error)
+
+    Cleanup
+    nil
+  end
+
+  test "repository reads the id and visibility the org-side steps key on" do
+    Given
+    executor = CannedExecutor.new(out: JSON.generate({ "id" => 777, "full_name" => "acme/widgets", "visibility" => "public" }))
+
+    When
+    repository = AiFlow::GitHub.new(executor: executor).repository("acme/widgets")
+
+    Then
+    executor.command_lines == ["gh api repos/acme/widgets"]
+    repository.id == 777
+    repository.owner == "acme"
+    repository.public?
+
+    Cleanup
+    nil
+  end
+
+  test "org_secret reads an org secret's visibility as the typed enum" do
+    Given
+    executor = CannedExecutor.new(out: JSON.generate({ "name" => "CURSOR_API_KEY", "visibility" => "selected" }))
+
+    When
+    secret = AiFlow::GitHub.new(executor: executor).org_secret("acme", "CURSOR_API_KEY")
+
+    Then
+    executor.command_lines == ["gh api orgs/acme/actions/secrets/CURSOR_API_KEY"]
+    secret.visibility == AiFlow::GitHub::OrgSecret::Visibility::Selected
+
+    Cleanup
+    nil
+  end
+
+  test "org_secret_repositories unwraps the keyed pages the secrets listing paginates in" do
+    Given "two pages, each an object carrying its repositories"
+    pages = [
+      { "total_count" => 3, "repositories" => [{ "full_name" => "acme/a" }, { "full_name" => "acme/b" }] },
+      { "total_count" => 3, "repositories" => [{ "full_name" => "acme/c" }] },
+    ]
+    executor = CannedExecutor.new(out: JSON.generate(pages))
+
+    When
+    names = AiFlow::GitHub.new(executor: executor).org_secret_repositories("acme", "CURSOR_API_KEY")
+
+    Then
+    executor.command_lines == ["gh api --paginate --slurp orgs/acme/actions/secrets/CURSOR_API_KEY/repositories?per_page=100"]
+    names == ["acme/a", "acme/b", "acme/c"]
+
+    Cleanup
+    nil
+  end
+
+  test "add_org_secret_repository PUTs the repo by id, with no body" do
+    Given
+    executor = CannedExecutor.new(out: "")
+
+    When
+    AiFlow::GitHub.new(executor: executor).add_org_secret_repository("acme", "CURSOR_API_KEY", 777)
+
+    Then
+    executor.command_lines == ["gh api -X PUT orgs/acme/actions/secrets/CURSOR_API_KEY/repositories/777"]
+    executor.stdins == [nil]
+
+    Cleanup
+    nil
+  end
+
+  test "org_app_installations lists the org's installations with their selection, typed" do
+    Given
+    pages = [{ "total_count" => 1, "installations" => [
+      { "id" => 55, "app_slug" => "ai-flow", "repository_selection" => "selected" },
+    ] }]
+    executor = CannedExecutor.new(out: JSON.generate(pages))
+
+    When
+    installations = AiFlow::GitHub.new(executor: executor).org_app_installations("acme")
+
+    Then
+    executor.command_lines == ["gh api --paginate --slurp orgs/acme/installations?per_page=100"]
+    installations.map(&:id) == [55]
+    installations.map(&:app_slug) == ["ai-flow"]
+    installations.map(&:repository_selection) == [AiFlow::GitHub::AppInstallation::RepositorySelection::Selected]
+
+    Cleanup
+    nil
+  end
+
+  test "installation_repositories reads the user-visible repos of one installation" do
+    Given
+    pages = [{ "total_count" => 1, "repositories" => [{ "full_name" => "acme/widgets" }] }]
+    executor = CannedExecutor.new(out: JSON.generate(pages))
+
+    When
+    names = AiFlow::GitHub.new(executor: executor).installation_repositories(55)
+
+    Then
+    executor.command_lines == ["gh api --paginate --slurp user/installations/55/repositories?per_page=100"]
+    names == ["acme/widgets"]
+
+    Cleanup
+    nil
+  end
 end

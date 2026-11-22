@@ -197,10 +197,14 @@ is an adopter of itself (the template under the only free name). The
 dispatcher a job runs and the checkout it edits are different trees; see
 [docs/security.md](docs/security.md).
 - `bin/dispatch.rb` — job entry point; parses the event, gates, routes.
+- `exe/ai-flow` — the `ai-flow` executable: `ai-flow adopt <owner/repo>`
+runs the adoption checklist's derivable steps on a repo (below).
 - `lib/ai_flow/` — comment parsing, anchor resolution, the `Agent#launch`
 seam (the one place that invokes the `agent` CLI — swap the backend here),
-GitHub API access via `gh`, and the five command implementations.
-- `templates/caller-workflow.yml` — the ~10-line workflow each repo copies.
+GitHub API access via `gh`, the five command implementations, and
+`Adoption` (what `ai-flow adopt` converges and reports).
+- `templates/caller-workflow.yml` — the ~10-line workflow each repo copies;
+`ai-flow adopt` writes it.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
 repos using `dev plan`.
 - `docs/` — [commands.md](docs/commands.md) (the normative command
@@ -271,6 +275,28 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
 
 ## Adoption checklist (per repo)
 
+`ai-flow adopt <owner/repo>` does steps 1, 2 and 6 and reports the App
+half of step 2. Run it from the adopting repo's checkout (or point
+`--checkout` at one) with a gh login that administers the org:
+
+```sh
+cd ~/src/my-repo
+~/src/ai-flow/exe/ai-flow adopt my-org/my-repo --knowledge-repo my-org/knowledge
+```
+
+It prints one line per step — `changed`, `settled`, or `finding` with the
+remedy under it — and exits 1 while any finding remains. It writes the two
+files when absent (commit and push them yourself), puts the repo on each
+org secret's selected-repositories list, and never edits a file that is
+already there or console state it cannot derive: a caller workflow calling
+another ref than the template's is reported as drift, a secret the org
+lacks is reported with the `gh secret set` command, and the App not being
+installed on the repo is reported with the settings page where it is added.
+Re-running is safe; every step settles once done. Pass `--app <slug>` when
+your org registered the App under a name other than `ai-flow`. Runner-group
+admission (step 3) stays `dev runner register --org` from the same
+checkout. The by-hand equivalents:
+
 1. Copy `templates/caller-workflow.yml` to `.github/workflows/ai-commands.yml`
   (works for code repos and the org plans repo alike).
 2. Ensure the org secrets are available to the repo (or add repo secrets):
@@ -281,7 +307,7 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    package's source repo too, with Packages: Read-only granted on the App
    (see the identity section). Our org secrets use `selected` visibility, so add
    the adopting repo to each secret's repository list (org settings →
-   secrets, or `gh secret set <name> --org <org> --visibility selected  --repos <list>`). Note `private` visibility excludes public repos  entirely — a public caller's job fails at the "Require the ai-flow App"spl  step until the secret is shared with it.
+   secrets, or `gh secret set <name> --org <org> --visibility selected --repos <list>`). Note `private` visibility excludes public repos entirely — a public caller's job fails at the "Require the ai-flow App" step until the secret is shared with it.
 3. Register self-hosted runners with the labels the workflow routes on —
    the **ai-flow label vocabulary**: the per-command labels `ai-ask`,
    `ai-edit`, `ai-split`, `ai-build`, `ai-learn` (the reusable workflow's
@@ -376,8 +402,10 @@ requesting human, whose accountability lives on the PR (`Requested by @login`, P
    [plans#61](https://github.com/d3mlabs/plans/issues/61); the Ruby repos
    need no engine. Unset means dispatcher and agent share one user —
    today's behavior, and what local dev and tests use.
-6. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` to set
-  model policy (`models.default`, per-command overrides — see
+6. Optional: copy `templates/ai-flow.yml` to `.github/ai-flow.yml` (what
+   `ai-flow adopt` writes, with `knowledge_repo:` filled from
+   `--knowledge-repo`) to set
+   model policy (`models.default`, per-command overrides — see
    [docs/architecture.md](docs/architecture.md#per-repo-config-githubai-flowyml));
    valid names come from the ACP session catalog, not `agent --list-models`
    (a different naming domain — ai-flow#84); a handle that fails to resolve
