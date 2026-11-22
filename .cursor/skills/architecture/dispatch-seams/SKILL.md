@@ -8,10 +8,18 @@ description: >-
 
 # Dispatch seams: one owner per boundary
 
-A comment travels `bin/dispatch.rb` → `Context.from_event_file` →
-`Dispatcher#run` → a command object. Each boundary has exactly one owner;
-a change at a boundary is a change in that one class:
+A comment travels `exe/ai-flow dispatch` → `Cli::Dispatch` →
+`Context.from_event_file` → `Dispatcher#run` → a command object. Each
+boundary has exactly one owner; a change at a boundary is a change in
+that one class:
 
+- **`Cli`** is the executable's argv-to-subcommand seam and wires the
+  collaborators once, in order — `TokenProvider.from_env` first (it
+  scrubs the App key from the env), `Executor` on it, `GitHub` and
+  `Agent` on that. `Cli::Dispatch` and `Cli::Gate` own the job entry
+  points' exit decisions; `Cli::Job` is the one place the Actions job
+  env's keys are spelled. New subcommands route here, never in a new
+  `bin/` script — a deployed tree's `bin/` is dev's generated wrappers.
 - **`Dispatcher`** re-checks what the workflow's coarse filter can't
   (parseability, the permission gate, batch validity), acks with the 👀
   reaction, edits the ⏳ follow-along line onto the comment, and routes:
