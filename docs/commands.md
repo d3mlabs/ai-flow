@@ -557,8 +557,10 @@ design rule the fix embodies (or nothing) and declares the fix on a final
 output line, `FIX: <where it lives> — <the one-line change>` (one per
 line). Every surface carrying the rubric — `/learn`, and `/build` with
 capture on — relays each declared fix as the same `🔧` panel note, next to
-the capture outcome; nothing is applied or filed automatically, and the
-humans at the gate own the follow-up.
+the capture outcome, and that note is the declaration's only appearance:
+the raw `FIX:` line is dropped from the summary the panel quotes. Nothing
+is applied or filed automatically; the humans at the gate own the
+follow-up.
 
 > ℹ️ **/learn** — no learning drafted: the pass proposed a root-cause fix instead.
 > 🔧 proposed root-cause fix (for a human to file): dev — make the scrub guard spawn its own bundler activation
