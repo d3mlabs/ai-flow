@@ -6,9 +6,7 @@ require "stringio"
 module AiFlow
   # The `ai-flow` executable's command surface (exe/ai-flow): the one place
   # argv becomes a subcommand, and the one rescue site where a typed error
-  # becomes an exit status and a stderr line. A dependency's commands reach
-  # a user through its own exe on PATH, not through dev surfacing them
-  # (plans#76); this is ai-flow's.
+  # becomes an exit status and a stderr line.
   class Cli
     extend T::Sig
 
