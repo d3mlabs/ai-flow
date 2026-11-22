@@ -143,15 +143,18 @@ class AiFlow::ExecutorTest < Minitest::Test
     Given "a bare executor"
     executor = AiFlow::Executor.new
 
-    When "capturing a subprocess that checks for injected keys"
+    When "capturing a subprocess that lists its GIT_CONFIG_* slots"
     executor.refresh_auth!
     out, _err, ok = executor.capture(
-      RUBY, "-e", 'print ENV.key?("GIT_CONFIG_KEY_0").to_s',
+      RUBY, "-e", 'print ENV.select { |key, _| key.start_with?("GIT_CONFIG_") }.sort.inspect',
     )
 
-    Then "no git auth key was injected"
+    Then "the child sees exactly the slots this process inherited — none added"
+    # Compared against our own env rather than asserted empty: under
+    # actions/checkout the job already carries GIT_CONFIG_KEY_0 and the
+    # dispatcher must pass it through (ai-flow#166).
     ok
-    out == "false"
+    out == ENV.select { |key, _| key.start_with?("GIT_CONFIG_") }.sort.inspect
 
     Cleanup
     nil
