@@ -391,6 +391,10 @@ jobs:
       - name: Check host posture
         id: posture
         continue-on-error: true
+        # In the dispatcher checkout, whose dependencies the step above just
+        # installed: in a target that is itself a dev project, dev's
+        # staleness gate would fire first and read as drift (ai-flow#166).
+        working-directory: .ai-flow
         run: dev runner status --check
 
       # The run must record exactly what code ran — the job log is ai-flow's

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
 require "shellwords"
 require "time"
 require "tmpdir"
@@ -52,6 +53,10 @@ module AiFlow
       # pull_request events before any human merges it. Excluded from every
       # commit; the diff surfaces in the result panel as a suggested patch.
       WORKFLOWS_DIR = ".github/workflows"
+      # Where the reusable workflow checks the dispatcher out, inside the
+      # job checkout (ai-commands.yml).
+      DISPATCHER_CHECKOUT = ".ai-flow"
+
 
       # What building one plan issue produced. Sealed so the issue-mode
       # panel and the --split orchestrator dispatch exhaustively instead of
@@ -578,6 +583,7 @@ module AiFlow
         end
 
         @provisioner.provision(@context.owner_repo, @workdir)
+        exclude_dispatcher_checkout(@workdir)
         # A learning proposal PR's learning files are its content: the pass
         # edits them on the branch, and nothing is split out to a capture.
         capture = RepoConfig.load(@workdir).learn_on_build? && !Learn.proposal_branch?(branch)
@@ -590,9 +596,7 @@ module AiFlow
         # The agent may have run for close to the token's lifetime; the
         # write phase (push + replies + panel) starts on a fresh mint.
         @executor.refresh_auth!
-        # The job checks the dispatcher out into .ai-flow inside this
-        # workspace — a bare `git add -A` would commit it as a gitlink.
-        run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: @workdir)
+        run!(["git", "add", "-A"], chdir: @workdir)
         @learn.extract_capture(@workdir) if capture
         workflows_patch = extract_workflows_patch(@workdir)
         rebase.continue! if rebase&.in_progress?
@@ -1628,6 +1632,31 @@ module AiFlow
         tail = lines.last(HOOK_STDERR_LINES)
         tail.unshift("…") if lines.size > HOOK_STDERR_LINES
         ([headline] + tail.map { |line| "  #{line}" }).join("\n")
+      end
+
+      # The job checks the dispatcher out into DISPATCHER_CHECKOUT inside
+      # the job checkout. It is excluded through the checkout's own
+      # info/exclude rather than the target's .gitignore (the adopter's
+      # file) or a pathspec on `git add`: the exclude makes `git status`
+      # read clean for the agent and keeps `git add -A` from staging a
+      # gitlink, in every adopter alike. A `:(exclude)` pathspec cannot do
+      # that — git refuses an exclude item that matches only ignored paths,
+      # which is exactly the case on an adopter whose .gitignore already
+      # lists the directory (ai-flow#166).
+      #
+      # @param workdir [String] the job checkout
+      # @return [void]
+      sig { params(workdir: String).void }
+      def exclude_dispatcher_checkout(workdir)
+        out, err, ok = @executor.capture("git", "rev-parse", "--git-path", "info/exclude", chdir: workdir)
+        raise GitHub::Error, "git rev-parse failed: #{err.strip}" unless ok
+
+        exclude = Pathname(File.expand_path(out.strip, workdir))
+        entry = "#{DISPATCHER_CHECKOUT}/"
+        return if exclude.exist? && exclude.read.lines.map(&:strip).include?(entry)
+
+        exclude.dirname.mkpath
+        exclude.open("a") { |file| file.puts(entry) }
       end
 
       # @param argv [Array<String>] command and arguments
