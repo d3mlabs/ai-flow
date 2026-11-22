@@ -31,7 +31,7 @@ flowchart LR
     end
 
     subgraph runnerZone [Self-hosted runners]
-        dispatcher["bin/dispatch.rb + lib/ai_flow<br/>(Ruby, provisioned via dev deps install)"]
+        dispatcher["ai-flow dispatch (exe/ai-flow + lib/ai_flow)<br/>(Ruby; a released tree whose closure dev installs)"]
         agentCli["headless Cursor agent CLI<br/>(CURSOR_API_KEY)"]
     end
 
@@ -107,7 +107,7 @@ sequenceDiagram
     participant Human
     participant GitHub
     participant Workflow as ai-commands.yml (runner)
-    participant Dispatcher as dispatch.rb
+    participant Dispatcher as ai-flow dispatch
     participant Agent as agent CLI
 
     Human->>GitHub: comment "/edit tighten this section"
@@ -160,14 +160,20 @@ visibility.
 ## Dispatcher module map
 
 Everything under `lib/ai_flow/`. The runtime gem surface is exactly
-`sorbet-runtime` (typed with Sorbet; the toolchain and gems reach the runner
-through `dev deps install`). The two injectable boundaries are `Executor`
+`sorbet-runtime` (typed with Sorbet; a deployed tree carries it in its own
+closure, a checkout gets it from `dev up`). The two injectable boundaries are `Executor`
 (every subprocess: `gh`, `git`, `agent`) and the classes built on it — tests
 fake exactly those and run everything else for real.
 
 ```mermaid
 flowchart TD
-    entry["bin/dispatch.rb"] --> ctx["Context<br/>(normalized webhook payload:<br/>surface, number, commenter)"]
+    exe["exe/ai-flow"] --> cli["Cli<br/>(argv → subcommand;<br/>TokenProvider, Executor, GitHub, Agent wired once)"]
+    cli --> entry["Cli::Dispatch<br/>(the job's event → N dispatches,<br/>the exit status)"]
+    cli --> gate["Cli::Gate<br/>(origin-firing verdict + step summary)"]
+    cli --> adopt["Cli::Adopt"]
+    gate --> checks["ProposalChecks"]
+    entry --> ctx["Context<br/>(normalized webhook payload:<br/>surface, number, commenter)"]
+    entry --> reviewUnit["ReviewUnit<br/>(a submitted review → its comments)"]
     entry --> disp["Dispatcher<br/>(gate, ack, route)"]
     disp --> parser["CommentParser<br/>(line-start grammar, quote+command<br/>segments, batch validation)"]
     disp --> batchCmd["Commands::Batch<br/>(/ask + /edit)"]
@@ -357,8 +363,9 @@ flowchart TD
 
 ## Adoption: `ai-flow adopt`
 
-`exe/ai-flow adopt <owner/repo>` is the one command ai-flow ships for a
-human's terminal. `Cli` turns argv into the subcommand and is the one place
+`ai-flow adopt <owner/repo>` is the one of the executable's three commands
+meant for a human's terminal (`dispatch` and `gate` are the workflows').
+`Cli` turns argv into the subcommand and is the one place
 a typed error becomes an exit status; `Adoption` runs four steps in order
 and returns one `Outcome` per step — `Changed`, `Settled`, or `Finding`
 with a remedy — which `Cli::Adopt` renders. The steps own what ai-flow can
@@ -468,6 +475,37 @@ under isolation the platform's durable shared root —
 `/Users/Shared/ai-flow/workspaces` on a Mac, `/var/lib/dev/ai-flow/workspaces`
 on a Linux dev host — never `/tmp`, which macOS purges on reboot and after
 ~3 days without access and a Linux tmpfs empties on reboot.
+
+## Deployment: a released tree, followed by its head
+
+ai-flow reaches an agent host as a released tree, not a checkout
+(plans#76). The repo describes its own deployment, and dev has no
+ai-flow-specific knowledge: everything a host needs to serve ai-flow is
+read from this repo's `dev.yml`, `dependencies.rb` and `VERSION`.
+
+| Declared | Where | What dev does with it |
+|---|---|---|
+| `VERSION` (`1.0.0`) | the repo root | the release's version; its major is the **series** every consumer follows — a host on the stream `d3mlabs/ai-flow@gh ~> 1`, an adopter on `uses: …@v1` |
+| target `ai-flow`, `build: ./bin/install`, `packager: archive` | `dev.yml` `targets:` | `dev build` composes the install into `$DEV_INSTALL` — `exe/`, `lib/`, `templates/`, `VERSION`, `dependencies.rb`, `deps.lock`, `Gemfile`, `Gemfile.lock` — and `dev package` zips it |
+| `release:` | `dev.yml` `commands:` | `dev release <v>` tags, packages at the tag and attaches `ai-flow-<v>.zip` to an immutable GitHub release; the head does not move |
+| `deploy: gh` | `dev.yml` `commands:` | `dev deploy gh --release <v>` moves the series tag `v<major>` (and the latest designation when the series is the newest) to that release; `--dry-run` reports heads and candidate |
+| role `agent` — five command labels, group `ai-flow`, the two reusable workflows, `job_identity: ai-agent` | `dev.yml` `runner_roles:` | `dev runner register --org --role agent --slots N` from a checkout: the group pinned to the workflows at `v<major>`, the `ai-agent` identity converged, every slot anchored to the stream |
+| role `orchestrator` — `ai-orchestrator`, its own group open to every repo | `dev.yml` `runner_roles:` | `--role orchestrator` re-enrolls the thin `/build --split` pool the same way |
+| `brew "cursor-cli", cask: true` | `dependencies.rb` | `dev up` in the checkout installs the agent CLI on the host; the Ruby and gem pins beside it are the tree's closure |
+
+Before every job the runner's job-started hook reads the series head and,
+when it moved, installs that release's tree with its closure materialised
+— the pinned Ruby keg, a frozen `bundle install` into the tree's
+`vendor/bundle`, one generated `bin/<name>` wrapper per `exe/<name>` —
+and puts its `bin/` on the job PATH. The wrapper is `bin/dev`'s sh half:
+it unsets the caller's harness activation and execs the keg's Ruby on
+`exe/ai-flow`, exporting nothing. The executable selects the tree's gems
+in-process by position (`Gem.use_paths`), so the agent and every `dev`
+the dispatcher runs in a checkout inherit the job's environment untouched.
+`bin/` in the installed tree is dev's output, which is why the executable
+lives in `exe/`. Until the reusable workflows run the deployed `ai-flow`
+from the job PATH, `dev dispatch` and `dev origin-firing-check` in a
+checkout run the same two commands (`dev.yml` `commands:`).
 
 ## Agent hosts
 

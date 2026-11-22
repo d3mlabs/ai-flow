@@ -1,18 +1,26 @@
 # typed: false
 # frozen_string_literal: true
 
-# Dependency manifest for dev: the exact Ruby toolchain plus the gem set.
-# dev generates Gemfile/Gemfile.lock from these declarations — edit here,
-# then run `dev deps update` (re-lock) and `dev up` (install). CI and
-# runners install with `dev deps install`.
+# Dependency manifest for dev: the exact Ruby toolchain plus the gem set,
+# and what ai-flow needs on a host. dev generates Gemfile/Gemfile.lock from
+# these declarations — edit here, then run `dev deps update` (re-lock) and
+# `dev up` (install). A deployed ai-flow tree carries this manifest and its
+# lock, and dev materialises the tree's closure from them where the tree
+# is installed (the agent hosts following the gh channel's head).
 require "dev/deps"
 
 Dev::Deps.define do
   ruby "4.0.6"
 
+  # The headless Cursor agent CLI every command drives (Agent is the one
+  # seam to it). A cask: Homebrew publishes no versions for it, so the pin
+  # is the name alone, and the upstream cask carries Linux builds, so the
+  # binary lands in the Linuxbrew prefix like any other. Declared here
+  # because an agent host's shape is ai-flow's to state, not dev's.
+  brew "cursor-cli", cask: true
+
   # Runtime: sorbet-runtime backs the inline sigs and sealed result
-  # hierarchies. The dispatcher runs through `dev`, so runners install
-  # this like any other locked dependency.
+  # hierarchies. The one gem the deployed tree's executables need.
   gem "sorbet-runtime"
 
   group(:development) do

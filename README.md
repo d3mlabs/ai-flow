@@ -196,13 +196,23 @@ see [docs/architecture.md](docs/architecture.md).
 is an adopter of itself (the template under the only free name). The
 dispatcher a job runs and the checkout it edits are different trees; see
 [docs/security.md](docs/security.md).
-- `bin/dispatch.rb` — job entry point; parses the event, gates, routes.
-- `exe/ai-flow` — the `ai-flow` executable: `ai-flow adopt <owner/repo>`
-runs the adoption checklist's derivable steps on a repo (below).
+- `exe/ai-flow` — the `ai-flow` executable. `ai-flow dispatch` is the
+ai-commands job entry point (parses the event, gates, routes), `ai-flow
+gate` the origin-firing check, `ai-flow adopt <owner/repo>` runs the
+adoption checklist's derivable steps on a repo (below). In a deployed tree
+`bin/` holds dev's generated wrappers, which is why the executable lives
+in `exe/`.
+- `VERSION`, `dev.yml`, `dependencies.rb` — what makes ai-flow a released
+tool rather than a checkout: the version every consumer follows by its
+major, the `ai-flow` build target with its `release:` and `deploy: gh`
+channel and the two runner roles (`agent`, `orchestrator`) a host enrolls
+in, and the host's needs (`cursor-cli`) beside the Ruby toolchain and gems.
+See *Releasing and deploying* under Development.
 - `lib/ai_flow/` — comment parsing, anchor resolution, the `Agent#launch`
 seam (the one place that invokes the `agent` CLI — swap the backend here),
-GitHub API access via `gh`, the five command implementations, and
-`Adoption` (what `ai-flow adopt` converges and reports).
+GitHub API access via `gh`, the five command implementations, `Cli` (the
+executable's three commands), and `Adoption` (what `ai-flow adopt`
+converges and reports).
 - `templates/caller-workflow.yml` — the ~10-line workflow each repo copies;
 `ai-flow adopt` writes it.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
@@ -313,12 +323,18 @@ checkout. The by-hand equivalents:
    `ai-edit`, `ai-split`, `ai-build`, `ai-learn` (the reusable workflow's
    authorize job routes each command to `ai-<command>`), plus
    `ai-orchestrator`, the one label that names a host capability rather
-   than a command — `/build --split` routes to it (below). This list is
-   the defining source of the vocabulary; tooling that enrolls runners
-   mirrors it as a documented cross-repo literal (dev's
-   `Dev::LabelContracts::AI_FLOW_LABELS`; the agent host's set is behind
-   `dev runner register --org --ai-flow`, the orchestrator pool behind
-   `--org --labels ai-orchestrator --slots N`). The topology is a deployment
+   than a command — `/build --split` routes to it (below). The defining
+   source of the vocabulary is this repo's `dev.yml`, under
+   `runner_roles:`: the `agent` role carries the five command labels, the
+   `ai-flow` runner group pinned to the two reusable workflows and the
+   `ai-agent` job identity; the `orchestrator` role carries
+   `ai-orchestrator` and its own group, open to every repo. A host enrolls
+   in a role from an ai-flow checkout — `dev runner register --org --role
+   agent --slots N`, or `--role orchestrator` — and dev converges the
+   group, the pins and the identity from the declaration (dev's `--ai-flow`
+   and `--labels ai-orchestrator` stand for these for one release). Both
+   roles' slots follow the stream `d3mlabs/ai-flow@gh ~> <major>` (below,
+   *Releasing*). The topology is a deployment
    choice — one box can carry all five labels, or a beefy box takes
    `ai-build` alone (/build runs the full agent loop including tests, so it
    needs a real dev machine, not a bare runner) while a light box takes the
@@ -357,10 +373,10 @@ checkout. The by-hand equivalents:
    each repo's build concurrency on a host and are admitted deliberately.
 4. Install the Cursor `agent` CLI on each runner and make sure it — plus
    `dev` and shadowenv — is on the runner service's PATH. On a dev-managed
-   host the deployment Brewfile's `cursor-cli` cask does it on both
-   platforms (`dev up` in the ai-flow checkout; the upstream cask carries
-   Linux builds, so the binary lands in the Linuxbrew prefix like any
-   other); elsewhere, `curl https://cursor.com/install -fsS | bash`. Ruby itself and the dispatcher's gems are not
+   host `dev up` in the ai-flow checkout does it on both platforms: this
+   repo's `dependencies.rb` declares the `cursor-cli` cask (the upstream
+   cask carries Linux builds, so the binary lands in the Linuxbrew prefix
+   like any other); elsewhere, `curl https://cursor.com/install -fsS | bash`. Ruby itself and the dispatcher's gems are not
    prerequisites: the workflow runs `dev deps install` in the ai-flow
    checkout, which provisions the pinned Ruby (a brew bottle from the
    d3mlabs tap's `ruby@X.Y.Z` family, dev ≥ 0.3) and the locked gem set
@@ -467,7 +483,7 @@ the table below says what ai-flow needs on top in each case.
 
 | | **Private repo** | **Public repo** |
 |---|---|---|
-| **Organization** | Org-scoped slots in a pinned runner group (`dev runner register --org --ai-flow --slots N`), or repo-scoped slots for a repo that wants its own (`dev runner register --ai-flow --repo-scope` from its checkout). | Org-scoped slots in a pinned runner group only. The settings below are required. |
+| **Organization** | Org-scoped slots in a pinned runner group (`dev runner register --org --role agent --slots N` from an ai-flow checkout; `--org --ai-flow` is the one-release alias), or repo-scoped slots for a repo that wants its own (`dev runner register --ai-flow --repo-scope` from its checkout). | Org-scoped slots in a pinned runner group only. The settings below are required. |
 | **User account** | Repo-scoped slots (`dev runner register --ai-flow --slots N` from the checkout). A user account has no runner groups; none is needed for a private repo. | Self-hosted runners are not supported. Move the repo into an organization — free for public repos, and nothing else about the setup changes — or wait for hosted-runner mode ([ai-flow#142](https://github.com/d3mlabs/ai-flow/issues/142), not yet available). |
 
 **Organization, private repo.** Org-scoped slots take jobs from every
@@ -549,6 +565,40 @@ The runtime dependency surface is deliberately thin: `sorbet-runtime` (the
 sigs and sealed hierarchies check at runtime too) plus shell-outs to `gh`,
 `git`, and `agent`; everything else is development- or test-only. Tests fake
 exactly those subprocess boundaries and exercise everything else for real.
+
+### Releasing and deploying
+
+ai-flow is its own deployment, released and followed the way dev is
+([plans#76](https://github.com/d3mlabs/plans/issues/76)). The repo carries
+a `VERSION` (semver; the first deployed version is 1.0.0), and `dev.yml`
+declares one target, `ai-flow`, whose build (`bin/install`) composes the
+install — `exe/`, `lib/`, `templates/`, `VERSION`, `dependencies.rb`,
+`deps.lock`, `Gemfile` and `Gemfile.lock` — which the default `archive`
+packager zips into the release asset.
+
+```sh
+dev release 1.0.0            # tag, package at the tag, attach ai-flow-1.0.0.zip; the head does not move
+dev deploy gh --release 1.0.0   # move the series tag v1 (and latest) to that release
+dev deploy gh --dry-run      # report the heads as they stand and the candidate
+```
+
+A release is immutable bytes; which one is live is the gh channel's
+**head** — the series tag `v<major>` — moved only by `dev deploy gh` from an
+immutable release, never by a merge to `main`. Every consumer follows the
+same constraint, this major and any minor or patch: an agent host as the
+stream `d3mlabs/ai-flow@gh ~> 1`, written at `dev runner register` from the
+checkout's `VERSION`; an adopter as `uses: …@v1`. Deploying the previous
+release rolls both back.
+
+Where a host installs the tree, dev materialises its closure from the
+lock it carries — the pinned Ruby keg, a frozen `bundle install` into the
+tree's own `vendor/bundle`, one generated `bin/<name>` wrapper per
+`exe/<name>` — and nothing is exported into any project's environment.
+`exe/ai-flow` selects those gems in-process, by position (`Gem.use_paths`
+on `vendor/bundle/ruby/<ruby_version>`, then the Ruby's bundled gems), so
+the dispatcher's children inherit the caller's environment untouched; a
+source checkout has no `vendor/bundle` and runs on the gems `dev up`
+installed.
 
 [^brown2020]: Tom B. Brown et al., "Language Models are Few-Shot Learners,"
     *Advances in Neural Information Processing Systems 33* (2020) — the

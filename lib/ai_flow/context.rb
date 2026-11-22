@@ -84,10 +84,11 @@ module AiFlow
 
       # @param event_name [String] GITHUB_EVENT_NAME
       # @param event_path [String] GITHUB_EVENT_PATH
+      # @param env [Hash-like] injectable for tests; the Actions job env
       # @return [Context]
-      sig { params(event_name: String, event_path: String).returns(Context) }
-      def from_event_file(event_name:, event_path:)
-        from_event(event_name: event_name, payload: JSON.parse(File.read(event_path)))
+      sig { params(event_name: String, event_path: String, env: T.untyped).returns(Context) }
+      def from_event_file(event_name:, event_path:, env: ENV)
+        from_event(event_name: event_name, payload: JSON.parse(File.read(event_path)), env: env)
       end
     end
 

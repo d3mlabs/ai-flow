@@ -1,0 +1,23 @@
+#!/bin/sh
+# The `ai-flow` target's builder (dev.yml `targets:`): the deployed tool as
+# an agent host installs it, laid out into $DEV_INSTALL. Nothing compiles:
+# the install is the file set, and dev's archive packager zips it into the
+# release asset the gh channel's head points at.
+#
+# What ships: the executable (exe/), the code (lib/), the templates
+# `ai-flow adopt` writes from, VERSION (what the series tag derives from),
+# and the manifest with both its locks — dependencies.rb, deps.lock,
+# Gemfile, Gemfile.lock — which is what makes the tree a tool with a
+# closure: where it installs the tree, dev reads the lock for the Ruby and
+# runs a frozen bundle into the tree's own vendor/bundle. No bin/: that
+# directory in the installed tree is dev's, one generated wrapper per exe/.
+#
+# Runs at the repo root with dev's build env (DEV_TARGET, DEV_INSTALL).
+set -eu
+
+cd "$(dirname "$0")/.."
+
+# A previous install of the same build is replaced whole, so a file this
+# tree no longer has is not shipped again.
+find "${DEV_INSTALL:?}" -mindepth 1 -delete
+cp -R exe lib templates VERSION Gemfile Gemfile.lock dependencies.rb deps.lock "$DEV_INSTALL"/
