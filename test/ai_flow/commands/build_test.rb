@@ -2225,17 +2225,23 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
-  test "a PR iteration relays FIX lines too" do
-    Given "an iteration pass that declared a fix"
+  test "a PR iteration relays FIX lines too — once each, as notes, not in the summary (ai-flow#169)" do
+    Given "an iteration pass whose summary declares two fixes"
     github = FakeGitHub.new
     context = ContextBuilder.issue_comment(number: 7, body: "/build fix the walk", pull_request: true)
-    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed.\nFIX: demo — make the guard spawn its own bundler activation"])
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nFixed.\nFIX: demo — make the guard spawn its own bundler activation\n" \
+                           "Rubocop is clean.\nFIX: demo — ignore the nested checkout"])
 
     When "iterating"
     run_build(github: github, executor: RecordingExecutor.new, body: "/build fix the walk", context: context, agent: agent)
 
-    Then "the panel carries the note"
-    github.comment_edits.fetch(55).include?("#{FIX_NOTE}demo — make the guard spawn its own bundler activation")
+    Then "the panel carries each note, the summary keeps its prose and loses the raw declarations"
+    panel = github.comment_edits.fetch(55)
+    panel.include?("#{FIX_NOTE}demo — make the guard spawn its own bundler activation")
+    panel.include?("#{FIX_NOTE}demo — ignore the nested checkout")
+    panel.include?("> Fixed.\n> Rubocop is clean.")
+    panel.scan("demo — make the guard spawn its own bundler activation").size == 1
+    panel.scan("demo — ignore the nested checkout").size == 1
 
     Cleanup
     nil

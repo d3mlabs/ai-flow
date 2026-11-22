@@ -56,13 +56,6 @@ module AiFlow
       # through several.
       PROMOTE_LINE = T.let(/^PROMOTE:\s*(.+?)\s*$/, Regexp)
 
-      # The root-cause gate's escape hatch: a pass that finds a fixable
-      # cause declares `FIX: <proposal>` instead of (or alongside) drafting
-      # a coping rule. Free text, one proposal per line, every line relayed
-      # to the result panel — unlike PROMOTE nothing is routed; the humans
-      # at the gate file the fix.
-      FIX_LINE = T.let(/^FIX:\s*(.+?)\s*$/, Regexp)
-
       # Learning artifacts live under these trees — the per-repo layout, then
       # the org knowledge repo's root layout (index.md + skills/). The panel
       # names what changed by reading the staged file list, never by trusting
@@ -492,7 +485,8 @@ module AiFlow
       # The FIX contract's reader, paired with the rubric that states it
       # (capture_prompt_section) — every surface carrying the rubric (/learn
       # and /build's capture, ai-flow#103) relays the lines the same way.
-      # A pass that restates a fix yields one note.
+      # A pass that restates a fix yields one note. Unlike PROMOTE nothing
+      # is routed: the humans at the gate file the fix.
       #
       # @param agent_output [String] the pass's result
       # @return [Array<String>] panel notes for the pass's declared FIX
@@ -500,7 +494,7 @@ module AiFlow
       sig { params(agent_output: String).returns(T::Array[String]) }
       def fix_notes(agent_output)
         agent_output.lines
-          .filter_map { |line| FIX_LINE.match(line) }
+          .filter_map { |line| AgentOutput::FIX_LINE.match(line) }
           # T.must: the group is unconditional in FIX_LINE, so a match
           # always carries it.
           .map { |match| T.must(match[1]) }
