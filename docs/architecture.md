@@ -528,9 +528,10 @@ read from the host directly.
 | Container engine for the agent | its own colima VM, when the repo pins an `image` | none — the runner user's docker socket is root-equivalent and never crosses the user line; an image-built repo's agent runs *inside* the project's container (plans#61) |
 
 The spawn is identical on both: `sudo -n -H -u <agent> --preserve-env=<allowlist> --`
-under a NOPASSWD SETENV rule, toolchain writes redirected into the agent's
-home keyed by slot, the fresh workspace leaf `chgrp`'d to the shared group
-and `2770`. What differs is who the grantor is and where durable paths
+under a NOPASSWD SETENV rule, the agent CLI's credential store pointed at
+a file, the gem env left as the project's (dev's per-project gem home under
+the data root, group-writable), the fresh workspace leaf `chgrp`'d to the
+shared group and `2770`. What differs is who the grantor is and where durable paths
 live — facts dev owns, named above so a reader can tell which host a log
 line came from.
 

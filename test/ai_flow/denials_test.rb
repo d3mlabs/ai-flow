@@ -6,7 +6,7 @@ require "test_helper"
 transform!(RSpock::AST::Transformation)
 class AiFlow::DenialsTest < Minitest::Test
   def isolation
-    AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/tmp")
+    AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai")
   end
 
   # ---- prompt contract ----

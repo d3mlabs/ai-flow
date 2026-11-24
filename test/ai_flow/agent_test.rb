@@ -11,7 +11,7 @@ require "stringio"
 # spawn-user log line and the prompt contract are observable.
 class IsolationReportingAcpExecutor < AcpFakeExecutor
   def isolation
-    AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/tmp")
+    AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai")
   end
 end unless defined?(IsolationReportingAcpExecutor)
 

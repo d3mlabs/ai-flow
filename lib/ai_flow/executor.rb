@@ -250,7 +250,7 @@ module AiFlow
     # The one seam that turns a stream/duplex call into what popen3 runs —
     # argv and the full child env — so the isolation posture is composed
     # in exactly one place (plans#26). Under isolation the argv gains the
-    # sudo prefix and the env the toolchain redirects, and a chdir'd spawn
+    # sudo prefix and the env the agent overlay carries, and a chdir'd spawn
     # gains the workspace's safe.directory as the next GIT_CONFIG slot
     # (#101): git refuses the dispatcher-owned checkout for the agent uid,
     # and this is the only way to tell it otherwise without writing a file.

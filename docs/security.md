@@ -150,9 +150,11 @@ Controls:
 - **Read-only agent token** — the agent's GitHub token is minted with
   every permission at read, installation-wide; pushes, PRs and comments
   are the dispatcher's. *Structural.*
-- **Per-slot state** — each runner slot has its own gem home, bundle
-  path and persistent workspace, so two slots never share a writable
-  tree.
+- **Per-slot state** — each runner slot has its own persistent workspace,
+  so two slots never share a working tree. Gems install into dev's
+  per-project gem home under the data root, which the agent writes through
+  the shared group; the spawn redirects no toolchain write and grants the
+  agent nothing under the brew prefix.
 - **Rotation rule** — treat a runner-host compromise as an App-key
   rotation event; the key transits the host.
 

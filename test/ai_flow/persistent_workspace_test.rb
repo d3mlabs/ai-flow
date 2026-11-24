@@ -233,7 +233,7 @@ class AiFlow::PersistentWorkspaceTest < Minitest::Test
   test "under isolation, root is this platform's isolated root" do
     Given "an executor with isolation on"
     executor = RecordingExecutor.new
-    executor.define_singleton_method(:isolation) { AiFlow::AgentIsolation.new(user: "ai-agent", group: "dev", home: "/tmp") }
+    executor.define_singleton_method(:isolation) { AiFlow::AgentIsolation.new(user: "ai-agent", group: "dev") }
     ws = workspace(executor: executor)
 
     Expect
