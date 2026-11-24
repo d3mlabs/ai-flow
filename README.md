@@ -342,11 +342,13 @@ checkout. The by-hand equivalents:
    instances for N parallel jobs — dev's `dev runner register --slots N`
    does exactly that (one host, N *slots*, dev#470) and writes each slot's
    number into its runner service env as `AI_FLOW_RUNNER_SLOT`. ai-flow
-   keys per-slot state by it — the agent user's gem home and bundle path
-   (`.gem-<n>`, `.bundle-<n>`) and a persistent workspace (`<repo>-<n>`) —
-   so two slots running as the same agent user never share a writable
-   tree; slot 1 keeps the unsuffixed paths it had before slots existed.
-   Unset means slot 1. A `/build` that finds its persistent workspace held
+   keys per-slot state by it — the persistent workspace (`<repo>-<n>`) —
+   so two slots running as the same agent user never share a working
+   tree; slot 1 keeps the unsuffixed path it had before slots existed.
+   Unset means slot 1. The agent's gems need no per-slot state: they
+   install into dev's per-project, per-Ruby gem home under the data root,
+   which the agent user writes through the shared group, and the spawn
+   exports no gem or bundler key of its own. A `/build` that finds its persistent workspace held
    anyway reports busy and exits clean (re-run when free); under
    `/build --split` such a sub-issue is deferred and its dependents wait.
    `/build --split` fans each wave out as one `/build` run per sub-issue

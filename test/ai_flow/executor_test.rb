@@ -35,11 +35,18 @@ end unless defined?(ScriptedTokenProvider)
 
 # A benign stand-in for the sudo re-exec: /usr/bin/env with a marker
 # assignment proves the prefix preceded the argv without real sudo (which
-# only the runner-box smoke test exercises). Subclasses the real class so
+# only the runner-box smoke test exercises), and a marker key on the
+# overlay proves it was applied — the real overlay's one key may already be
+# in the host env of a test run that itself runs under isolation, so its
+# presence in a child says nothing. Subclasses the real class so
 # sorbet-runtime's sig checks accept it at the injection seam.
 class MarkerIsolation < AiFlow::AgentIsolation
   def spawn_prefix
     ["/usr/bin/env", "AI_FLOW_ISOLATION_MARKER=yes"]
+  end
+
+  def redirect_env
+    super.merge("AI_FLOW_OVERLAY_MARKER" => "yes")
   end
 end unless defined?(MarkerIsolation)
 
@@ -241,37 +248,59 @@ class AiFlow::ExecutorTest < Minitest::Test
     nil
   end
 
-  test "stream(isolate: true) prepends the spawn prefix and redirects toolchain writes" do
+  test "stream(isolate: true) prepends the spawn prefix and applies the agent overlay" do
     Given "an executor with a benign injected isolation"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(isolation: isolation)
 
     When "streaming isolated"
     lines = []
     _err, ok = executor.stream(
-      RUBY, "-e", 'puts [ENV["AI_FLOW_ISOLATION_MARKER"], ENV["GEM_HOME"]].join(",")',
+      RUBY, "-e", 'puts [ENV["AI_FLOW_ISOLATION_MARKER"], ENV["AI_FLOW_OVERLAY_MARKER"]].join(",")',
       isolate: true,
     ) { |line| lines << line.chomp }
 
-    Then "the prefix ran ahead of the argv and GEM_HOME points under the agent home"
+    Then "the prefix ran ahead of the argv and the overlay reached the child"
     ok
-    lines == ["yes,/tmp/agent-home/.gem"]
+    lines == ["yes,yes"]
 
     Cleanup
     nil
   end
 
-  test "a non-isolated stream never picks up the prefix or the redirects" do
+  # ai-flow#107: the agent's gem env is the caller's — dev's per-project gem
+  # home under the data root (dev#294) — so an isolated spawn exports no
+  # gem or bundler key of its own.
+  test "an isolated stream leaves the gem env as the caller's" do
+    Given "an executor with an isolation configured and a caller gem home"
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
+    executor = AiFlow::Executor.new(isolation: isolation)
+    gem_home = Dir.mktmpdir("ai-flow-gem-home-")
+
+    When "streaming isolated with the gem home in the caller env"
+    lines = []
+    _err, ok = executor.stream(
+      RUBY, "-e", 'puts [ENV["GEM_HOME"], ENV.key?("BUNDLE_PATH")].join(",")',
+      env: { "GEM_HOME" => gem_home }, isolate: true,
+    ) { |line| lines << line.chomp }
+
+    Then "GEM_HOME is what the caller said; no BUNDLE_PATH appears"
+    ok
+    lines == ["#{gem_home},false"]
+
+    Cleanup
+    FileUtils.rm_rf(gem_home)
+  end
+
+  test "a non-isolated stream never picks up the prefix or the agent overlay" do
     Given "an executor with an isolation configured"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(isolation: isolation)
 
     When "streaming without isolate:"
     lines = []
     executor.stream(
-      # The host env may legitimately carry its own GEM_HOME, so absence of
-      # the *redirect value* is the assertable signal.
-      RUBY, "-e", 'puts [ENV.key?("AI_FLOW_ISOLATION_MARKER"), ENV["GEM_HOME"] == "/tmp/agent-home/.gem"].join(",")',
+      RUBY, "-e", 'puts [ENV.key?("AI_FLOW_ISOLATION_MARKER"), ENV.key?("AI_FLOW_OVERLAY_MARKER")].join(",")',
     ) { |line| lines << line.chomp }
 
     Then "gh/git spawns stay the dispatcher's own"
@@ -307,7 +336,7 @@ class AiFlow::ExecutorTest < Minitest::Test
 
   test "an isolated stream adds a safe.directory slot for the workspace behind the auth header (#101)" do
     Given "an executor with isolation and a token provider, and a workspace under a symlinked base"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(token_provider: ScriptedTokenProvider.new(["ghs_alpha"]), isolation: isolation)
     dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
 
@@ -329,7 +358,7 @@ class AiFlow::ExecutorTest < Minitest::Test
 
   test "without a token the safe.directory slot is the only one — the count stays honest (#101)" do
     Given "an executor with isolation and ambient auth"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(isolation: isolation)
     dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
 
@@ -346,7 +375,7 @@ class AiFlow::ExecutorTest < Minitest::Test
 
   test "a non-isolated stream in a workspace gets no safe.directory slot — one uid, the check never fires (#101)" do
     Given "an executor with isolation configured and a token provider"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(token_provider: ScriptedTokenProvider.new(["ghs_alpha"]), isolation: isolation)
     dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
 
@@ -364,7 +393,7 @@ class AiFlow::ExecutorTest < Minitest::Test
 
   test "duplex(isolate: true) carries the same safe.directory slot as stream (#101)" do
     Given "an executor with isolation and a token provider"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(token_provider: ScriptedTokenProvider.new(["ghs_alpha"]), isolation: isolation)
     dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
 
@@ -406,7 +435,7 @@ class AiFlow::ExecutorTest < Minitest::Test
 
   test "duplex(isolate: true) runs under the spawn prefix like stream" do
     Given "an executor with a benign injected isolation"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(isolation: isolation)
 
     When "reading the child's env through duplex"
@@ -497,7 +526,7 @@ class AiFlow::ExecutorTest < Minitest::Test
   test "share_workspace applies the isolation's group share to a fresh dir" do
     Given "an executor with a real isolation and a fresh workspace parent"
     group = T.must(Etc.getgrgid(Process.gid)).name
-    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: group, home: "/tmp")
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: group)
     executor = AiFlow::Executor.new(isolation: isolation)
     dir = Dir.mktmpdir("ai-flow-executor-share-")
 
@@ -514,7 +543,7 @@ class AiFlow::ExecutorTest < Minitest::Test
   test "workspace_base delegates to the isolation" do
     Given "an executor with a real isolation"
     group = T.must(Etc.getgrgid(Process.gid)).name
-    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: group, home: "/tmp")
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: group)
     executor = AiFlow::Executor.new(isolation: isolation)
 
     Expect "the isolation's world-traversable base"
@@ -564,7 +593,7 @@ class AiFlow::ExecutorTest < Minitest::Test
 
   test "release_workspace under isolation empties the parent as the agent, then removes the leaf itself" do
     Given "an executor with a benign isolation and a populated workspace"
-    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai", home: "/tmp/agent-home")
+    isolation = MarkerIsolation.new(user: "ai-agent", group: "ai")
     executor = AiFlow::Executor.new(isolation: isolation)
     dir = Dir.mktmpdir("ai-flow-executor-release-")
     FileUtils.mkdir_p(File.join(dir, "repo", "share", "skill"))

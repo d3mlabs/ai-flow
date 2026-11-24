@@ -1,4 +1,4 @@
-# typed: false — rspock Where tables are load-time rewritten and have no static typing.
+# typed: true
 # frozen_string_literal: true
 
 require "test_helper"
@@ -28,7 +28,7 @@ class AiFlow::AgentIsolationTest < Minitest::Test
     ENV["AI_FLOW_AGENT_USER"] = saved if saved
   end
 
-  test "from_env resolves the agent user's home from the passwd database" do
+  test "from_env accepts an agent user the passwd database knows" do
     Given "the agent user set to a user that exists on this host"
     saved_user = ENV["AI_FLOW_AGENT_USER"]
     saved_group = ENV.delete("AI_FLOW_AGENT_GROUP")
@@ -37,9 +37,8 @@ class AiFlow::AgentIsolationTest < Minitest::Test
     When "reading the isolation config"
     isolation = T.must(AiFlow::AgentIsolation.from_env)
 
-    Then "user comes from env, home from passwd, group defaults to the legacy name"
+    Then "user comes from env, group defaults to the legacy name"
     isolation.user == CURRENT_USER
-    isolation.redirect_env.fetch("GEM_HOME") == File.join(T.must(Etc.getpwuid(Process.uid)).dir, ".gem")
     isolation.group == AiFlow::AgentIsolation::LEGACY_GROUP
 
     Cleanup
@@ -84,22 +83,36 @@ class AiFlow::AgentIsolationTest < Minitest::Test
 
   test "spawn_prefix is the sudo invocation with the env allowlist on the command" do
     Given "an isolation config"
-    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/Users/ai-agent")
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai")
 
     When "building the spawn prefix"
     prefix = isolation.spawn_prefix
 
-    Then "non-interactive sudo, fresh HOME, allowlist incl. the redirected toolchain keys"
+    Then "non-interactive sudo, fresh HOME, allowlist incl. the agent overlay's keys"
     prefix.first(5) == ["sudo", "-n", "-H", "-u", "ai-agent"]
     prefix.last == "--"
     preserve = prefix.fetch(5)
     preserve.start_with?("--preserve-env=")
     AiFlow::AgentIsolation::PRESERVED_ENV_KEYS.all? { |key| preserve.include?(key) }
-    preserve.include?("GEM_HOME")
-    preserve.include?("BUNDLE_PATH")
+    preserve.include?("AGENT_CLI_CREDENTIAL_STORE")
 
     Cleanup
     nil
+  end
+
+  # ai-flow#107: the agent installs gems into dev's per-project gem home
+  # under the data root (dev#294), as the caller's env already says. A
+  # redirect from the harness was one directory for every Ruby the agent
+  # met — bundler keys it by ABI alone, so native extensions built under one
+  # 4.0.x loaded under another — and dev's project shadowenv overrode the
+  # GEM_HOME half anyway.
+  test "neither the allowlist nor the overlay carries a gem or bundler key" do
+    Given "an isolation config"
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai")
+
+    Expect "the agent's gem env is the caller's, untouched"
+    (AiFlow::AgentIsolation::PRESERVED_ENV_KEYS + isolation.redirect_env.keys)
+      .none? { |key| key.start_with?("GEM_", "BUNDLE_", "BUNDLER_") }
   end
 
   test "the allowlist carries a second GIT_CONFIG slot — safe.directory rides behind the auth header (#101)" do
@@ -110,7 +123,7 @@ class AiFlow::AgentIsolationTest < Minitest::Test
 
   test "safe_directory_config names the workspace by the path git itself resolves (#101)" do
     Given "an isolation and a workspace reached through a symlinked base (/tmp on macOS)"
-    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/Users/ai-agent")
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai")
     dir = Dir.mktmpdir("ai-flow-safe-dir-", "/tmp")
 
     When "building the git config entry"
@@ -124,67 +137,25 @@ class AiFlow::AgentIsolationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "redirect_env points toolchain writes under the agent's own home" do
+  test "redirect_env is the agent CLI's file credential store and nothing else" do
     Given "an isolation config"
-    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/Users/ai-agent")
+    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai")
 
-    When "building the redirect overlay"
+    When "building the agent overlay"
     env = isolation.redirect_env
 
-    Then "gem and bundler installs land in agent-owned disposable space, " \
-         "and the agent CLI stores credentials in a file — a headless user " \
-         "has no login keychain, and securityd's prompt lands in the " \
-         "runner user's GUI session"
-    env == {
-      "GEM_HOME" => "/Users/ai-agent/.gem",
-      "BUNDLE_PATH" => "/Users/ai-agent/.bundle",
-      "AGENT_CLI_CREDENTIAL_STORE" => "file",
-    }
+    Then "the agent CLI stores credentials in a file — a headless user has " \
+         "no login keychain, and securityd's prompt lands in the runner " \
+         "user's GUI session; gems need no redirect (ai-flow#107)"
+    env == { "AGENT_CLI_CREDENTIAL_STORE" => "file" }
 
     Cleanup
     nil
   end
 
-  # ai-flow#116: two slots on one box run as the same agent user at the
-  # same time; a gem home they share is two bundlers racing on one tree.
-  # Slot 1 keeps the path it always had (its warm gems stay warm).
-  test "redirect_env keys the gem home and bundle path by slot — slot 1 unchanged, slot N suffixed" do
-    Given "an isolation config on the given slot"
-    isolation = AiFlow::AgentIsolation.new(user: "ai-agent", group: "ai", home: "/Users/ai-agent", slot: slot)
-
-    Expect "one gem tree per slot; the credential store does not vary"
-    isolation.redirect_env.fetch("GEM_HOME") == gem_home
-    isolation.redirect_env.fetch("BUNDLE_PATH") == bundle_path
-    isolation.redirect_env.fetch("AGENT_CLI_CREDENTIAL_STORE") == "file"
-
-    Where
-    slot | gem_home | bundle_path
-    AiFlow::RunnerSlot.new(number: 1) | "/Users/ai-agent/.gem"   | "/Users/ai-agent/.bundle"
-    AiFlow::RunnerSlot.new(number: 2) | "/Users/ai-agent/.gem-2" | "/Users/ai-agent/.bundle-2"
-    AiFlow::RunnerSlot.new(number: 3) | "/Users/ai-agent/.gem-3" | "/Users/ai-agent/.bundle-3"
-  end
-
-  test "from_env carries the slot dev wrote into the service env" do
-    Given "the agent user set, on slot 2"
-    saved_user = ENV["AI_FLOW_AGENT_USER"]
-    saved_slot = ENV["AI_FLOW_RUNNER_SLOT"]
-    ENV["AI_FLOW_AGENT_USER"] = CURRENT_USER
-    ENV["AI_FLOW_RUNNER_SLOT"] = "2"
-
-    When "reading the isolation config"
-    isolation = T.must(AiFlow::AgentIsolation.from_env)
-
-    Then "the redirect is slot 2's"
-    isolation.redirect_env.fetch("GEM_HOME") == File.join(T.must(Etc.getpwuid(Process.uid)).dir, ".gem-2")
-
-    Cleanup
-    saved_user ? ENV["AI_FLOW_AGENT_USER"] = saved_user : ENV.delete("AI_FLOW_AGENT_USER")
-    saved_slot ? ENV["AI_FLOW_RUNNER_SLOT"] = saved_slot : ENV.delete("AI_FLOW_RUNNER_SLOT")
-  end
-
   test "workspace_base is a world-traversable root — the agent user must reach the shared leaf" do
     Given "an isolation"
-    isolation = AiFlow::AgentIsolation.new(user: CURRENT_USER, group: PRIMARY_GROUP, home: "/tmp")
+    isolation = AiFlow::AgentIsolation.new(user: CURRENT_USER, group: PRIMARY_GROUP)
 
     Expect "the base escapes the dispatcher's private per-user tempdir (0700 on macOS): " \
            "the group share on the leaf is worthless when the sidecar user cannot traverse to it"
@@ -194,7 +165,7 @@ class AiFlow::AgentIsolationTest < Minitest::Test
   test "share_workspace makes a fresh dir group-owned, setgid, and group-writable" do
     Given "a freshly created empty workspace parent"
     dir = Dir.mktmpdir("ai-flow-isolation-test-")
-    isolation = AiFlow::AgentIsolation.new(user: CURRENT_USER, group: PRIMARY_GROUP, home: "/tmp")
+    isolation = AiFlow::AgentIsolation.new(user: CURRENT_USER, group: PRIMARY_GROUP)
 
     When "sharing it"
     isolation.share_workspace(dir)

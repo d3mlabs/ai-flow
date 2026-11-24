@@ -9,10 +9,10 @@ module AiFlow
   # AI_FLOW_AGENT_USER: only dev knows the naming (a hostname may itself end
   # in `-2`), so ai-flow never parses RUNNER_NAME for it.
   #
-  # Per-slot state — the agent's gem home, a persistent workspace — is keyed
-  # by #suffix, and slot 1's suffix is empty: every path slot 1 uses is the
-  # path the host used before slots existed, so an upgrade evicts nothing
-  # warm (ai-flow#116).
+  # Per-slot state — the persistent workspace — is keyed by #suffix, and
+  # slot 1's suffix is empty: every path slot 1 uses is the path the host
+  # used before slots existed, so an upgrade evicts nothing warm
+  # (ai-flow#116).
   class RunnerSlot
     extend T::Sig
 

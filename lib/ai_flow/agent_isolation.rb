@@ -4,15 +4,13 @@
 require "etc"
 require "fileutils"
 
-require "ai_flow/runner_slot"
-
 module AiFlow
   # The OS-user split's policy object (plans#26): everything ai-flow knows
   # about running the agent as a different, unprivileged user lives here —
   # the sudo spawn prefix, the env allowlist that survives sudo's env_reset,
-  # the toolchain-write redirection into the agent's own home, and the
-  # group-share applied to fresh workspaces so both identities can work in
-  # them. Opt-in via AI_FLOW_AGENT_USER on runner boxes (written into the
+  # the env overlay the agent's side needs (the CLI's credential store), and
+  # the group-share applied to fresh workspaces so both identities can work
+  # in them. Opt-in via AI_FLOW_AGENT_USER on runner boxes (written into the
   # runner service env by `dev runner register` — a LaunchAgent plist on a
   # Mac, a systemd unit drop-in on a Linux dev host, plans#59); unset means
   # today's behavior — dispatcher and agent share one user.
@@ -43,8 +41,9 @@ module AiFlow
     # Executor injects (the auth header in GIT_CONFIG slot 0, the
     # workspace's safe.directory in slot 1 — see #safe_directory_config)
     # and Agent reads, nothing more. Values travel as env (not argv), so
-    # tokens stay off process listings. The redirected toolchain keys ride
-    # the same allowlist (see #redirect_env).
+    # tokens stay off process listings. The agent overlay's keys ride the
+    # same allowlist (see #redirect_env). No gem or bundler key is here, and
+    # none belongs: the agent's gem env is the caller's (ai-flow#107).
     PRESERVED_ENV_KEYS = T.let(
       %w[
         GH_TOKEN
@@ -75,31 +74,30 @@ module AiFlow
 
       # @return [AiFlow::AgentIsolation, nil] nil when AI_FLOW_AGENT_USER
       #   is unset (feature off); group from AI_FLOW_AGENT_GROUP (the data
-      #   root's group dev writes), LEGACY_GROUP when absent; slot from
-      #   AI_FLOW_RUNNER_SLOT (RunnerSlot), default the first
+      #   root's group dev writes), LEGACY_GROUP when absent
       # @raise [UnknownAgentUserError] when the configured user does not
       #   exist
-      # @raise [RunnerSlot::InvalidSlotError] when dev's slot record is not a
-      #   slot number
       sig { returns(T.nilable(AgentIsolation)) }
       def from_env
         user = ENV["AI_FLOW_AGENT_USER"].to_s.strip
         return nil if user.empty?
 
+        ensure_known!(user)
         group = ENV["AI_FLOW_AGENT_GROUP"].to_s.strip
-        new(user: user, group: group.empty? ? LEGACY_GROUP : group, home: home_of(user), slot: RunnerSlot.from_env)
+        new(user: user, group: group.empty? ? LEGACY_GROUP : group)
       end
 
       private
 
-      # @param user [String] the passwd name to resolve
-      # @return [String] the user's home directory
+      # @param user [String] the passwd name to check
+      # @return [void]
       # @raise [UnknownAgentUserError]
-      sig { params(user: String).returns(String) }
-      def home_of(user)
-        # T.must: getpwnam raises ArgumentError for an unknown user rather
-        # than returning nil; the rescue below is the real absence path.
-        T.must(Etc.getpwnam(user)).dir
+      sig { params(user: String).void }
+      def ensure_known!(user)
+        # getpwnam raises ArgumentError for an unknown user rather than
+        # returning nil; the rescue below is the real absence path.
+        Etc.getpwnam(user)
+        nil
       rescue ArgumentError
         raise UnknownAgentUserError,
           "AI_FLOW_AGENT_USER=#{user} but this host has no such user — " \
@@ -109,15 +107,10 @@ module AiFlow
 
     # @param user [String] the OS user the agent spawns as
     # @param group [String] the shared group both identities belong to
-    # @param home [String] the agent user's home directory
-    # @param slot [RunnerSlot] the host slot this job runs on — per-slot
-    #   toolchain state is keyed by it (ai-flow#116)
-    sig { params(user: String, group: String, home: String, slot: RunnerSlot).void }
-    def initialize(user:, group:, home:, slot: RunnerSlot.first)
+    sig { params(user: String, group: String).void }
+    def initialize(user:, group:)
       @user = user
       @group = group
-      @home = home
-      @slot = slot
     end
 
     # The argv prefix that re-executes the agent as @user. No wrapper
@@ -135,30 +128,27 @@ module AiFlow
       ["sudo", "-n", "-H", "-u", @user, "--preserve-env=#{preserved.join(",")}", "--"]
     end
 
-    # Write redirection for the agent's side of the split: installs against
-    # shared read-only toolchains (e.g. `bundle install` under the shared
-    # ruby) land in agent-owned disposable space instead of failing on the
-    # read-only store or widening it, and the agent CLI stores credentials
-    # in an owner-only file under the agent's home instead of the macOS
-    # keychain — a hidden, never-logged-in user has no login keychain, and
-    # securityd raises its "Keychain Not Found" dialog in the *runner
-    # user's* GUI session (caught live at the plans#36 ceremony). On Linux
-    # the file store is the only one a headless user has anyway; the key
-    # is harmless there.
+    # The env the agent's side of the split needs and the dispatcher's does
+    # not: the agent CLI stores credentials in an owner-only file under the
+    # agent's home instead of the macOS keychain — a hidden, never-logged-in
+    # user has no login keychain, and securityd raises its "Keychain Not
+    # Found" dialog in the *runner user's* GUI session (caught live at the
+    # plans#36 ceremony). On Linux the file store is the only one a headless
+    # user has anyway; the key is harmless there.
     #
-    # One gem tree per host slot (ai-flow#116): two slots run as this same
-    # user at the same time, and two bundlers in one tree race on its
-    # files. Slot 1 keeps the unsuffixed paths it always had — its warm
-    # gems stay warm; slot n gets `.gem-<n>` / `.bundle-<n>`.
+    # Gems are not redirected (ai-flow#107): the project's shadowenv sets
+    # GEM_HOME to dev's per-project, per-Ruby gem home under the data root
+    # (dev#294), which the agent writes through the shared group, so
+    # bundler installs there with no key from here. The GEM_HOME/BUNDLE_PATH
+    # pair this used to carry pointed at one directory for every Ruby the
+    # agent met — bundler keys it by ABI alone, so native extensions built
+    # under one 4.0.x loaded under another — and it hid gems dev had already
+    # provisioned on the project's GEM_PATH.
     #
     # @return [Hash{String => String}]
     sig { returns(T::Hash[String, String]) }
     def redirect_env
-      {
-        "GEM_HOME" => File.join(@home, ".gem#{@slot.suffix}"),
-        "BUNDLE_PATH" => File.join(@home, ".bundle#{@slot.suffix}"),
-        "AGENT_CLI_CREDENTIAL_STORE" => "file",
-      }
+      { "AGENT_CLI_CREDENTIAL_STORE" => "file" }
     end
 
     # The git config entry that lets the agent run git in a workspace the
