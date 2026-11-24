@@ -1667,8 +1667,29 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     lines.index { |line| line.include?("reset -q HEAD") } < lines.index { |line| line.include?(" commit -m ") }
     github.calls.map(&:first).include?(:create_pull_request)
     github.comment_edits.fetch(55).include?("no `workflows` permission")
-    github.comment_edits.fetch(55).include?("gh pr checkout https://github.com/#{REPO}/pull/900 && git apply --index <<'PATCH'")
+    github.comment_edits.fetch(55).include?("gh pr checkout https://github.com/#{REPO}/pull/900 && base64 -d <<'B64' | git apply --index")
     github.comment_edits.fetch(55).include?("extra: step")
+
+    Cleanup
+    nil
+  end
+
+  test "the one-paste apply command carries the patch byte-for-byte, blank context lines included" do
+    Given "a workflow patch whose hunk ends on a whitespace-only context line (a blank line in the file)"
+    github = FakeGitHub.new
+    github.seed_issue(REPO, 7, title: "Carve system", body: "# Carve system\n")
+    patch = "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n" \
+      "@@ -1,3 +1,4 @@\n #\n+# more\n #\n \n"
+    executor = RecordingExecutor.new(workflows_patch: patch)
+
+    When "building"
+    run_build(github: github, executor: executor)
+    note = github.comment_edits.fetch(55)
+    payload = note[/<<'B64'[^\n]*\n(.*?)\n(?:> )?B64\n/m, 1].gsub(/^> /, "")
+
+    Then "decoding the heredoc's payload gives back the patch unchanged — markdown trims nothing it can see"
+    payload.unpack1("m") == patch
+    note.include?("```diff\n#{patch.strip.gsub(/^/, "> ")}\n> ```")
 
     Cleanup
     nil
@@ -1734,7 +1755,7 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     executor.command_lines.any? { |line| line.include?(" commit -m ") }
     github.comment_edits.fetch(55).include?("✅ **/build** — committed")
     github.comment_edits.fetch(55).include?("no `workflows` permission")
-    github.comment_edits.fetch(55).include?("gh pr checkout https://github.com/#{REPO}/pull/7 && git apply --index <<'PATCH'")
+    github.comment_edits.fetch(55).include?("gh pr checkout https://github.com/#{REPO}/pull/7 && base64 -d <<'B64' | git apply --index")
     github.comment_edits.fetch(55).include?("extra: step")
 
     Cleanup

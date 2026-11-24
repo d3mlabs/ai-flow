@@ -1026,10 +1026,13 @@ module AiFlow
 
       # A copy-paste command that lands the patch on the PR branch under the
       # human's own credentials — the workflows restriction is on who pushes,
-      # not whose PR it is. The heredoc delimiter can't collide with the diff
-      # body: every unified-diff line carries a prefix character, so a bare
-      # PATCH line never occurs. --index stages new files too, which
-      # `commit -a` would miss.
+      # not whose PR it is. The patch travels base64-encoded: a unified diff
+      # is whitespace-exact (a blank line in the file is a context line of
+      # one space), and the note is a blockquoted comment that GitHub's
+      # renderer and a copy-paste both trim, which left `git apply` with a
+      # corrupt patch whenever a hunk touched a blank line (ai-flow#179).
+      # The readable diff sits beside it for review. --index stages new
+      # files too, which `commit -a` would miss.
       #
       # @return [String]
       sig { params(pr_url: String, patch: String).returns(String) }
@@ -1040,9 +1043,17 @@ module AiFlow
           <details><summary>apply the workflow patch (one paste)</summary>
 
           ```bash
-          gh pr checkout #{pr_url} && git apply --index <<'PATCH' && git commit -m "Apply ai-flow's proposed workflow changes" && git push
+          gh pr checkout #{pr_url} && base64 -d <<'B64' | git apply --index && git commit -m "Apply ai-flow's proposed workflow changes" && git push
+          #{[patch].pack("m").strip}
+          B64
+          ```
+
+          </details>
+
+          <details><summary>the patch</summary>
+
+          ```diff
           #{patch.strip}
-          PATCH
           ```
 
           </details>
