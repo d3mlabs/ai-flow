@@ -1,3 +1,16 @@
+# CI runs what a developer runs: `dev up`, then the check verbs dev.yml
+# defines — `dev style`, `dev typecheck`, `dev test`. Nothing here invokes
+# the toolchain directly: dev provisions the locked Ruby and gems from
+# dependencies.rb, and every dev command errors in CI when the manifest and
+# the lock disagree, so a dependencies.rb edit without `dev deps update`
+# fails the first step (ai-flow#176 — a stale lock reached main and halted
+# every dispatcher because CI went through bundler and never ran dev).
+#
+# One job per verb, named as the branch protection's required checks; each
+# pays its own `dev up` (a probe once the tap's bottles are cached, the
+# cursor-cli cask the one real download). GH_TOKEN is the credential the
+# action's toolchain check requires; the job's own token reaches every pin
+# this public tap serves.
 name: CI
 
 on:
@@ -5,38 +18,30 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  GH_TOKEN: ${{ github.token }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # No ruby-version input: setup-ruby reads .ruby-version, which dev
-      # generates from dependencies.rb — the Gemfile pins that exact patch
-      # version, so a floating "3.3" here would fail bundler's version check.
-      - uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-      - run: bundle exec rubocop
+      - uses: d3mlabs/dev/up@main
+      - run: dev style
 
   typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-      - name: Verify gem RBIs are current
-        run: bundle exec tapioca gem --verify
-      - run: bundle exec srb tc
+      - uses: d3mlabs/dev/up@main
+      - run: dev typecheck
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-      - run: bundle exec rake test
+      - uses: d3mlabs/dev/up@main
+      - run: dev test
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:

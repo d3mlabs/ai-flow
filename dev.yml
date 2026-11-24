@@ -13,13 +13,19 @@ targets:
     # self-contained. The build script is a stopgap for `packager: archive:
     # files:` (ai-flow#174).
     packager: archive
+# The three check verbs CI runs, in this order, after `dev up`; the same
+# three a developer runs. CI runs nothing but these, so a check exists
+# exactly when a verb defines it.
 commands:
+  style:
+    desc: Run RuboCop
+    run: bundle exec rubocop
+  typecheck:
+    desc: Verify the gem RBIs are current, then Sorbet static typecheck
+    run: bundle exec tapioca gem --verify && bundle exec srb tc
   test:
     desc: Run this repo's tests
     run: bundle exec rake test
-  typecheck:
-    desc: Sorbet static typecheck
-    run: bundle exec srb tc
   # The job entry points, from a checkout (the reusable workflows call them
   # this way until they run the deployed `ai-flow` from the job PATH).
   dispatch:

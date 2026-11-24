@@ -557,9 +557,14 @@ policy alone is not the control for self-hosted runners — are in
 
 ```sh
 dev up         # provision the pinned Ruby + install locked gems
+dev style      # rubocop
+dev typecheck  # gem RBIs current, then sorbet static typecheck
 dev test       # run the suite
-dev typecheck  # sorbet static typecheck
 ```
+
+CI is exactly these four commands (`.github/workflows/ci.yml`), so a check
+exists when `dev.yml` defines its verb, and a `dependencies.rb` edit
+without `dev deps update` fails CI at the first dev command.
 
 The runtime dependency surface is deliberately thin: `sorbet-runtime` (the
 sigs and sealed hierarchies check at runtime too) plus shell-outs to `gh`,
