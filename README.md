@@ -590,15 +590,14 @@ stream `d3mlabs/ai-flow@gh ~> 1`, written at `dev runner register` from the
 checkout's `VERSION`; an adopter as `uses: …@v1`. Deploying the previous
 release rolls both back.
 
-A target that ships its manifest and lock is installed self-contained:
-where a host installs the tree, dev converges the tree's dependencies
-into the tree — the pinned Ruby keg, a frozen `bundle install` into the
-tree's own `vendor/bundle` — and writes a launcher per `exe/<name>` under
-`bin/`; the tree exports nothing into any project's environment.
-`exe/ai-flow` selects those gems in-process, by position (`Gem.use_paths`
-on `vendor/bundle/ruby/<ruby_version>`, then the Ruby's bundled gems), so
-the dispatcher's children inherit the caller's environment untouched; a
-source checkout has no `vendor/bundle` and runs on the gems `dev up`
+The released tree ships its manifest and lock, so dev installs it
+self-contained: the tree's dependencies are converged into the tree, a
+launcher is written per `exe/<name>` under `bin/`, and the tree exports
+nothing into any project's environment (how, per ecosystem, is dev's:
+[dependencies.md](https://github.com/d3mlabs/dev/blob/HEAD/docs/dependencies.md)).
+`exe/ai-flow` selects the tree's gems in-process, by position, so the
+dispatcher's children inherit the caller's environment untouched; a source
+checkout has no installed gems of its own and runs on the ones `dev up`
 installed.
 
 [^brown2020]: Tom B. Brown et al., "Language Models are Few-Shot Learners,"

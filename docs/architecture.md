@@ -495,17 +495,17 @@ read from this repo's `dev.yml`, `dependencies.rb` and `VERSION`.
 | `brew "cursor-cli", cask: true` | `dependencies.rb` | `dev up` in the checkout installs the agent CLI on the host; the Ruby and gem pins beside it are what the released tree ships, so it installs self-contained |
 
 Before every job the runner's job-started hook reads the series head and,
-when it moved, installs that release's tree self-contained: a target that
-ships its manifest and lock has its dependencies converged into the tree
-— the pinned Ruby keg, a frozen `bundle install` into the tree's
-`vendor/bundle` — and a launcher written per `exe/<name>` under `bin/`;
-the tree exports nothing. The hook puts that `bin/` on the job PATH. The
-launcher is `bin/dev`'s sh half: it unsets the caller's harness activation
-and execs the keg's Ruby on `exe/ai-flow`. The executable selects the tree's gems
-in-process by position (`Gem.use_paths`), so the agent and every `dev`
-the dispatcher runs in a checkout inherit the job's environment untouched.
-`bin/` in the installed tree is dev's output, which is why the executable
-lives in `exe/`. Until the reusable workflows run the deployed `ai-flow`
+when it moved, installs that release's tree self-contained — the tree
+ships its manifest and lock, so dev converges its dependencies into it,
+writes a launcher per `exe/<name>` under `bin/`, and the tree exports
+nothing (the mechanics are dev's:
+[dependencies.md](https://github.com/d3mlabs/dev/blob/HEAD/docs/dependencies.md)).
+The hook puts that `bin/` on the job PATH. The launcher unsets the
+caller's harness activation and runs the tree's Ruby on `exe/ai-flow`,
+which selects the tree's gems in-process by position, so the agent and
+every `dev` the dispatcher runs in a checkout inherit the job's
+environment untouched. `bin/` in the installed tree is dev's output,
+which is why the executable lives in `exe/`. Until the reusable workflows run the deployed `ai-flow`
 from the job PATH, `dev dispatch` and `dev origin-firing-check` in a
 checkout run the same two commands (`dev.yml` `commands:`).
 
