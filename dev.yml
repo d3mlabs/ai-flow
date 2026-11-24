@@ -8,11 +8,23 @@ name: ai-flow
 targets:
   ai-flow:
     desc: The deployed tool (exe, lib, templates, VERSION, the manifest and its locks)
-    build: ./bin/install
-    # The manifest and both locks ship, so the installed tree is
-    # self-contained. The build script is a stopgap for `packager: archive:
-    # files:` (ai-flow#174).
-    packager: archive
+    # The checkout is the stage. The manifest and both locks ship, which
+    # is what makes the installed tree self-contained: dev converges them
+    # into it and writes bin/ — never ours to ship. Listed positively so a
+    # new top-level directory is a deliberate addition to the asset, not a
+    # silent ship. Anchored (gitignore syntax): a bare `exe` would also
+    # take test/exe.
+    packager:
+      archive:
+        files:
+          - /exe
+          - /lib
+          - /templates
+          - /VERSION
+          - /Gemfile
+          - /Gemfile.lock
+          - /dependencies.rb
+          - /deps.lock
 # The three check verbs CI runs, in this order, after `dev up`; the same
 # three a developer runs. CI runs nothing but these, so a check exists
 # exactly when a verb defines it.
