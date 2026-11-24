@@ -576,10 +576,12 @@ exactly those subprocess boundaries and exercise everything else for real.
 ai-flow is its own deployment, released and followed the way dev is
 ([plans#76](https://github.com/d3mlabs/plans/issues/76)). The repo carries
 a `VERSION` (semver; the first deployed version is 1.0.0), and `dev.yml`
-declares one target, `ai-flow`, whose build (`bin/install`) composes the
-install — `exe/`, `lib/`, `templates/`, `VERSION`, `dependencies.rb`,
-`deps.lock`, `Gemfile` and `Gemfile.lock` — which the default `archive`
-packager zips into the release asset.
+declares one target, `ai-flow`, with no `build:` — the checkout is the
+stage — and an `archive` packager whose `files:` lists what ships: `exe/`,
+`lib/`, `templates/`, `VERSION`, `dependencies.rb`, `deps.lock`, `Gemfile`
+and `Gemfile.lock`, at their checkout paths. The list is positive on
+purpose: a new top-level directory is a deliberate addition to the asset,
+and a forgotten one fails `dev package` or the first run, loudly.
 
 ```sh
 dev release 1.0.0            # tag, package at the tag, attach ai-flow-1.0.0.zip; the head does not move

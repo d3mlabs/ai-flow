@@ -19,8 +19,9 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::ExeTest < Minitest::Test
   EXE = File.join(AI_FLOW_ROOT, "exe", "ai-flow")
 
-  # A tool tree laid out as `bin/install` plus dev's install leave it: the
-  # exe and lib, and — when asked — the running Ruby's sorbet-runtime
+  # A tool tree laid out as the target's `files:` selection plus dev's
+  # install leave it: the exe and lib, and — when asked — the running
+  # Ruby's sorbet-runtime
   # linked into the tree's own gem home as bundler would have laid it.
   def tool_tree(dir, self_contained:)
     FileUtils.mkdir_p(File.join(dir, "exe"))

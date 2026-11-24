@@ -487,7 +487,7 @@ read from this repo's `dev.yml`, `dependencies.rb` and `VERSION`.
 | Declared | Where | What dev does with it |
 |---|---|---|
 | `VERSION` (`1.0.0`) | the repo root | the release's version; its major is the **series** every consumer follows — a host on the stream `d3mlabs/ai-flow@gh ~> 1`, an adopter on `uses: …@v1` |
-| target `ai-flow`, `build: ./bin/install`, `packager: archive` | `dev.yml` `targets:` | `dev build` composes the install into `$DEV_INSTALL` — `exe/`, `lib/`, `templates/`, `VERSION`, `dependencies.rb`, `deps.lock`, `Gemfile`, `Gemfile.lock` — and `dev package` zips it |
+| target `ai-flow`, no `build:`, `packager: archive` with `files:` | `dev.yml` `targets:` | the checkout's tracked files are the stage; `dev package` zips the eight paths `files:` selects — `exe/`, `lib/`, `templates/`, `VERSION`, `dependencies.rb`, `deps.lock`, `Gemfile`, `Gemfile.lock` — at their checkout paths, and refuses a list that selects nothing |
 | `release:` | `dev.yml` `commands:` | `dev release <v>` tags, packages at the tag and attaches `ai-flow-<v>.zip` to an immutable GitHub release; the head does not move |
 | `deploy: gh` | `dev.yml` `commands:` | `dev deploy gh --release <v>` moves the series tag `v<major>` (and the latest designation when the series is the newest) to that release; `--dry-run` reports heads and candidate |
 | role `agent` — five command labels, group `ai-flow`, the two reusable workflows, `job_identity: ai-agent` | `dev.yml` `runner_roles:` | `dev runner register --org --role agent --slots N` from a checkout: the group pinned to the workflows at `v<major>`, the `ai-agent` identity converged, every slot anchored to the stream |
