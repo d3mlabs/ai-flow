@@ -21,13 +21,17 @@ it is uniquely cheap or authoritative at:
    runners. The reusable workflow (`.github/workflows/ai-commands.yml`,
    `workflow_call`-only) is called by a thin caller in each adopting repo —
    ai-flow itself has no caller, so there is no `/build` on ai-flow issues.
-3. **Self-hosted runners — execution.** `bin/dispatch.rb` plus
-   `lib/ai_flow` (stdlib-only Ruby) drive the headless Cursor agent CLI.
-   Jobs route by per-command runner labels (ai-ask / ai-edit / ai-split /
-   ai-build); one box can carry all labels. Runner machines are normal dev
-   machines: `dev` keeps their org knowledge cache and skill links fresh,
-   which is what `/build` prompt injection and `~/.cursor/skills` reads
-   ride on.
+3. **Self-hosted runners — execution.** `exe/ai-flow dispatch` plus
+   `lib/ai_flow` drive the headless Cursor agent CLI. ai-flow reaches a
+   host as a released tree (dev installs the gh channel's head
+   self-contained before each job), and the host's shape — the `agent` and
+   `orchestrator` roles, labels, groups, the `ai-agent` job identity,
+   `cursor-cli` — is declared in this repo's `dev.yml` and
+   `dependencies.rb`, not in dev. Jobs route by per-command runner labels
+   (ai-ask / ai-edit / ai-split / ai-build / ai-learn); one box can carry
+   all labels. Runner machines are normal dev machines: `dev` keeps their
+   org knowledge cache and skill links fresh, which is what `/build`
+   prompt injection and `~/.cursor/skills` reads ride on.
 
 The GitHub App is identity only: per-job installation tokens (1h cap) give
 writes the ai-flow[bot] identity, and — unlike the default `GITHUB_TOKEN` —
