@@ -22,8 +22,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
-  → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
-  `dev up` / `dev deps install`)
+ → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
+ `dev up` / `dev deps install`)
+- [testing/dogfood-env-signals] ai-flow's suite runs inside the posture it
+ tests, so a key the dispatcher exports to the agent is already in the
+ test's own env — assert a marker the test double injects, never the key.
+ → .cursor/skills/learnings/dogfood-env-signals/
 
 ## architecture
 
