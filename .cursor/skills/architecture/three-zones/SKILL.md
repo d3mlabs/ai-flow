@@ -23,8 +23,8 @@ it is uniquely cheap or authoritative at:
    ai-flow itself has no caller, so there is no `/build` on ai-flow issues.
 3. **Self-hosted runners — execution.** `exe/ai-flow dispatch` plus
    `lib/ai_flow` drive the headless Cursor agent CLI. ai-flow reaches a
-   host as a released tree (dev installs the gh channel's head with its
-   closure before each job), and the host's shape — the `agent` and
+   host as a released tree (dev installs the gh channel's head
+   self-contained before each job), and the host's shape — the `agent` and
    `orchestrator` roles, labels, groups, the `ai-agent` job identity,
    `cursor-cli` — is declared in this repo's `dev.yml` and
    `dependencies.rb`, not in dev. Jobs route by per-command runner labels
