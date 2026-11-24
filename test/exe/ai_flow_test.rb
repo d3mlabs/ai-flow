@@ -8,12 +8,13 @@ require "rbconfig"
 require "tmpdir"
 
 # exe/ai-flow's contract with the tree dev installs it in: when the tree
-# carries its closure (`vendor/bundle/ruby/<ruby_version>`, bundler's
-# layout), the executable finds its gems there — by position, with
-# nothing from the environment — and a source checkout with no closure
-# keeps the shell's gem environment. Run as a subprocess under a gem
-# environment that cannot supply sorbet-runtime, so the only way the
-# executable boots is through the tree.
+# is self-contained (its gems converged into
+# `vendor/bundle/ruby/<ruby_version>`, bundler's layout), the executable
+# finds them there — by position, with nothing from the environment — and
+# a source checkout with no such gem home keeps the shell's gem
+# environment. Run as a subprocess under a gem environment that cannot
+# supply sorbet-runtime, so the only way the executable boots is through
+# the tree.
 transform!(RSpock::AST::Transformation)
 class AiFlow::ExeTest < Minitest::Test
   EXE = File.join(AI_FLOW_ROOT, "exe", "ai-flow")
@@ -21,11 +22,11 @@ class AiFlow::ExeTest < Minitest::Test
   # A tool tree laid out as `bin/install` plus dev's install leave it: the
   # exe and lib, and — when asked — the running Ruby's sorbet-runtime
   # linked into the tree's own gem home as bundler would have laid it.
-  def tool_tree(dir, closure:)
+  def tool_tree(dir, self_contained:)
     FileUtils.mkdir_p(File.join(dir, "exe"))
     FileUtils.cp(EXE, File.join(dir, "exe", "ai-flow"))
     FileUtils.cp_r(File.join(AI_FLOW_ROOT, "lib"), dir)
-    return dir unless closure
+    return dir unless self_contained
 
     gem_home = File.join(dir, "vendor", "bundle", "ruby", RbConfig::CONFIG["ruby_version"])
     FileUtils.mkdir_p(File.join(gem_home, "gems"))
@@ -52,9 +53,9 @@ class AiFlow::ExeTest < Minitest::Test
     [out, err, status.exitstatus]
   end
 
-  test "a tree carrying its closure boots from it, with nothing from the environment" do
+  test "a self-contained tree boots from its own gems, with nothing from the environment" do
     Given "a deployed tree"
-    dir = tool_tree(Dir.mktmpdir("ai-flow-exe-"), closure: true)
+    dir = tool_tree(Dir.mktmpdir("ai-flow-exe-"), self_contained: true)
 
     When "running help under an empty gem environment"
     out, err, status = run_exe(dir, "help")
@@ -68,9 +69,9 @@ class AiFlow::ExeTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a tree without a closure takes the environment's gems — and fails when it has none" do
+  test "a tree without its own gems takes the environment's — and fails when it has none" do
     Given "a source-checkout shape"
-    dir = tool_tree(Dir.mktmpdir("ai-flow-exe-"), closure: false)
+    dir = tool_tree(Dir.mktmpdir("ai-flow-exe-"), self_contained: false)
 
     When "running help under an empty gem environment"
     _out, err, status = run_exe(dir, "help")

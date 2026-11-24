@@ -1,18 +1,8 @@
 #!/bin/sh
-# The `ai-flow` target's builder (dev.yml `targets:`): the deployed tool as
-# an agent host installs it, laid out into $DEV_INSTALL. Nothing compiles:
-# the install is the file set, and dev's archive packager zips it into the
-# release asset the gh channel's head points at.
-#
-# What ships: the executable (exe/), the code (lib/), the templates
-# `ai-flow adopt` writes from, VERSION (what the series tag derives from),
-# and the manifest with both its locks — dependencies.rb, deps.lock,
-# Gemfile, Gemfile.lock — which is what makes the tree a tool with a
-# closure: where it installs the tree, dev reads the lock for the Ruby and
-# runs a frozen bundle into the tree's own vendor/bundle. No bin/: that
-# directory in the installed tree is dev's, one generated wrapper per exe/.
-#
-# Runs at the repo root with dev's build env (DEV_TARGET, DEV_INSTALL).
+# Stopgap builder for the `ai-flow` target (dev.yml `targets:`). It exists
+# until dev ships the identity builder and the archive packager's `files:`
+# selection (dev#674, dev#675); then `build:` goes and the target lists
+# these same eight paths under `packager: archive: files:` (ai-flow#174).
 set -eu
 
 cd "$(dirname "$0")/.."

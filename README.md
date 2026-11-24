@@ -590,10 +590,11 @@ stream `d3mlabs/ai-flow@gh ~> 1`, written at `dev runner register` from the
 checkout's `VERSION`; an adopter as `uses: …@v1`. Deploying the previous
 release rolls both back.
 
-Where a host installs the tree, dev materialises its closure from the
-lock it carries — the pinned Ruby keg, a frozen `bundle install` into the
-tree's own `vendor/bundle`, one generated `bin/<name>` wrapper per
-`exe/<name>` — and nothing is exported into any project's environment.
+A target that ships its manifest and lock is installed self-contained:
+where a host installs the tree, dev converges the tree's dependencies
+into the tree — the pinned Ruby keg, a frozen `bundle install` into the
+tree's own `vendor/bundle` — and writes a launcher per `exe/<name>` under
+`bin/`; the tree exports nothing into any project's environment.
 `exe/ai-flow` selects those gems in-process, by position (`Gem.use_paths`
 on `vendor/bundle/ruby/<ruby_version>`, then the Ruby's bundled gems), so
 the dispatcher's children inherit the caller's environment untouched; a

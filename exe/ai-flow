@@ -7,17 +7,18 @@
 # the generated wrapper that unsets the caller's harness activation and
 # execs the tree's locked Ruby on this file.
 #
-# A deployed tree carries its closure beside this file: the gems its lock
-# pins, laid by bundler under `vendor/bundle/ruby/<ruby_version>` — a gem
-# home. This half selects them in-process, by position, exactly as
-# `bin/dev` selects dev's own: that gem home first, then the running
-# Ruby's bundled gems, nothing from the environment. `Gem.use_paths`
-# touches no ENV, so the dispatcher's children (the agent, a `dev` it
-# runs in a checkout) inherit the caller's environment untouched — no
-# `bundler/setup`, no exported gem home, which is the regression the
-# harness-env family of fixes paid for. A source checkout has no
-# `vendor/bundle` and keeps the shell's gem environment (the project's
-# `dev up`), which is how its own test suite and `dev dispatch` run it.
+# dev installs the released tree self-contained: the gems its lock pins
+# are converged into the tree beside this file, laid by bundler under
+# `vendor/bundle/ruby/<ruby_version>` — a gem home. This half selects
+# them in-process, by position, exactly as `bin/dev` selects dev's own:
+# that gem home first, then the running Ruby's bundled gems, nothing from
+# the environment. `Gem.use_paths` touches no ENV, so the dispatcher's
+# children (the agent, a `dev` it runs in a checkout) inherit the caller's
+# environment untouched — no `bundler/setup`, no exported gem home, which
+# is the regression the harness-env family of fixes paid for. A source
+# checkout has no `vendor/bundle` and keeps the shell's gem environment
+# (the project's `dev up`), which is how its own test suite and
+# `dev dispatch` run it.
 
 tree = File.expand_path("..", __dir__)
 tree_gems = File.join(tree, "vendor", "bundle", "ruby", RbConfig::CONFIG["ruby_version"])

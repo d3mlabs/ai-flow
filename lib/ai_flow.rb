@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 # The one place the type system's runtime enters: everything under lib/
-# assumes T/sig exist because this file loaded first. A deployed tree
-# carries the gem in its own closure (exe/ai-flow selects it); a checkout
-# gets it from `dev up`.
+# assumes T/sig exist because this file loaded first. dev installs the
+# released tree self-contained, the gem converged into it (exe/ai-flow
+# selects it); a checkout gets it from `dev up`.
 require "sorbet-runtime"
 
 require "ai_flow/value_equality"

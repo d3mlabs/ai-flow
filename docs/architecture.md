@@ -31,7 +31,7 @@ flowchart LR
     end
 
     subgraph runnerZone [Self-hosted runners]
-        dispatcher["ai-flow dispatch (exe/ai-flow + lib/ai_flow)<br/>(Ruby; a released tree whose closure dev installs)"]
+        dispatcher["ai-flow dispatch (exe/ai-flow + lib/ai_flow)<br/>(Ruby; a released tree dev installs self-contained)"]
         agentCli["headless Cursor agent CLI<br/>(CURSOR_API_KEY)"]
     end
 
@@ -160,8 +160,9 @@ visibility.
 ## Dispatcher module map
 
 Everything under `lib/ai_flow/`. The runtime gem surface is exactly
-`sorbet-runtime` (typed with Sorbet; a deployed tree carries it in its own
-closure, a checkout gets it from `dev up`). The two injectable boundaries are `Executor`
+`sorbet-runtime` (typed with Sorbet; dev installs the released tree
+self-contained with it, a checkout gets it from `dev up`). The two
+injectable boundaries are `Executor`
 (every subprocess: `gh`, `git`, `agent`) and the classes built on it — tests
 fake exactly those and run everything else for real.
 
@@ -491,15 +492,16 @@ read from this repo's `dev.yml`, `dependencies.rb` and `VERSION`.
 | `deploy: gh` | `dev.yml` `commands:` | `dev deploy gh --release <v>` moves the series tag `v<major>` (and the latest designation when the series is the newest) to that release; `--dry-run` reports heads and candidate |
 | role `agent` — five command labels, group `ai-flow`, the two reusable workflows, `job_identity: ai-agent` | `dev.yml` `runner_roles:` | `dev runner register --org --role agent --slots N` from a checkout: the group pinned to the workflows at `v<major>`, the `ai-agent` identity converged, every slot anchored to the stream |
 | role `orchestrator` — `ai-orchestrator`, its own group open to every repo | `dev.yml` `runner_roles:` | `--role orchestrator` re-enrolls the thin `/build --split` pool the same way |
-| `brew "cursor-cli", cask: true` | `dependencies.rb` | `dev up` in the checkout installs the agent CLI on the host; the Ruby and gem pins beside it are the tree's closure |
+| `brew "cursor-cli", cask: true` | `dependencies.rb` | `dev up` in the checkout installs the agent CLI on the host; the Ruby and gem pins beside it are what the released tree ships, so it installs self-contained |
 
 Before every job the runner's job-started hook reads the series head and,
-when it moved, installs that release's tree with its closure materialised
+when it moved, installs that release's tree self-contained: a target that
+ships its manifest and lock has its dependencies converged into the tree
 — the pinned Ruby keg, a frozen `bundle install` into the tree's
-`vendor/bundle`, one generated `bin/<name>` wrapper per `exe/<name>` —
-and puts its `bin/` on the job PATH. The wrapper is `bin/dev`'s sh half:
-it unsets the caller's harness activation and execs the keg's Ruby on
-`exe/ai-flow`, exporting nothing. The executable selects the tree's gems
+`vendor/bundle` — and a launcher written per `exe/<name>` under `bin/`;
+the tree exports nothing. The hook puts that `bin/` on the job PATH. The
+launcher is `bin/dev`'s sh half: it unsets the caller's harness activation
+and execs the keg's Ruby on `exe/ai-flow`. The executable selects the tree's gems
 in-process by position (`Gem.use_paths`), so the agent and every `dev`
 the dispatcher runs in a checkout inherit the job's environment untouched.
 `bin/` in the installed tree is dev's output, which is why the executable

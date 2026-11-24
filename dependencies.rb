@@ -4,9 +4,9 @@
 # Dependency manifest for dev: the exact Ruby toolchain plus the gem set,
 # and what ai-flow needs on a host. dev generates Gemfile/Gemfile.lock from
 # these declarations — edit here, then run `dev deps update` (re-lock) and
-# `dev up` (install). A deployed ai-flow tree carries this manifest and its
-# lock, and dev materialises the tree's closure from them where the tree
-# is installed (the agent hosts following the gh channel's head).
+# `dev up` (install). A released ai-flow tree ships this manifest and its
+# lock, so dev installs it self-contained where the tree lands (the agent
+# hosts following the gh channel's head).
 require "dev/deps"
 
 Dev::Deps.define do
