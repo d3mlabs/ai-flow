@@ -1,0 +1,13 @@
+#!/bin/sh
+# Stopgap builder for the `ai-flow` target (dev.yml `targets:`). It exists
+# until dev ships the identity builder and the archive packager's `files:`
+# selection (dev#674, dev#675); then `build:` goes and the target lists
+# these same eight paths under `packager: archive: files:` (ai-flow#174).
+set -eu
+
+cd "$(dirname "$0")/.."
+
+# A previous install of the same build is replaced whole, so a file this
+# tree no longer has is not shipped again.
+find "${DEV_INSTALL:?}" -mindepth 1 -delete
+cp -R exe lib templates VERSION Gemfile Gemfile.lock dependencies.rb deps.lock "$DEV_INSTALL"/

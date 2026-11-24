@@ -41,7 +41,7 @@ module AiFlow
       @provisioner = T.let(WorkspaceProvisioner.new(executor: executor), WorkspaceProvisioner)
     end
 
-    # The exit decision belongs to the caller (bin/dispatch.rb), which may
+    # The exit decision belongs to the caller (Cli::Dispatch), which may
     # run several dispatches in one job — the review-unit expansion
     # (ReviewUnit) must reach every comment even when an earlier one failed.
     #

@@ -4,6 +4,7 @@
 require "test_helper"
 require "support/fakes"
 require "fileutils"
+require "json"
 require "stringio"
 require "tmpdir"
 
@@ -21,10 +22,105 @@ class AiFlow::CliTest < Minitest::Test
     github
   end
 
-  def build_cli(github: seeded_github)
+  # A git whose diff against the base names no file: the origin-firing
+  # check's structure-only shape, reached through the real ProposalChecks.
+  class NoDiffExecutor < AiFlow::Executor
+    def capture(*argv, stdin: nil, chdir: nil, env: {})
+      ["", "", true]
+    end
+  end
+
+  def build_cli(github: seeded_github, env: {}, executor: AiFlow::Executor.new, agent: FakeAgent.new([]))
     stdout = StringIO.new
     stderr = StringIO.new
-    [AiFlow::Cli.new(root: AI_FLOW_ROOT, stdout: stdout, stderr: stderr, github: github), stdout, stderr]
+    cli = AiFlow::Cli.new(
+      root: AI_FLOW_ROOT, stdout: stdout, stderr: stderr, env: env, executor: executor, github: github, agent: agent,
+    )
+    [cli, stdout, stderr]
+  end
+
+  # The job's env for one event payload written under +dir+.
+  def job_env(dir, event_name:, payload:)
+    event_path = File.join(dir, "event.json")
+    File.write(event_path, JSON.generate(payload))
+    { "GITHUB_EVENT_NAME" => event_name, "GITHUB_EVENT_PATH" => event_path, "AI_FLOW_WORKDIR" => dir }
+  end
+
+  test "building the exe's wiring removes the App private key from the environment it was given" do
+    Given "a job env carrying the key"
+    env = { "AI_FLOW_APP_PRIVATE_KEY" => "-----BEGIN RSA PRIVATE KEY-----", "GITHUB_REPOSITORY" => "acme/widgets" }
+
+    When "the exe wires itself from it"
+    AiFlow::Cli.new(root: AI_FLOW_ROOT, stdout: StringIO.new, stderr: StringIO.new, env: env)
+
+    Then "no subprocess spawned from here can read the key"
+    !env.key?("AI_FLOW_APP_PRIVATE_KEY")
+  end
+
+  test "dispatch routes the job's event through the dispatcher and exits with its verdict" do
+    Given "a job for a non-command comment"
+    dir = Dir.mktmpdir("ai-flow-cli-")
+    github = FakeGitHub.new
+    payload = {
+      "repository" => { "full_name" => "acme/widgets" },
+      "issue" => { "number" => 7 },
+      "comment" => {
+        "id" => 55, "body" => "no command here", "author_association" => "OWNER",
+        "html_url" => "https://github.com/acme/widgets/issues/7#issuecomment-55",
+        "user" => { "login" => "jpduchesne", "id" => 111 },
+      },
+    }
+    cli, stdout, stderr = build_cli(github: github, env: job_env(dir, event_name: "issue_comment", payload: payload))
+
+    When
+    status = cli.run(["dispatch"])
+
+    Then "a clean no-op: exit 0, nothing written anywhere"
+    status == 0
+    github.calls.empty?
+    stdout.string.empty?
+    stderr.string.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "gate routes the job's pull request through the origin-firing check and prints its verdict" do
+    Given "a job on a PR whose diff touches no skill"
+    dir = Dir.mktmpdir("ai-flow-cli-")
+    payload = { "repository" => { "full_name" => "acme/knowledge" }, "pull_request" => { "number" => 3, "base" => { "ref" => "main" } } }
+    env = job_env(dir, event_name: "pull_request", payload: payload)
+    cli, stdout, stderr = build_cli(github: FakeGitHub.new, env: env, executor: NoDiffExecutor.new)
+
+    When
+    status = cli.run(["gate"])
+
+    Then "out of scope is green, said on stdout"
+    status == 0
+    stdout.string.start_with?("ℹ️ origin-firing (skip): no skill files added or edited")
+    stderr.string.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a job entry point run at a terminal is a usage error naming the job, exit 2: #{command}" do
+    Given "no Actions env"
+    cli, stdout, stderr = build_cli(env: {})
+
+    When
+    status = cli.run([command])
+
+    Then
+    status == 2
+    stdout.string.empty?
+    stderr.string.start_with?("ai-flow: #{key} is not set — this command runs under an Actions job")
+    stderr.string.include?("usage: ai-flow #{command}")
+
+    Where
+    command    | key
+    "dispatch" | "GITHUB_EVENT_NAME"
+    "gate"     | "GITHUB_EVENT_PATH"
   end
 
   test "no command, help, or a help flag prints the usage and exits 0: #{argv.inspect}" do

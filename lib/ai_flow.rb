@@ -2,8 +2,9 @@
 # frozen_string_literal: true
 
 # The one place the type system's runtime enters: everything under lib/
-# assumes T/sig exist because this file loaded first. Runners get the gem
-# via `dev deps install` like every other locked dependency.
+# assumes T/sig exist because this file loaded first. dev installs the
+# released tree self-contained, the gem converged into it (exe/ai-flow
+# selects it); a checkout gets it from `dev up`.
 require "sorbet-runtime"
 
 require "ai_flow/value_equality"
@@ -47,6 +48,9 @@ require "ai_flow/adoption/repo_config_file"
 require "ai_flow/adoption/secret_access"
 require "ai_flow/adoption/app_installation"
 require "ai_flow/cli"
+require "ai_flow/cli/job"
+require "ai_flow/cli/dispatch"
+require "ai_flow/cli/gate"
 require "ai_flow/cli/adopt"
 
 # ai-flow: GitHub-side slash commands (/ask, /edit, /split, /build) that run

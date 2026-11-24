@@ -1,7 +1,18 @@
 name: ai-flow
-# `dev up` needs no entry here: the builtin installs the locked toolchain and
-# gems from dependencies.rb. Runners use `dev deps install` (headless — no
-# shell hooks, no credential prompts) before `dev dispatch`.
+# ai-flow is its own deployment (plans#76): `dev release <version>` cuts an
+# immutable GitHub release carrying the tree below, `dev deploy gh` moves
+# the series tag `v<major>` (and the latest designation) to it, and every
+# agent host follows that head before its next job. `dev up` needs no entry
+# here: the builtin installs the locked toolchain and gems from
+# dependencies.rb.
+targets:
+  ai-flow:
+    desc: The deployed tool (exe, lib, templates, VERSION, the manifest and its locks)
+    build: ./bin/install
+    # The manifest and both locks ship, so the installed tree is
+    # self-contained. The build script is a stopgap for `packager: archive:
+    # files:` (ai-flow#174).
+    packager: archive
 commands:
   test:
     desc: Run this repo's tests
@@ -9,9 +20,40 @@ commands:
   typecheck:
     desc: Sorbet static typecheck
     run: bundle exec srb tc
+  # The job entry points, from a checkout (the reusable workflows call them
+  # this way until they run the deployed `ai-flow` from the job PATH).
   dispatch:
     desc: Run the slash-command dispatcher (the ai-commands workflow entry point)
-    run: bundle exec ruby bin/dispatch.rb
+    run: bundle exec ruby exe/ai-flow dispatch
   origin-firing-check:
     desc: Run the origin-firing proposal check (the origin-firing workflow entry point)
-    run: bundle exec ruby bin/origin_firing_check.rb
+    run: bundle exec ruby exe/ai-flow gate
+  deploy:
+    commands:
+      gh:
+        desc: Move the series tag and the latest designation to a release
+        targets: [ai-flow]
+  release:
+    desc: Cut a release (tag, push, ai-flow-<version>.zip on the GitHub release)
+    targets: [ai-flow]
+# The runner shape of an ai-flow host, declared where the shape is known
+# (`dev runner register --org --role <name>` from this checkout). Both
+# roles join a group pinned to this repo's two reusable workflows at the
+# series tag of VERSION, and both follow the stream d3mlabs/ai-flow@gh on
+# that series.
+runner_roles:
+  # The agent slots: one label per command route, jobs as the ai-agent
+  # identity (user, data-root group, the one-way sudoers edge from the
+  # runner user), in a group whose selected repos are each adopter's
+  # admission.
+  agent:
+    labels: [ai-ask, ai-edit, ai-split, ai-build, ai-learn]
+    group: ai-flow
+    workflows: [.github/workflows/ai-commands.yml, .github/workflows/origin-firing.yml]
+    job_identity: ai-agent
+  # The orchestrator pool `/build --split` runs on: a thin pool open to
+  # every repo in the org, since any adopter's split must reach it.
+  orchestrator:
+    labels: [ai-orchestrator]
+    group: { name: ai-orchestrator, visibility: all }
+    workflows: [.github/workflows/ai-commands.yml, .github/workflows/origin-firing.yml]

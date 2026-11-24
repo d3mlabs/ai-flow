@@ -37,6 +37,15 @@ module AiFlow::AgentOutputTest::Expect; end
 module AiFlow::AgentOutputTest::Then; end
 module AiFlow::AgentTest::Cleanup; end
 module AiFlow::AgentTest::Then; end
+module AiFlow::Cli::DispatchTest::Cleanup; end
+module AiFlow::Cli::DispatchTest::Given; end
+module AiFlow::Cli::DispatchTest::Then; end
+module AiFlow::Cli::DispatchTest::When; end
+module AiFlow::Cli::GateTest::Cleanup; end
+module AiFlow::Cli::GateTest::Given; end
+module AiFlow::Cli::GateTest::Then; end
+module AiFlow::Cli::GateTest::When; end
+module AiFlow::Cli::GateTest::Where; end
 module AiFlow::CliTest::Cleanup; end
 module AiFlow::CliTest::Given; end
 module AiFlow::CliTest::Then; end
