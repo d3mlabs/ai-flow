@@ -2,19 +2,16 @@
 # frozen_string_literal: true
 
 module AiFlow
-  # A release series: the major of the tree's VERSION, and the one
-  # constraint every consumer of ai-flow follows — this major, any minor or
-  # patch. It has two spellings because it crosses two doors: the series
-  # tag an adopter's caller workflow `uses:` (`v1`, the ref `dev deploy gh`
-  # moves to each deployed release of the series) and the range the
-  # adopter's dependencies.rb pins (`^1`, which dev resolves through that
-  # same tag). The two must agree; `ai-flow adopt` writes both from here.
+  # A release series: the major of the tree's VERSION. Its tag (`v1`) is
+  # the ref `dev deploy gh` moves to each deployed release of the series
+  # and the one an adopter's caller workflow `uses:`: the reusable
+  # workflows at that tag are the series' shell, and `ai-flow adopt`
+  # writes the caller at it.
   class Series
     extend T::Sig
     include ValueEquality::Derived
 
-    # The release's version, at the tree root — what `dev release` tags and
-    # what an adopter's lock pins.
+    # The release's version, at the tree root — what `dev release` tags.
     VERSION_FILE = "VERSION"
 
     # The file holds no `MAJOR.MINOR.PATCH`.
@@ -60,14 +57,6 @@ module AiFlow
     sig { returns(String) }
     def tag
       "v#{@major}"
-    end
-
-    # The same constraint as a dependencies.rb range.
-    #
-    # @return [String] `^1`
-    sig { returns(String) }
-    def requirement
-      "^#{@major}"
     end
 
     sig { override.returns(T::Array[Object]) }

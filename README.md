@@ -217,8 +217,7 @@ GitHub API access via `gh`, the five command implementations, `Cli` (the
 executable's four commands), and `Adoption` (what `ai-flow adopt`
 converges and reports).
 - `templates/caller-workflow.yml` — the ~10-line workflow each repo copies;
-`ai-flow adopt` writes it at the series tag, beside the `dependencies.rb`
-pin it must agree with.
+`ai-flow adopt` writes it at the series tag.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
 repos using `dev plan`.
 - `docs/` — [commands.md](docs/commands.md) (the normative command
@@ -299,32 +298,30 @@ cd ~/src/my-repo
 ```
 
 It prints one line per step — `changed`, `settled`, or `finding` with the
-remedy under it — and exits 1 while any finding remains. It converges the
-two lines that must agree — `uses: …@v1` in the caller workflow and `gh
-"d3mlabs/ai-flow", "^1"` in `dependencies.rb` — writing each file when
-absent, re-pinning a caller that calls the same workflow at another ref
-(`@main`, an old series, a sha) and re-pinning a `gh` line at another
-requirement, then tells you to run `dev deps update ai-flow` and commit the
-result with `deps.lock` (commit and push the written files yourself). It
-puts the repo on each org secret's selected-repositories list, writes
-`.github/ai-flow.yml` when absent, and never edits console state it
-cannot derive: a caller of a different workflow (a fork's) is reported as
-drift, a repo without a `dev.yml` is reported (a job's `dev up` would
-install no lock), a secret the org lacks is reported with the `gh secret
-set` command, and the App not being installed on the repo is reported with
-the settings page where it is added. Re-running is safe; every step
-settles once done. Pass `--app <slug>` when your org registered the App
-under a name other than `ai-flow`. Runner-group admission (step 3) stays
-`dev runner register --org` from the same checkout. The by-hand
-equivalents:
+remedy under it — and exits 1 while any finding remains. It writes the
+caller workflow when absent and re-pins a caller that calls the same
+workflow at another ref (`@main`, an old series, a sha) to `@v1` (commit
+and push the written files yourself). It puts the repo on each org
+secret's selected-repositories list, writes `.github/ai-flow.yml` when
+absent, and never edits console state it cannot derive: a caller of a
+different workflow (a fork's) is reported as drift, a secret the org lacks
+is reported with the `gh secret set` command, and the App not being
+installed on the repo is reported with the settings page where it is
+added. Re-running is safe; every step settles once done. Pass `--app
+<slug>` when your org registered the App under a name other than
+`ai-flow`. Two steps are the repo's own and not the command's: installing
+the dispatcher on its hosts (step 1, second half) and runner-group
+admission (step 3). The by-hand equivalents:
 
 1. Copy `templates/caller-workflow.yml` to `.github/workflows/ai-commands.yml`
-  (works for code repos and the org plans repo alike) and pin the
-   dispatcher in `dependencies.rb` — `gh "d3mlabs/ai-flow", "^1", assets:
-   "ai-flow-*.zip"` in a group of its own — then `dev deps update ai-flow`
-   and commit `deps.lock` with it. The caller's `@v1` and the pin's `^1`
-   are the same constraint spelled twice; a major bump edits both, which
-   is what `ai-flow adopt` keeps true.
+  (works for code repos and the org plans repo alike), and declare ai-flow
+   as a dependency of the repo so its hosts install it. Under dev that is
+   `gh "d3mlabs/ai-flow", "^1", assets: "ai-flow-*.zip"` in
+   `dependencies.rb`, then `dev deps update ai-flow` and commit `deps.lock`
+   with it; a job's `dev up` installs the release the lock names, like
+   every other tool the repo declares. The caller's `@v1` is the shell of
+   that 1.x dispatcher, and every job checks the two agree — a major bump
+   is an edit to both.
 2. Ensure the org secrets are available to the repo (or add repo secrets):
   `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
    and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App —
@@ -398,11 +395,12 @@ equivalents:
    like any other); elsewhere, `curl https://cursor.com/install -fsS | bash`. Ruby itself and the dispatcher's gems are not
    prerequisites, and nothing of ai-flow's is read from the runner's
    environment: the job runs `dev up` in the adopter's checkout, which
-   installs the adopter's lock — the ai-flow release its `^1` pin
-   resolved to, self-contained with the Ruby and gems that release ships
-   — and puts the tree's `bin` on the project PATH, where `ai-flow
-   dispatch` runs. The dispatcher a job runs is therefore the adopter's
-   lock's; `dev deps update ai-flow` moves it. Every command that spawns
+   installs what the adopter declared — the ai-flow release among it,
+   self-contained with the Ruby and gems that release ships — and puts the
+   tree's `bin` on the project PATH, where `ai-flow dispatch` runs. The
+   dispatcher a job runs is therefore the one the adopter installed, and
+   the adopter moves it as it moves any dependency (under dev, `dev deps
+   update ai-flow`). Every command that spawns
    the agent in a checkout carrying a `dev.yml` provisions that checkout
    the same way, dispatcher-side, before the agent spawns — /build its
    worktrees and clones, /edit the job checkout, /learn its worktree and
@@ -490,18 +488,18 @@ Shareability: if this repo is public, any org can reference
 `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1` with its own secret
 and runner pool (same distribution model as action repos, one level up).
 
-`@v1` is `^1` in the one syntax Actions resolves: `dev deploy gh` moves the
-series tag to the deployed release, so a caller at `@v1` reads the head the
-adopter's `^1` pin reads — the ref moves only on deploy from an immutable
-release, never on a merge to `main`. The YAML at that ref is a shell whose
-contract holds across the major; the dispatcher a job actually runs is the
-one in the adopter's lock, installed by the job's own `dev up`, and it
-advances when the adopter re-locks (`dev deps update ai-flow`), not when
-ai-flow deploys. Deploying the previous release rolls the shell back for
-every caller at once; a dispatcher rolls back per adopter, by re-locking
-with the previous release. Inside ai-flow's own checkout, ai-flow *is* the
-checkout: its caller cannot pin itself, so `ai-flow gate` and `ai-flow
-dispatch` there resolve to `exe/ai-flow`, the tree under test.
+`@v1` is the series tag: `dev deploy gh` moves it to each deployed 1.x
+release, only on deploy from an immutable release, never on a merge to
+`main`. The YAML at that ref is a shell whose contract holds across the
+major; the dispatcher a job actually runs is the one the adopter
+installed, by the job's own `dev up`, and it advances when the adopter
+updates its dependency, not when ai-flow deploys. Each job checks the two
+are the same series and fails with the remedy when they are not. Deploying
+the previous release rolls the shell back for every caller at once; a
+dispatcher rolls back per adopter, by installing the previous release.
+Inside ai-flow's own checkout, ai-flow *is* the checkout: it cannot
+install itself, so `ai-flow gate` and `ai-flow dispatch` there resolve to
+`exe/ai-flow`, the tree under test.
 
 ### Choosing your runner setup
 

@@ -71,12 +71,13 @@ pinned runner will execute. `v1` is the gh channel's series head: `dev
 deploy gh` moves it to an immutable release, and a merge to `main` moves
 nothing — so a change reaches adopters' runners only through a review and
 then a deploy. The YAML there is a shell (check out the adopter, `dev up`,
-`dev runner status --check`, `ai-flow dispatch`); the dispatcher it runs
-is the release the adopter's own lock pins (`gh "d3mlabs/ai-flow", "^1"`),
-installed into the adopter's checkout by the job's `dev up`, which reads
-nothing of ai-flow's from the runner's environment. Deploying the previous
-release rolls the shell back for every caller; a dispatcher rolls back per
-adopter, by re-locking.
+a series check, `dev runner status --check`, `ai-flow dispatch`); the
+dispatcher it runs is the release the adopter's own dependency declaration
+names, installed into the adopter's checkout by the job's `dev up`, which
+reads nothing of ai-flow's from the runner's environment. The series check
+fails the job when that dispatcher is not of the shell's major. Deploying
+the previous release rolls the shell back for every caller; a dispatcher
+rolls back per adopter, by installing the previous release.
 
 Control: **CODEOWNERS + required review** on `.github/workflows/**` in the
 ai-flow repo (a repo ruleset with one required approving review and
@@ -90,7 +91,7 @@ the caller workflow's conditions from quiet loosening.
 ### ai-flow as its own adopter
 
 ai-flow carries a caller (`ai-commands-caller.yml`) and takes `/build`s on
-its own issues. Here ai-flow is the checkout: its caller cannot pin itself,
+its own issues. Here ai-flow is the checkout: it cannot install itself,
 so the job's `ai-flow dispatch` resolves to the checkout's `exe/ai-flow` —
 the tree on the build branch, at the sha the comment's event carried, not
 a release. What that tree may do is bounded the same way as anywhere else:

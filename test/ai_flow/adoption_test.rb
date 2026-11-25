@@ -51,15 +51,13 @@ class AiFlow::AdoptionTest < Minitest::Test
     github
   end
 
-  # A dev project's checkout with nothing of ai-flow in it.
+  # A checkout with nothing of ai-flow in it.
   def bare_checkout
-    checkout = Dir.mktmpdir("ai-flow-adopt-")
-    File.write(File.join(checkout, "dev.yml"), "name: widgets\n")
-    checkout
+    Dir.mktmpdir("ai-flow-adopt-")
   end
 
-  test "a first run on a bare checkout writes the three files, shares every secret, and reports the App — in step order" do
-    Given "an empty dev project and the seeded org"
+  test "a first run on a bare checkout writes both files, shares every secret, and reports the App — in step order" do
+    Given "an empty checkout and the seeded org"
     checkout = bare_checkout
     github = seeded_github
 
@@ -69,18 +67,18 @@ class AiFlow::AdoptionTest < Minitest::Test
 
     Then "files first, then the three secrets, then the App; the repo was resolved once up front"
     outcomes.map(&:class) == [
-      AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed,
+      AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed,
       AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed,
       AiFlow::Adoption::Outcome::Finding,
     ]
     outcomes.map(&:step) == [
-      ".github/workflows/ai-commands.yml", "dependencies.rb", ".github/ai-flow.yml",
+      ".github/workflows/ai-commands.yml", ".github/ai-flow.yml",
       "org secret CURSOR_API_KEY", "org secret AI_FLOW_APP_ID", "org secret AI_FLOW_APP_PRIVATE_KEY",
       "ai-flow App",
     ]
     github.calls.first == [:repository, "acme/widgets"]
     File.read(File.join(checkout, AiFlow::Adoption::CALLER_WORKFLOW_PATH)) == File.read(CALLER_TEMPLATE)
-    File.read(File.join(checkout, "dependencies.rb")).include?("gh \"d3mlabs/ai-flow\", \"#{SERIES.requirement}\"")
+    Dir.children(checkout).sort == [".github"]
     AiFlow::RepoConfig.load(checkout).knowledge_repo == "acme/knowledge"
     AiFlow::Adoption::SECRETS.all? { |name| github.org_secret_repositories("acme", name).include?("acme/widgets") }
 
@@ -100,7 +98,7 @@ class AiFlow::AdoptionTest < Minitest::Test
 
     Then "nothing changed; the App is still the human's to install"
     outcomes.map(&:class) == [
-      AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled,
+      AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled,
       AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled,
       AiFlow::Adoption::Outcome::Finding,
     ]
@@ -110,33 +108,28 @@ class AiFlow::AdoptionTest < Minitest::Test
     FileUtils.rm_rf(checkout)
   end
 
-  test "a repo at @main with no pin gets both edits — the ref re-pinned and the pin written — and the re-lock instruction" do
-    Given "an adopter from before the series: a caller at @main, a manifest without ai-flow, the org converged"
+  test "a caller at @main is re-pinned to the series tag, and nothing of the adopter's manifest is touched" do
+    Given "an adopter from before the series: a caller at @main, its own manifest, the org converged"
     checkout = bare_checkout
     FileUtils.mkdir_p(File.join(checkout, ".github", "workflows"))
     File.write(
       File.join(checkout, AiFlow::Adoption::CALLER_WORKFLOW_PATH),
       File.read(CALLER_TEMPLATE).sub("ai-commands.yml@#{SERIES.tag}", "ai-commands.yml@main"),
     )
-    File.write(File.join(checkout, "dependencies.rb"), "require \"dev/deps\"\n\nDev::Deps.define do\n  ruby \"4.0.6\"\nend\n")
+    manifest = "require \"dev/deps\"\n\nDev::Deps.define do\n  ruby \"4.0.6\"\nend\n"
+    File.write(File.join(checkout, "dependencies.rb"), manifest)
 
     When "converging"
     outcomes = AiFlow::Adoption.new(github: converged_github, root: AI_FLOW_ROOT)
       .converge(owner_repo: "acme/widgets", checkout: checkout)
 
-    Then "the two lines now agree, nothing else was reported, and the manifest change names its re-lock"
-    outcomes.take(2) == [
-      AiFlow::Adoption::Outcome::Changed.new(
-        step: ".github/workflows/ai-commands.yml", detail: "re-pinned from @main to @#{SERIES.tag} — commit and push it",
-      ),
-      AiFlow::Adoption::Outcome::Changed.new(
-        step: "dependencies.rb",
-        detail: "pinned `gh \"d3mlabs/ai-flow\", \"#{SERIES.requirement}\"` — run `dev deps update ai-flow` and commit it with deps.lock",
-      ),
-    ]
+    Then "the ref moved, nothing else was reported, and the manifest is the adopter's as it was"
+    outcomes.first == AiFlow::Adoption::Outcome::Changed.new(
+      step: ".github/workflows/ai-commands.yml", detail: "re-pinned from @main to @#{SERIES.tag} — commit and push it",
+    )
     outcomes.none?(AiFlow::Adoption::Outcome::Finding)
     File.read(File.join(checkout, AiFlow::Adoption::CALLER_WORKFLOW_PATH)) == File.read(CALLER_TEMPLATE)
-    File.read(File.join(checkout, "dependencies.rb")).include?("  gh \"d3mlabs/ai-flow\", \"#{SERIES.requirement}\", assets:")
+    File.read(File.join(checkout, "dependencies.rb")) == manifest
 
     Cleanup
     FileUtils.rm_rf(checkout)

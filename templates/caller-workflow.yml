@@ -1,9 +1,9 @@
 # ai-flow caller workflow — copy to .github/workflows/ai-commands.yml in each
 # participating repo (code repos and the org plans repo); `ai-flow adopt`
 # writes it. Requires:
-# - `gh "d3mlabs/ai-flow", "^1"` in the repo's dependencies.rb, re-locked
-#   with `dev deps update ai-flow` (`ai-flow adopt` writes the pin):
-#   the job's `dev up` installs the dispatcher from the repo's own lock
+# - ai-flow installed on the repo's hosts as a dependency of the repo's own
+#   (a 1.x release; see the README's adoption checklist): the job's
+#   `dev up` installs it like every other tool the repo declares
 # - the org-level CURSOR_API_KEY secret (or a repo secret)
 # - the org-level AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets (the
 #   ai-flow GitHub App — required; jobs fail without them unless you opt
@@ -35,11 +35,11 @@ permissions:
 
 jobs:
   ai-commands:
-    # @v1: the gh channel's series head — the `^1` constraint in the one
-    # syntax Actions resolves, moved only by `dev deploy gh` from an
-    # immutable release, never by a merge to main. It must agree with the
-    # dependencies.rb pin; `ai-flow adopt` re-converges both. A major bump
-    # is an edit here and in the pin.
+    # @v1: the series tag, moved only by `dev deploy gh` from an immutable
+    # release, never by a merge to main. The workflow there is the shell
+    # of the 1.x dispatcher this repo installs, and the job checks the two
+    # agree. A major bump is an edit here and to the installed release;
+    # `ai-flow adopt` re-pins this ref.
     uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}

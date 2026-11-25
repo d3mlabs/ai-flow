@@ -17,9 +17,6 @@ module AiFlow::Adoption::AppInstallationTest::When; end
 module AiFlow::Adoption::CallerWorkflowTest::Cleanup; end
 module AiFlow::Adoption::CallerWorkflowTest::Then; end
 module AiFlow::Adoption::CallerWorkflowTest::Where; end
-module AiFlow::Adoption::DependencyPinTest::Then; end
-module AiFlow::Adoption::DependencyPinTest::When; end
-module AiFlow::Adoption::DependencyPinTest::Where; end
 module AiFlow::Adoption::RepoConfigFileTest::Cleanup; end
 module AiFlow::Adoption::RepoConfigFileTest::Then; end
 module AiFlow::Adoption::RepoConfigFileTest::Where; end
@@ -128,4 +125,7 @@ module AiFlow::TokenProviderTest::Then; end
 module AiFlow::ValueEqualityTest::Where; end
 module AiFlow::WorkspaceProvisionerTest::Cleanup; end
 module ThinShellTest::Expect; end
+module ThinShellTest::Given; end
+module ThinShellTest::Then; end
+module ThinShellTest::When; end
 module ThinShellTest::Where; end

@@ -1,11 +1,10 @@
 name: ai-flow
 # ai-flow is its own deployment (plans#76): `dev release <version>` cuts an
 # immutable GitHub release carrying the tree below, `dev deploy gh` moves
-# the series tag `v<major>` (and the latest designation) to it, and every
-# adopter reads that head twice — its caller workflow's `uses: …@v1` and
-# its lock's `gh "d3mlabs/ai-flow", "^1"`, re-locked with `dev deps
-# update`. `dev up` needs no entry here: the builtin installs the locked
-# toolchain and gems from dependencies.rb.
+# the series tag `v<major>` (and the latest designation) to it. An adopter
+# calls the workflows at that tag and installs the dispatcher as a
+# dependency of its own. `dev up` needs no entry here: the builtin
+# installs the locked toolchain and gems from dependencies.rb.
 targets:
   ai-flow:
     desc: The deployed tool (exe, lib, templates, VERSION, the manifest and its locks)
@@ -54,8 +53,8 @@ commands:
 # (`dev runner register --org --role <name>` from this checkout). Both
 # roles join a group pinned to this repo's two reusable workflows at the
 # series tag of VERSION. A host records no version of ai-flow: the
-# dispatcher a job runs is the adopter's lock's, installed by the job's
-# own `dev up`.
+# dispatcher a job runs is the one the adopter declared, installed by the
+# job's own `dev up`.
 runner_roles:
   # The agent slots: one label per command route, jobs as the ai-agent
   # identity (user, data-root group, the one-way sudoers edge from the

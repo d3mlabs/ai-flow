@@ -6,10 +6,11 @@
 # marker (migrations, manual edits) skip green.
 #
 # Adopting repos (the org knowledge repo first) reference this via a small
-# caller workflow — see templates/proposal-checks.yml — at `@v1`, and pin
-# the checker in their own `dependencies.rb` like every ai-flow adopter.
-# The job is the same thin shell as ai-commands.yml: check out the adopter
-# → `dev up` → `dev runner status --check` → `ai-flow gate`.
+# caller workflow — see templates/proposal-checks.yml — at `@v1`, and
+# install the checker on their hosts as a dependency of their own, like
+# every ai-flow adopter. The job is the same thin shell as
+# ai-commands.yml: check out the adopter → `dev up` → check the checker is
+# this shell's series → `dev runner status --check` → `ai-flow gate`.
 name: origin-firing
 
 on:
@@ -66,31 +67,46 @@ jobs:
           token: ${{ steps.app-token.outputs.token || github.token }}
           persist-credentials: false
 
-      # Same provisioning as ai-commands.yml: the adopter's lock pins the
-      # checker (`gh "d3mlabs/ai-flow", "^1"`), and the job's `dev up`
-      # installs it self-contained with its bin/ on the project PATH, as
-      # the runner user, through its own gh login.
-      - name: Install the adopter's lock
+      # Same provisioning as ai-commands.yml: the adopter's own `dev up`
+      # installs everything it declared, the checker among it, with each
+      # tree's bin/ on the project PATH — as the runner user, through its
+      # own gh login.
+      - name: Install the adopter's declared tools
         uses: d3mlabs/dev/up@main
 
       # Inside ai-flow's own checkout, ai-flow is the checkout — the same
       # rule as ai-commands.yml: the checkout's exe/ resolves `ai-flow`.
       - name: Resolve ai-flow to the checkout when the checkout is ai-flow
+        if: github.repository == 'd3mlabs/ai-flow'
+        run: echo "$GITHUB_WORKSPACE/exe" >> "$GITHUB_PATH"
+
+      # Same check as ai-commands.yml: this YAML is one series' shell, and
+      # the checker the adopter installed must be of it.
+      - name: Check the checker is this shell's series
+        env:
+          SHELL_SERIES: "1"
         run: |
-          if [ -x exe/ai-flow ] && [ -f lib/ai_flow.rb ] && grep -qx 'name: ai-flow' dev.yml 2>/dev/null; then
-            echo "$GITHUB_WORKSPACE/exe" >> "$GITHUB_PATH"
+          if ! version="$(shadowenv exec -- ai-flow version 2>/dev/null)"; then
+            echo "::error::no ai-flow on the project PATH after dev up: this repository does not install ai-flow — see the README's adoption checklist"
+            exit 1
+          fi
+          major="${version%%.*}"
+          if [ "$major" != "$SHELL_SERIES" ]; then
+            echo "::error::this workflow is ai-flow v$SHELL_SERIES but the repository installs ai-flow $version — install a $SHELL_SERIES.x release, or call the workflow at @v$major"
+            exit 1
           fi
 
-      # Inspect, never converge (same reasoning as ai-commands.yml): the
-      # ledger lands in the job log; drift does not fail the check, and the
-      # checker has no reply surface, so the log is where it is read.
+      # Inspect, never converge the host (same reasoning as
+      # ai-commands.yml): the ledger lands in the job log; drift does not
+      # fail the check, and the checker has no reply surface, so the log
+      # is where it is read.
       - name: Check host posture
         continue-on-error: true
         run: dev runner status --check
 
       - name: Log versions
         run: |
-          echo "ai-flow checker: $(shadowenv exec -- ai-flow version 2>/dev/null || echo 'not found') ($(shadowenv exec -- sh -c 'command -v ai-flow' 2>/dev/null || echo 'not on the project PATH'))"
+          echo "ai-flow checker: $(shadowenv exec -- ai-flow version) at $(shadowenv exec -- sh -c 'command -v ai-flow')"
           echo "ai-flow workflow yaml: ${{ github.job_workflow_sha || '(empty on this runner — see referenced_workflows on the run API)' }}"
           echo "pull request head: ${{ github.repository }}@$(git log -1 --format='%H')"
 

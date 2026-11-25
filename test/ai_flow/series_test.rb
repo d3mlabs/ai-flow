@@ -10,21 +10,20 @@ transform!(RSpock::AST::Transformation)
 class AiFlow::SeriesTest < Minitest::Test
   include ValueSemanticsAssertions
 
-  test "the series of #{version.inspect} spells its tag #{tag} and its range #{requirement}" do
+  test "the series of #{version.inspect} is its major, spelled as the tag #{tag}" do
     When
     series = AiFlow::Series.parse(version)
 
-    Then "one constraint, two doors"
+    Then
     series.major == major
     series.tag == tag
-    series.requirement == requirement
 
     Where
-    version          | major | tag   | requirement
-    "1.0.0"          | 1     | "v1"  | "^1"
-    "1.1.0\n"        | 1     | "v1"  | "^1"
-    "2.0.0-rc.1"     | 2     | "v2"  | "^2"
-    "12.3.4+build.7" | 12    | "v12" | "^12"
+    version          | major | tag
+    "1.0.0"          | 1     | "v1"
+    "1.1.0\n"        | 1     | "v1"
+    "2.0.0-rc.1"     | 2     | "v2"
+    "12.3.4+build.7" | 12    | "v12"
   end
 
   test "text that is not a MAJOR.MINOR.PATCH version is refused: #{text.inspect}" do

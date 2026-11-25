@@ -10,12 +10,12 @@ module AiFlow
     # a copy of ai-flow's template whose one job `uses:` the reusable
     # workflow at the series tag (`@v1`). Absent, it is written from the
     # template. Present, it is the adopter's file: the one thing converged
-    # in it is the ref, because that ref and the dependencies.rb pin are the
-    # two spellings of one constraint and drift apart when only one moves
-    # (a caller at `@main` would run tomorrow's YAML against today's locked
-    # dispatcher; one at `@v1` with a `^2` pin, the reverse). The same
-    # workflow at another ref is re-pinned in place; another workflow (a
-    # fork) is the adopter's choice and is reported, never rewritten.
+    # in it is the ref, because the workflow at the series tag is the
+    # shell the dispatcher running this command belongs to (a caller at
+    # `@main` would run tomorrow's YAML against the dispatcher the adopter
+    # installed today). The same workflow at another ref is re-pinned in
+    # place; another workflow (a fork) is the adopter's choice and is
+    # reported, never rewritten.
     #
     # The workflow is the template's; the ref is the series' (VERSION), so
     # a major bump moves the drift check with it. A test holds the shipped
@@ -56,8 +56,8 @@ module AiFlow
       def converge(checkout)
         path = File.join(checkout, CALLER_WORKFLOW_PATH)
         wanted = expected
-        remedy = "set the job's `uses:` to #{wanted} — the ref and the dependencies.rb pin are one constraint, " \
-          "and only this ref moves with `dev deploy gh`"
+        remedy = "set the job's `uses:` to #{wanted} — the workflow at the series tag is the shell of the " \
+          "dispatcher this repo installs, and `dev deploy gh` moves only that ref"
 
         unless File.exist?(path)
           FileUtils.mkdir_p(File.dirname(path))

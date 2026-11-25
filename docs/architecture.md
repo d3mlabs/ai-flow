@@ -31,7 +31,7 @@ flowchart LR
     end
 
     subgraph runnerZone [Self-hosted runners]
-        dispatcher["ai-flow dispatch (exe/ai-flow + lib/ai_flow)<br/>(Ruby; the release the adopter's lock pins,<br/>installed by the job's own dev up)"]
+        dispatcher["ai-flow dispatch (exe/ai-flow + lib/ai_flow)<br/>(Ruby; the release the adopter declared,<br/>installed by the job's own dev up)"]
         agentCli["headless Cursor agent CLI<br/>(CURSOR_API_KEY)"]
     end
 
@@ -367,19 +367,16 @@ flowchart TD
 `ai-flow adopt <owner/repo>` is the one of the executable's four commands
 meant for a human's terminal (`dispatch` and `gate` are the workflows',
 `version` the job log's). `Cli` turns argv into the subcommand and is the
-one place a typed error becomes an exit status; `Adoption` runs five
+one place a typed error becomes an exit status; `Adoption` runs four
 steps in order
 and returns one `Outcome` per step — `Changed`, `Settled`, or `Finding`
-with a remedy — which `Cli::Adopt` renders. The steps own what ai-flow can
-derive: `CallerWorkflow` writes `.github/workflows/ai-commands.yml` from
-the caller template when absent and, when present, parses the ref its job
-`uses:` (`ReusableWorkflowRef`) — the same workflow at another ref is
+with a remedy — which `Cli::Adopt` renders. Every step is a relationship
+between the repo and ai-flow's GitHub-side service, which is what ai-flow
+can derive: `CallerWorkflow` writes `.github/workflows/ai-commands.yml`
+from the caller template when absent and, when present, parses the ref its
+job `uses:` (`ReusableWorkflowRef`) — the same workflow at another ref is
 re-pinned in place to the series tag, a different workflow is a finding;
-`DependencyPin` writes or re-pins the `gh "d3mlabs/ai-flow", "^<major>"`
-line in `dependencies.rb` (the group is the adopter's; a repo without a
-`dev.yml` is a finding, a `tag:`/`sha:` pin too) and its `changed` line
-says to run `dev deps update ai-flow`; `RepoConfigFile` writes
-`.github/ai-flow.yml` from its template,
+`RepoConfigFile` writes `.github/ai-flow.yml` from its template,
 `knowledge_repo:` filled from `--knowledge-repo`; `SecretAccess` puts the
 repo on each of `Adoption::SECRETS`' selected-repositories list through
 `GitHub#add_org_secret_repository`, idempotently; `AppInstallation` reads
@@ -390,10 +387,15 @@ installing needs the App's own credentials, so there is no write.
 reusable workflow declares under `workflow_call.secrets` and the caller
 template forwards; a test holds the three lists equal. The expected
 `uses:` is the template's workflow at the tag of `Series.of_tree` —
-`v<major>` of the checkout's `VERSION`, the requirement `^<major>` of the
-pin — so the two adopter lines derive from one number; a test holds the
-template at that tag. Runner-group admission is dev's
-(`dev runner register --org` from the repo's checkout) and is not a step.
+`v<major>` of the checkout's `VERSION`; a test holds the template at that
+tag.
+
+Two acts of adoption are not steps because they are the adopter's, not
+ai-flow's. Installing the dispatcher on the adopter's hosts is the
+adopter's own dependency declaration, read by its `dev up` like any tool
+it installs; `adopt` never reads or writes the adopter's manifest. Which
+release that is the job checks at run time (below, *Deployment*). Runner-
+group admission is `dev runner register --org` from the repo's checkout.
 
 ## Per-repo config: .github/ai-flow.yml
 
@@ -495,7 +497,7 @@ serve ai-flow is read from this repo's `dev.yml`, `dependencies.rb` and
 
 | Declared | Where | What dev does with it |
 |---|---|---|
-| `VERSION` (`1.0.0`) | the repo root | the release's version; its major is the **series** every consumer follows — an adopter twice, as `uses: …@v1` and as `gh "d3mlabs/ai-flow", "^1"`; a runner group as its workflow pin at `v1`. `ai-flow adopt` derives both adopter lines from it |
+| `VERSION` (`1.0.0`) | the repo root | the release's version; its major is the **series** every consumer follows — an adopter as `uses: …@v1` (written by `ai-flow adopt`) and as the release its own dependency declaration installs; a runner group as its workflow pin at `v1` |
 | target `ai-flow`, no `build:`, `packager: archive` with `files:` | `dev.yml` `targets:` | the checkout's tracked files are the stage; `dev package` zips the eight paths `files:` selects — `exe/`, `lib/`, `templates/`, `VERSION`, `dependencies.rb`, `deps.lock`, `Gemfile`, `Gemfile.lock` — at their checkout paths, and refuses a list that selects nothing |
 | `release:` | `dev.yml` `commands:` | `dev release <v>` tags, packages at the tag and attaches `ai-flow-<v>.zip` to an immutable GitHub release; the head does not move |
 | `deploy: gh` | `dev.yml` `commands:` | `dev deploy gh --release <v>` moves the series tag `v<major>` (and the latest designation when the series is the newest) to that release; `--dry-run` reports heads and candidate |
@@ -505,24 +507,28 @@ serve ai-flow is read from this repo's `dev.yml`, `dependencies.rb` and
 
 The reusable workflows are a shell whose contract holds across a major:
 check out the adopter, `uses: d3mlabs/dev/up@main` (`dev up` in that
-checkout), `dev runner status --check`, then `ai-flow dispatch` (or
-`ai-flow gate`). `dev up` installs the adopter's lock, the pinned ai-flow
-release among it — the tree ships its manifest and lock, so dev converges
-its dependencies into it, writes a launcher per `exe/<name>` under
-`bin/`, exports nothing, and puts that `bin/` on the project PATH (the
-mechanics are dev's:
+checkout), a series check, `dev runner status --check`, then `ai-flow
+dispatch` (or `ai-flow gate`). `dev up` installs what the adopter
+declared, the ai-flow release among it — the tree ships its manifest and
+lock, so dev converges its dependencies into it, writes a launcher per
+`exe/<name>` under `bin/`, exports nothing, and puts that `bin/` on the
+project PATH (the mechanics are dev's:
 [dependencies.md](https://github.com/d3mlabs/dev/blob/HEAD/docs/dependencies.md)).
-Nothing of ai-flow's is read from the runner's environment, and no job
-installs a head: the dispatcher a job runs advances when the adopter
-re-locks (`dev deps update ai-flow`), the shell when `dev deploy gh`
-moves `v1`. The launcher unsets the caller's harness activation and runs
+The series check runs `ai-flow version` and fails the job, with the
+remedy, when the installed dispatcher's major is not the shell's
+(`SHELL_SERIES` in the YAML, held to `VERSION` by a test) or when no
+`ai-flow` is on the project PATH: the two meet nowhere else, since
+ai-flow never reads the adopter's manifest. Nothing of ai-flow's is read
+from the runner's environment, and no job installs a head: the dispatcher
+a job runs advances when the adopter updates its dependency, the shell
+when `dev deploy gh` moves `v1`. The launcher unsets the caller's harness activation and runs
 the tree's Ruby on `exe/ai-flow`, which selects the tree's gems
 in-process by position, so the agent and every `dev` the dispatcher runs
 in a checkout inherit the job's environment untouched. `bin/` in the
 installed tree is dev's output, which is why the executable lives in
 `exe/`. When the checkout is ai-flow itself, the shell puts the checkout's
-`exe/` on the job PATH instead: ai-flow's own caller cannot pin itself,
-so there the tree under test is the dispatcher.
+`exe/` on the job PATH instead: ai-flow cannot install itself, so there
+the tree under test is the dispatcher.
 
 ## Agent hosts
 

@@ -11,23 +11,26 @@ module AiFlow
     class Adopt
       extend T::Sig
 
+      # The two acts of adoption that are the repo's, not this command's:
+      # printed under every report and in the usage.
+      HOST_SIDE = "Installing the dispatcher on the repo's hosts is the repo's dependency declaration " \
+        "(README, adoption checklist); runner-group admission is `dev runner register --org` from its checkout."
+
       USAGE = T.let(<<~USAGE.freeze, String)
         usage: ai-flow adopt <owner/repo> [--checkout DIR] [--knowledge-repo OWNER/REPO] [--app SLUG]
 
         Run from the adopting repository's checkout (or name it with --checkout).
-        Writes the caller workflow and .github/ai-flow.yml when absent, converges
-        the two lines that must agree — the caller's `uses: …@v<major>` and the
-        `gh "d3mlabs/ai-flow", "^<major>"` pin in dependencies.rb (re-lock it with
-        `dev deps update ai-flow`) — puts the repository on each org secret's
-        selected list, and reports what it cannot change: a caller calling another
-        workflow, a repo that is not a dev project, a secret it cannot reach, the
+        Writes the caller workflow and .github/ai-flow.yml when absent, re-pins a
+        caller's `uses:` to this release's series tag (`@v<major>`), puts the
+        repository on each org secret's selected list, and reports what it cannot
+        change: a caller calling another workflow, a secret it cannot reach, the
         App not installed. Exit 1 when anything was reported.
 
           --checkout DIR             the adopting repo's working tree (default: the current directory)
           --knowledge-repo OWNER/REPO  pre-fill knowledge_repo: in a generated .github/ai-flow.yml
           --app SLUG                 the ai-flow App's slug in this org (default: #{CommitIdentity::DEFAULT_APP_SLUG})
 
-        Runner-group admission stays dev's: `dev runner register --org` from the same checkout.
+        #{HOST_SIDE}
       USAGE
 
       # What the first positional must look like: two non-empty names
@@ -94,7 +97,7 @@ module AiFlow
           @stdout.puts("  #{label(outcome)}  #{outcome.step}: #{outcome.detail}")
           @stdout.puts("           → #{outcome.remedy}") if outcome.is_a?(Adoption::Outcome::Finding)
         end
-        @stdout.puts("Runner-group admission is dev's: `dev runner register --org` from the repo's checkout.")
+        @stdout.puts(HOST_SIDE)
       end
 
       # One word per outcome kind, left of each step.

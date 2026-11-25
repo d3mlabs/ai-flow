@@ -142,16 +142,16 @@ class AiFlow::CliTest < Minitest::Test
     ["-h"]     | AiFlow::Cli::USAGE
   end
 
-  test "version prints the tree's VERSION, the line the job log records: #{argv.inspect}" do
+  test "version prints the tree's VERSION first, then the Ruby this process runs under: #{argv.inspect}" do
     Given
     cli, stdout, _stderr = build_cli
 
     When
     status = cli.run(argv)
 
-    Then
+    Then "the version is the first word — the workflows' series check reads it that way"
     status == 0
-    stdout.string == "#{File.read(File.join(AI_FLOW_ROOT, "VERSION")).strip}\n"
+    stdout.string == "#{File.read(File.join(AI_FLOW_ROOT, "VERSION")).strip} (ruby #{RUBY_VERSION})\n"
 
     Where
     argv
@@ -196,9 +196,8 @@ class AiFlow::CliTest < Minitest::Test
   end
 
   test "adopt renders one line per step, a remedy line under each finding, and exits 1 while anything is reported" do
-    Given "an empty dev project"
+    Given "an empty checkout"
     checkout = Dir.mktmpdir("ai-flow-adopt-")
-    File.write(File.join(checkout, "dev.yml"), "name: widgets\n")
     cli, stdout, stderr = build_cli
 
     When "adopting into it"
@@ -210,14 +209,13 @@ class AiFlow::CliTest < Minitest::Test
     stdout.string == <<~REPORT
       ai-flow adopt acme/widgets
         changed  .github/workflows/ai-commands.yml: written from templates/caller-workflow.yml — commit and push it
-        changed  dependencies.rb: written with `gh "d3mlabs/ai-flow", "^#{AiFlow::Series.of_tree(AI_FLOW_ROOT).major}"` — run `dev deps update ai-flow` and commit it with deps.lock
         changed  .github/ai-flow.yml: written from templates/ai-flow.yml with knowledge_repo: acme/knowledge — commit and push it
         changed  org secret CURSOR_API_KEY: acme/widgets added to its selected repositories
         changed  org secret AI_FLOW_APP_ID: acme/widgets added to its selected repositories
         changed  org secret AI_FLOW_APP_PRIVATE_KEY: acme/widgets added to its selected repositories
         finding  ai-flow App: installed in acme but not on acme/widgets
                  → add the repository at https://github.com/organizations/acme/settings/installations/55
-      Runner-group admission is dev's: `dev runner register --org` from the repo's checkout.
+      #{AiFlow::Cli::Adopt::HOST_SIDE}
     REPORT
 
     Cleanup
@@ -227,7 +225,6 @@ class AiFlow::CliTest < Minitest::Test
   test "adopt exits 0 once every step is settled" do
     Given "a repo adopted in full: files present, secrets shared, App on it"
     checkout = Dir.mktmpdir("ai-flow-adopt-")
-    File.write(File.join(checkout, "dev.yml"), "name: widgets\n")
     github = seeded_github
     github.seed_app_installation("acme", id: 56, app_slug: "acme-ai-flow", repository_selection: "all")
     cli, stdout, _stderr = build_cli(github: github)
@@ -240,7 +237,7 @@ class AiFlow::CliTest < Minitest::Test
 
     Then
     status == 0
-    stdout.string.lines.count { |line| line.include?("  settled  ") } == 7
+    stdout.string.lines.count { |line| line.include?("  settled  ") } == 6
     !stdout.string.include?("finding")
 
     Cleanup

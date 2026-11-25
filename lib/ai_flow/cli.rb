@@ -31,7 +31,7 @@ module AiFlow
         dispatch             run the slash-command dispatcher on the job's event (the ai-commands workflow)
         gate                 run the origin-firing check on the job's pull request (the origin-firing workflow)
         adopt <owner/repo>   converge the derivable steps of adopting ai-flow on a repository
-        version              print this tree's version (the job log records which release ran)
+        version              print this tree's version and the Ruby it runs under (the job log records which release ran)
         help                 this text
     USAGE
 
@@ -86,7 +86,10 @@ module AiFlow
       when "adopt"
         Adopt.new(adoption: Adoption.new(github: @github, root: @root), stdout: @stdout).run(args)
       when "version", "--version"
-        @stdout.puts(File.read(File.join(@root, Series::VERSION_FILE)).strip)
+        # The version first, as one word: the reusable workflows read it
+        # to check the dispatcher is their series. The Ruby is this
+        # process's — the tree's own, not the project's.
+        @stdout.puts("#{File.read(File.join(@root, Series::VERSION_FILE)).strip} (ruby #{RUBY_VERSION})")
         EXIT_OK
       when nil, "help", "--help", "-h"
         @stdout.print(USAGE)
