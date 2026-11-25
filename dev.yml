@@ -2,9 +2,10 @@ name: ai-flow
 # ai-flow is its own deployment (plans#76): `dev release <version>` cuts an
 # immutable GitHub release carrying the tree below, `dev deploy gh` moves
 # the series tag `v<major>` (and the latest designation) to it, and every
-# agent host follows that head before its next job. `dev up` needs no entry
-# here: the builtin installs the locked toolchain and gems from
-# dependencies.rb.
+# adopter reads that head twice — its caller workflow's `uses: …@v1` and
+# its lock's `gh "d3mlabs/ai-flow", "^1"`, re-locked with `dev deps
+# update`. `dev up` needs no entry here: the builtin installs the locked
+# toolchain and gems from dependencies.rb.
 targets:
   ai-flow:
     desc: The deployed tool (exe, lib, templates, VERSION, the manifest and its locks)
@@ -27,7 +28,10 @@ targets:
           - /deps.lock
 # The three check verbs CI runs, in this order, after `dev up`; the same
 # three a developer runs. CI runs nothing but these, so a check exists
-# exactly when a verb defines it.
+# exactly when a verb defines it. The job entry points are not commands
+# here: the reusable workflows run `ai-flow dispatch` and `ai-flow gate`
+# from the project PATH — the adopter's installed tree, or this checkout's
+# exe/ when the checkout is ai-flow.
 commands:
   style:
     desc: Run RuboCop
@@ -38,14 +42,6 @@ commands:
   test:
     desc: Run this repo's tests
     run: bundle exec rake test
-  # The job entry points, from a checkout (the reusable workflows call them
-  # this way until they run the deployed `ai-flow` from the job PATH).
-  dispatch:
-    desc: Run the slash-command dispatcher (the ai-commands workflow entry point)
-    run: bundle exec ruby exe/ai-flow dispatch
-  origin-firing-check:
-    desc: Run the origin-firing proposal check (the origin-firing workflow entry point)
-    run: bundle exec ruby exe/ai-flow gate
   deploy:
     commands:
       gh:
@@ -57,8 +53,9 @@ commands:
 # The runner shape of an ai-flow host, declared where the shape is known
 # (`dev runner register --org --role <name>` from this checkout). Both
 # roles join a group pinned to this repo's two reusable workflows at the
-# series tag of VERSION, and both follow the stream d3mlabs/ai-flow@gh on
-# that series.
+# series tag of VERSION. A host records no version of ai-flow: the
+# dispatcher a job runs is the adopter's lock's, installed by the job's
+# own `dev up`.
 runner_roles:
   # The agent slots: one label per command route, jobs as the ai-agent
   # identity (user, data-root group, the one-way sudoers edge from the

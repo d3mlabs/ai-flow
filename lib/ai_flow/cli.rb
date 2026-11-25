@@ -8,9 +8,10 @@ module AiFlow
   # argv becomes a subcommand, and the one rescue site where a typed error
   # becomes an exit status and a stderr line.
   #
-  # Three commands, two callers. `dispatch` and `gate` are the job entry
-  # points the reusable workflows run on a self-hosted runner; `adopt` is
-  # a human's, at a terminal. All three share one wiring, built here in
+  # Three commands, two callers (and `version`, which both read). `dispatch`
+  # and `gate` are the job entry points the reusable workflows run on a
+  # self-hosted runner; `adopt` is a human's, at a terminal. All share one
+  # wiring, built here in
   # order: the TokenProvider first — `from_env` removes the App private key
   # from the process environment, so every subprocess spawned after it
   # (the agent above all) sees only short-lived installation tokens, never
@@ -30,6 +31,7 @@ module AiFlow
         dispatch             run the slash-command dispatcher on the job's event (the ai-commands workflow)
         gate                 run the origin-firing check on the job's pull request (the origin-firing workflow)
         adopt <owner/repo>   converge the derivable steps of adopting ai-flow on a repository
+        version              print this tree's version (the job log records which release ran)
         help                 this text
     USAGE
 
@@ -83,6 +85,9 @@ module AiFlow
         Gate.new(env: @env, checks: checks, stdout: @stdout).run(args)
       when "adopt"
         Adopt.new(adoption: Adoption.new(github: @github, root: @root), stdout: @stdout).run(args)
+      when "version", "--version"
+        @stdout.puts(File.read(File.join(@root, Series::VERSION_FILE)).strip)
+        EXIT_OK
       when nil, "help", "--help", "-h"
         @stdout.print(USAGE)
         EXIT_OK

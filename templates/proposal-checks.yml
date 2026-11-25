@@ -2,7 +2,9 @@
 # in the org knowledge repo (and any repo whose learning proposals should be
 # verified). Requires the same org secrets as the caller workflow
 # (CURSOR_API_KEY, AI_FLOW_APP_ID, AI_FLOW_APP_PRIVATE_KEY — this repo must be
-# in each secret's selected-repos list) and a self-hosted runner labeled
+# in each secret's selected-repos list), the same `gh "d3mlabs/ai-flow",
+# "^1"` pin in the repo's dependencies.rb (the job's `dev up` installs the
+# checker from the repo's own lock) and a self-hosted runner labeled
 # ai-learn.
 #
 # The origin-firing check (d3mlabs/ai-flow docs/paper.md §6.2): a proposed
@@ -24,7 +26,9 @@ permissions:
 
 jobs:
   origin-firing:
-    uses: d3mlabs/ai-flow/.github/workflows/origin-firing.yml@main
+    # @v1: the series head `dev deploy gh` moves, the same ref as the
+    # caller workflow's; a major bump is an edit here and in the pin.
+    uses: d3mlabs/ai-flow/.github/workflows/origin-firing.yml@v1
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}

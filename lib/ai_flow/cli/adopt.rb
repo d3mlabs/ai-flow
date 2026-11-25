@@ -15,10 +15,13 @@ module AiFlow
         usage: ai-flow adopt <owner/repo> [--checkout DIR] [--knowledge-repo OWNER/REPO] [--app SLUG]
 
         Run from the adopting repository's checkout (or name it with --checkout).
-        Writes the caller workflow and .github/ai-flow.yml when absent, puts the
-        repository on each org secret's selected list, and reports what it cannot
-        change: a caller workflow calling another ref, a secret it cannot reach,
-        the App not installed. Exit 1 when anything was reported.
+        Writes the caller workflow and .github/ai-flow.yml when absent, converges
+        the two lines that must agree — the caller's `uses: …@v<major>` and the
+        `gh "d3mlabs/ai-flow", "^<major>"` pin in dependencies.rb (re-lock it with
+        `dev deps update ai-flow`) — puts the repository on each org secret's
+        selected list, and reports what it cannot change: a caller calling another
+        workflow, a repo that is not a dev project, a secret it cannot reach, the
+        App not installed. Exit 1 when anything was reported.
 
           --checkout DIR             the adopting repo's working tree (default: the current directory)
           --knowledge-repo OWNER/REPO  pre-fill knowledge_repo: in a generated .github/ai-flow.yml

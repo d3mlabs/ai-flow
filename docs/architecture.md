@@ -31,7 +31,7 @@ flowchart LR
     end
 
     subgraph runnerZone [Self-hosted runners]
-        dispatcher["ai-flow dispatch (exe/ai-flow + lib/ai_flow)<br/>(Ruby; a released tree dev installs self-contained)"]
+        dispatcher["ai-flow dispatch (exe/ai-flow + lib/ai_flow)<br/>(Ruby; the release the adopter's lock pins,<br/>installed by the job's own dev up)"]
         agentCli["headless Cursor agent CLI<br/>(CURSOR_API_KEY)"]
     end
 
@@ -116,8 +116,8 @@ sequenceDiagram
     Note over Workflow: authorize job (GitHub-hosted) checks the<br/>author's repo permission, fail closed —<br/>denials never reach a self-hosted runner
     Note over Workflow: runs-on picks the per-command label,<br/>heaviest command wins in a batch<br/>(or dev-login when per_actor_runners)
     Workflow->>GitHub: mint App installation token (required)
-    Workflow->>Workflow: checkout target repo + ai-flow (persist-credentials off)
-    Workflow->>Dispatcher: dev dispatch (App id + key in env)
+    Workflow->>Workflow: checkout target repo (persist-credentials off);<br/>dev up installs its lock, ai-flow among it
+    Workflow->>Dispatcher: ai-flow dispatch (App id + key in env)
     Dispatcher->>Dispatcher: TokenProvider reads the key, scrubs it from env;<br/>every subprocess gets an age-checked fresh token
     Dispatcher->>Dispatcher: re-parse grammar + permission gate
     Dispatcher->>GitHub: react with eyes (deduped backstop of the ack job)
@@ -160,8 +160,8 @@ visibility.
 ## Dispatcher module map
 
 Everything under `lib/ai_flow/`. The runtime gem surface is exactly
-`sorbet-runtime` (typed with Sorbet; dev installs the released tree
-self-contained with it, a checkout gets it from `dev up`). The two
+`sorbet-runtime` (typed with Sorbet; the released tree ships its lock and
+dev installs it self-contained, a checkout gets it from `dev up`). The two
 injectable boundaries are `Executor`
 (every subprocess: `gh`, `git`, `agent`) and the classes built on it — tests
 fake exactly those and run everything else for real.
@@ -364,16 +364,22 @@ flowchart TD
 
 ## Adoption: `ai-flow adopt`
 
-`ai-flow adopt <owner/repo>` is the one of the executable's three commands
-meant for a human's terminal (`dispatch` and `gate` are the workflows').
-`Cli` turns argv into the subcommand and is the one place
-a typed error becomes an exit status; `Adoption` runs four steps in order
+`ai-flow adopt <owner/repo>` is the one of the executable's four commands
+meant for a human's terminal (`dispatch` and `gate` are the workflows',
+`version` the job log's). `Cli` turns argv into the subcommand and is the
+one place a typed error becomes an exit status; `Adoption` runs five
+steps in order
 and returns one `Outcome` per step — `Changed`, `Settled`, or `Finding`
 with a remedy — which `Cli::Adopt` renders. The steps own what ai-flow can
 derive: `CallerWorkflow` writes `.github/workflows/ai-commands.yml` from
-the caller template when absent and, when present, compares the ref its
-job `uses:` against the template's (a different ref is a finding, never a
-rewrite); `RepoConfigFile` writes `.github/ai-flow.yml` from its template,
+the caller template when absent and, when present, parses the ref its job
+`uses:` (`ReusableWorkflowRef`) — the same workflow at another ref is
+re-pinned in place to the series tag, a different workflow is a finding;
+`DependencyPin` writes or re-pins the `gh "d3mlabs/ai-flow", "^<major>"`
+line in `dependencies.rb` (the group is the adopter's; a repo without a
+`dev.yml` is a finding, a `tag:`/`sha:` pin too) and its `changed` line
+says to run `dev deps update ai-flow`; `RepoConfigFile` writes
+`.github/ai-flow.yml` from its template,
 `knowledge_repo:` filled from `--knowledge-repo`; `SecretAccess` puts the
 repo on each of `Adoption::SECRETS`' selected-repositories list through
 `GitHub#add_org_secret_repository`, idempotently; `AppInstallation` reads
@@ -383,8 +389,10 @@ installing needs the App's own credentials, so there is no write.
 `Adoption::SECRETS` is the documented literal for the three names the
 reusable workflow declares under `workflow_call.secrets` and the caller
 template forwards; a test holds the three lists equal. The expected
-`uses:` is read from the template at run time, so moving the template's
-ref moves the drift check with it. Runner-group admission is dev's
+`uses:` is the template's workflow at the tag of `Series.of_tree` —
+`v<major>` of the checkout's `VERSION`, the requirement `^<major>` of the
+pin — so the two adopter lines derive from one number; a test holds the
+template at that tag. Runner-group admission is dev's
 (`dev runner register --org` from the repo's checkout) and is not a step.
 
 ## Per-repo config: .github/ai-flow.yml
@@ -477,37 +485,44 @@ under isolation the platform's durable shared root —
 on a Linux dev host — never `/tmp`, which macOS purges on reboot and after
 ~3 days without access and a Linux tmpfs empties on reboot.
 
-## Deployment: a released tree, followed by its head
+## Deployment: a released tree, pinned by the adopter
 
-ai-flow reaches an agent host as a released tree, not a checkout
-(plans#76). The repo describes its own deployment, and dev has no
-ai-flow-specific knowledge: everything a host needs to serve ai-flow is
-read from this repo's `dev.yml`, `dependencies.rb` and `VERSION`.
+ai-flow reaches a job as a released tree the adopter's lock pins, not a
+checkout (plans#76). The repo describes its own deployment, and dev has no
+ai-flow-specific knowledge: everything a host or an adopter needs to
+serve ai-flow is read from this repo's `dev.yml`, `dependencies.rb` and
+`VERSION`.
 
 | Declared | Where | What dev does with it |
 |---|---|---|
-| `VERSION` (`1.0.0`) | the repo root | the release's version; its major is the **series** every consumer follows — a host on the stream `d3mlabs/ai-flow@gh ~> 1`, an adopter on `uses: …@v1` |
+| `VERSION` (`1.0.0`) | the repo root | the release's version; its major is the **series** every consumer follows — an adopter twice, as `uses: …@v1` and as `gh "d3mlabs/ai-flow", "^1"`; a runner group as its workflow pin at `v1`. `ai-flow adopt` derives both adopter lines from it |
 | target `ai-flow`, no `build:`, `packager: archive` with `files:` | `dev.yml` `targets:` | the checkout's tracked files are the stage; `dev package` zips the eight paths `files:` selects — `exe/`, `lib/`, `templates/`, `VERSION`, `dependencies.rb`, `deps.lock`, `Gemfile`, `Gemfile.lock` — at their checkout paths, and refuses a list that selects nothing |
 | `release:` | `dev.yml` `commands:` | `dev release <v>` tags, packages at the tag and attaches `ai-flow-<v>.zip` to an immutable GitHub release; the head does not move |
 | `deploy: gh` | `dev.yml` `commands:` | `dev deploy gh --release <v>` moves the series tag `v<major>` (and the latest designation when the series is the newest) to that release; `--dry-run` reports heads and candidate |
-| role `agent` — five command labels, group `ai-flow`, the two reusable workflows, `job_identity: ai-agent` | `dev.yml` `runner_roles:` | `dev runner register --org --role agent --slots N` from a checkout: the group pinned to the workflows at `v<major>`, the `ai-agent` identity converged, every slot anchored to the stream |
+| role `agent` — five command labels, group `ai-flow`, the two reusable workflows, `job_identity: ai-agent` | `dev.yml` `runner_roles:` | `dev runner register --org --role agent --slots N` from a checkout: the group pinned to the workflows at `v<major>`, the `ai-agent` identity converged; a host records no version of ai-flow |
 | role `orchestrator` — `ai-orchestrator`, its own group open to every repo | `dev.yml` `runner_roles:` | `--role orchestrator` re-enrolls the thin `/build --split` pool the same way |
 | `brew "cursor-cli", cask: true` | `dependencies.rb` | `dev up` in the checkout installs the agent CLI on the host; the Ruby and gem pins beside it are what the released tree ships, so it installs self-contained |
 
-Before every job the runner's job-started hook reads the series head and,
-when it moved, installs that release's tree self-contained — the tree
-ships its manifest and lock, so dev converges its dependencies into it,
-writes a launcher per `exe/<name>` under `bin/`, and the tree exports
-nothing (the mechanics are dev's:
+The reusable workflows are a shell whose contract holds across a major:
+check out the adopter, `uses: d3mlabs/dev/up@main` (`dev up` in that
+checkout), `dev runner status --check`, then `ai-flow dispatch` (or
+`ai-flow gate`). `dev up` installs the adopter's lock, the pinned ai-flow
+release among it — the tree ships its manifest and lock, so dev converges
+its dependencies into it, writes a launcher per `exe/<name>` under
+`bin/`, exports nothing, and puts that `bin/` on the project PATH (the
+mechanics are dev's:
 [dependencies.md](https://github.com/d3mlabs/dev/blob/HEAD/docs/dependencies.md)).
-The hook puts that `bin/` on the job PATH. The launcher unsets the
-caller's harness activation and runs the tree's Ruby on `exe/ai-flow`,
-which selects the tree's gems in-process by position, so the agent and
-every `dev` the dispatcher runs in a checkout inherit the job's
-environment untouched. `bin/` in the installed tree is dev's output,
-which is why the executable lives in `exe/`. Until the reusable workflows run the deployed `ai-flow`
-from the job PATH, `dev dispatch` and `dev origin-firing-check` in a
-checkout run the same two commands (`dev.yml` `commands:`).
+Nothing of ai-flow's is read from the runner's environment, and no job
+installs a head: the dispatcher a job runs advances when the adopter
+re-locks (`dev deps update ai-flow`), the shell when `dev deploy gh`
+moves `v1`. The launcher unsets the caller's harness activation and runs
+the tree's Ruby on `exe/ai-flow`, which selects the tree's gems
+in-process by position, so the agent and every `dev` the dispatcher runs
+in a checkout inherit the job's environment untouched. `bin/` in the
+installed tree is dev's output, which is why the executable lives in
+`exe/`. When the checkout is ai-flow itself, the shell puts the checkout's
+`exe/` on the job PATH instead: ai-flow's own caller cannot pin itself,
+so there the tree under test is the dispatcher.
 
 ## Agent hosts
 

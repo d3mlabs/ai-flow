@@ -57,17 +57,26 @@ Two controls, on the same path:
   *Human gate.* Also guards hosted runners and free-minute abuse.
 - **Runner-group workflow pin** — an org runner group with
   `restricted_to_workflows` naming
-  `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main`. A job defined
-  in a reusable workflow is matched against the reusable workflow's path
-  and ref, so a fork's own YAML never matches and gets no runner from the
-  group, approved or not. *Structural.* Only org runner groups carry a
-  pin.
+  `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1` — the series tag
+  every caller uses, written by `dev runner register` from the checkout's
+  `VERSION`. A job defined in a reusable workflow is matched against the
+  reusable workflow's path and ref, so a fork's own YAML never matches and
+  gets no runner from the group, approved or not. *Structural.* Only org
+  runner groups carry a pin.
 
 ### The pinned workflow as root of trust
 
-The pin makes whatever lands on `ai-commands.yml@main` the thing every
-pinned runner will execute. A change merged there without review is a
-change to every adopter's runners.
+The pin makes whatever `ai-commands.yml@v1` resolves to the thing every
+pinned runner will execute. `v1` is the gh channel's series head: `dev
+deploy gh` moves it to an immutable release, and a merge to `main` moves
+nothing — so a change reaches adopters' runners only through a review and
+then a deploy. The YAML there is a shell (check out the adopter, `dev up`,
+`dev runner status --check`, `ai-flow dispatch`); the dispatcher it runs
+is the release the adopter's own lock pins (`gh "d3mlabs/ai-flow", "^1"`),
+installed into the adopter's checkout by the job's `dev up`, which reads
+nothing of ai-flow's from the runner's environment. Deploying the previous
+release rolls the shell back for every caller; a dispatcher rolls back per
+adopter, by re-locking.
 
 Control: **CODEOWNERS + required review** on `.github/workflows/**` in the
 ai-flow repo (a repo ruleset with one required approving review and
@@ -81,18 +90,18 @@ the caller workflow's conditions from quiet loosening.
 ### ai-flow as its own adopter
 
 ai-flow carries a caller (`ai-commands-caller.yml`) and takes `/build`s on
-its own issues. The job holds two trees of this repo: the dispatcher
-checkout at `.ai-flow/` (`main`; after plans#76, the deployed release),
-which runs, and the target checkout on a build branch, which the agent
-edits. The agent's only output is a PR; `main` — what the next job runs —
-moves only on a human merge. Workflow-file edits are lifted out of the
-commit as a patch (`Build#extract_workflows_patch`) and need the code-owner
-review above, so the bot cannot author the root of trust even on its own
-repo. The agent subprocess's read-only token cannot post a command, so a
-`/build` on ai-flow cannot trigger another. `.ai-flow/` is gitignored here
-so the dispatcher's copy of the source never reads as part of the target.
-`ci.yml` runs on GitHub-hosted runners: a test change the bot proposes
-never executes on an agent host.
+its own issues. Here ai-flow is the checkout: its caller cannot pin itself,
+so the job's `ai-flow dispatch` resolves to the checkout's `exe/ai-flow` —
+the tree on the build branch, at the sha the comment's event carried, not
+a release. What that tree may do is bounded the same way as anywhere else:
+the agent's only output is a PR; `main` moves only on a human merge, and
+no caller runs `main` — adopters run the deployed release, through the
+shell at `v1`. Workflow-file edits are lifted out of the commit as a patch
+(`Build#extract_workflows_patch`) and need the code-owner review above, so
+the bot cannot author the root of trust even on its own repo. The agent
+subprocess's read-only token cannot post a command, so a `/build` on
+ai-flow cannot trigger another. `ci.yml` runs on GitHub-hosted runners: a
+test change the bot proposes never executes on an agent host.
 
 ### Unauthorized commenters
 

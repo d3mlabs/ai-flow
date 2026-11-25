@@ -9,12 +9,17 @@ module AiFlow
   # knowledge and re-converges on every run; report, but never edit,
   # console state that cannot be derived or has no write API.
   #
-  # Four steps, each its own class under Adoption:
+  # Five steps, each its own class under Adoption:
   #
   # - CallerWorkflow — `.github/workflows/ai-commands.yml` from the caller
-  #   template: written when absent, a drift finding when present but
-  #   calling a different ref than the template (a tag pin silently splits
-  #   the workflow YAML from the dispatcher code it drives).
+  #   template: written when absent; present, its `uses:` ref is converged
+  #   to the series tag (`@v1`), and a call to another workflow is a
+  #   finding.
+  # - DependencyPin — `gh "d3mlabs/ai-flow", "^1"` in `dependencies.rb`:
+  #   written or re-pinned, with the `dev deps update` that re-locks it.
+  #   The ref and the pin are two spellings of one constraint, read
+  #   through the same series head, and drift when only one moves — which
+  #   is why one command owns both.
   # - RepoConfigFile — `.github/ai-flow.yml` from its template, with
   #   `knowledge_repo:` pre-filled when the adopter names one.
   # - SecretAccess — each of the three org secrets the caller workflow
@@ -160,11 +165,22 @@ module AiFlow
     end
 
     # @param github [AiFlow::GitHub] org-side reads and the secret PUTs
-    # @param root [String] the ai-flow tree the templates are read from
+    # @param root [String] the ai-flow tree the templates and VERSION are
+    #   read from
+    # @raise [Series::InvalidVersionError] when the tree's VERSION is not
+    #   a version
     sig { params(github: GitHub, root: String).void }
     def initialize(github:, root:)
       @github = github
-      @caller_workflow = T.let(CallerWorkflow.new(template: File.join(root, CALLER_WORKFLOW_TEMPLATE)), CallerWorkflow)
+      series = Series.of_tree(root)
+      @caller_workflow = T.let(
+        CallerWorkflow.new(template: File.join(root, CALLER_WORKFLOW_TEMPLATE), series: series), CallerWorkflow,
+      )
+      # The pin names the repo whose workflow the caller calls, so an
+      # adopter of a fork pins the fork.
+      @dependency_pin = T.let(
+        DependencyPin.new(repository: @caller_workflow.expected.repository, series: series), DependencyPin,
+      )
       @repo_config_file = T.let(RepoConfigFile.new(template: File.join(root, REPO_CONFIG_TEMPLATE)), RepoConfigFile)
       @secret_access = T.let(SecretAccess.new(github: github), SecretAccess)
       @app_installation = T.let(AppInstallation.new(github: github), AppInstallation)
@@ -193,6 +209,7 @@ module AiFlow
       repository = @github.repository(owner_repo)
       outcomes = T.let([], T::Array[Outcome])
       outcomes << @caller_workflow.converge(checkout)
+      outcomes << @dependency_pin.converge(checkout)
       outcomes << @repo_config_file.converge(checkout, knowledge_repo: knowledge_repo)
       SECRETS.each { |name| outcomes << @secret_access.converge(repository, name) }
       outcomes << @app_installation.converge(repository, app_slug)

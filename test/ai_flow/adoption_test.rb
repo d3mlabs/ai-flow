@@ -14,6 +14,7 @@ class AiFlow::AdoptionTest < Minitest::Test
 
   REUSABLE_WORKFLOW = File.join(AI_FLOW_ROOT, ".github", "workflows", "ai-commands.yml")
   CALLER_TEMPLATE = File.join(AI_FLOW_ROOT, AiFlow::Adoption::CALLER_WORKFLOW_TEMPLATE)
+  SERIES = AiFlow::Series.of_tree(AI_FLOW_ROOT)
 
   # An org where everything adopt can converge is one step away, and the
   # App is installed on a selection without the repo.
@@ -38,9 +39,28 @@ class AiFlow::AdoptionTest < Minitest::Test
     forwarded.sort == AiFlow::Adoption::SECRETS.sort
   end
 
-  test "a first run on a bare checkout writes both files, shares every secret, and reports the App — in step order" do
-    Given "an empty checkout and the seeded org"
+  # An org where every step adopt reports is already done: the repo on
+  # each secret's list, the App installed on every repository.
+  def converged_github
+    github = FakeGitHub.new
+    github.seed_repository("acme/widgets", id: 777)
+    AiFlow::Adoption::SECRETS.each do |name|
+      github.seed_org_secret("acme", name, visibility: "selected", repositories: ["acme/other", "acme/widgets"])
+    end
+    github.seed_app_installation("acme", id: 55, app_slug: "ai-flow", repository_selection: "all")
+    github
+  end
+
+  # A dev project's checkout with nothing of ai-flow in it.
+  def bare_checkout
     checkout = Dir.mktmpdir("ai-flow-adopt-")
+    File.write(File.join(checkout, "dev.yml"), "name: widgets\n")
+    checkout
+  end
+
+  test "a first run on a bare checkout writes the three files, shares every secret, and reports the App — in step order" do
+    Given "an empty dev project and the seeded org"
+    checkout = bare_checkout
     github = seeded_github
 
     When "converging"
@@ -49,17 +69,18 @@ class AiFlow::AdoptionTest < Minitest::Test
 
     Then "files first, then the three secrets, then the App; the repo was resolved once up front"
     outcomes.map(&:class) == [
-      AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed,
+      AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed,
       AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed, AiFlow::Adoption::Outcome::Changed,
       AiFlow::Adoption::Outcome::Finding,
     ]
     outcomes.map(&:step) == [
-      ".github/workflows/ai-commands.yml", ".github/ai-flow.yml",
+      ".github/workflows/ai-commands.yml", "dependencies.rb", ".github/ai-flow.yml",
       "org secret CURSOR_API_KEY", "org secret AI_FLOW_APP_ID", "org secret AI_FLOW_APP_PRIVATE_KEY",
       "ai-flow App",
     ]
     github.calls.first == [:repository, "acme/widgets"]
     File.read(File.join(checkout, AiFlow::Adoption::CALLER_WORKFLOW_PATH)) == File.read(CALLER_TEMPLATE)
+    File.read(File.join(checkout, "dependencies.rb")).include?("gh \"d3mlabs/ai-flow\", \"#{SERIES.requirement}\"")
     AiFlow::RepoConfig.load(checkout).knowledge_repo == "acme/knowledge"
     AiFlow::Adoption::SECRETS.all? { |name| github.org_secret_repositories("acme", name).include?("acme/widgets") }
 
@@ -69,7 +90,7 @@ class AiFlow::AdoptionTest < Minitest::Test
 
   test "a second run over the same checkout and org settles every step it converged and repeats only the finding" do
     Given "a checkout and org adopt already ran on"
-    checkout = Dir.mktmpdir("ai-flow-adopt-")
+    checkout = bare_checkout
     github = seeded_github
     adoption = AiFlow::Adoption.new(github: github, root: AI_FLOW_ROOT)
     adoption.converge(owner_repo: "acme/widgets", checkout: checkout)
@@ -79,7 +100,7 @@ class AiFlow::AdoptionTest < Minitest::Test
 
     Then "nothing changed; the App is still the human's to install"
     outcomes.map(&:class) == [
-      AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled,
+      AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled,
       AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled, AiFlow::Adoption::Outcome::Settled,
       AiFlow::Adoption::Outcome::Finding,
     ]
@@ -89,9 +110,57 @@ class AiFlow::AdoptionTest < Minitest::Test
     FileUtils.rm_rf(checkout)
   end
 
+  test "a repo at @main with no pin gets both edits — the ref re-pinned and the pin written — and the re-lock instruction" do
+    Given "an adopter from before the series: a caller at @main, a manifest without ai-flow, the org converged"
+    checkout = bare_checkout
+    FileUtils.mkdir_p(File.join(checkout, ".github", "workflows"))
+    File.write(
+      File.join(checkout, AiFlow::Adoption::CALLER_WORKFLOW_PATH),
+      File.read(CALLER_TEMPLATE).sub("ai-commands.yml@#{SERIES.tag}", "ai-commands.yml@main"),
+    )
+    File.write(File.join(checkout, "dependencies.rb"), "require \"dev/deps\"\n\nDev::Deps.define do\n  ruby \"4.0.6\"\nend\n")
+
+    When "converging"
+    outcomes = AiFlow::Adoption.new(github: converged_github, root: AI_FLOW_ROOT)
+      .converge(owner_repo: "acme/widgets", checkout: checkout)
+
+    Then "the two lines now agree, nothing else was reported, and the manifest change names its re-lock"
+    outcomes.take(2) == [
+      AiFlow::Adoption::Outcome::Changed.new(
+        step: ".github/workflows/ai-commands.yml", detail: "re-pinned from @main to @#{SERIES.tag} — commit and push it",
+      ),
+      AiFlow::Adoption::Outcome::Changed.new(
+        step: "dependencies.rb",
+        detail: "pinned `gh \"d3mlabs/ai-flow\", \"#{SERIES.requirement}\"` — run `dev deps update ai-flow` and commit it with deps.lock",
+      ),
+    ]
+    outcomes.none?(AiFlow::Adoption::Outcome::Finding)
+    File.read(File.join(checkout, AiFlow::Adoption::CALLER_WORKFLOW_PATH)) == File.read(CALLER_TEMPLATE)
+    File.read(File.join(checkout, "dependencies.rb")).include?("  gh \"d3mlabs/ai-flow\", \"#{SERIES.requirement}\", assets:")
+
+    Cleanup
+    FileUtils.rm_rf(checkout)
+  end
+
+  test "a converged repo produces no finding, and a second run changes nothing" do
+    Given "an adopter adopt already converged, in an org that is converged too"
+    checkout = bare_checkout
+    adoption = AiFlow::Adoption.new(github: converged_github, root: AI_FLOW_ROOT)
+    adoption.converge(owner_repo: "acme/widgets", checkout: checkout)
+
+    When "converging again"
+    outcomes = adoption.converge(owner_repo: "acme/widgets", checkout: checkout)
+
+    Then
+    outcomes.all?(AiFlow::Adoption::Outcome::Settled)
+
+    Cleanup
+    FileUtils.rm_rf(checkout)
+  end
+
   test "the App slug is the adopter's to name" do
     Given "an org whose App carries its own slug"
-    checkout = Dir.mktmpdir("ai-flow-adopt-")
+    checkout = bare_checkout
     github = seeded_github
     github.seed_app_installation("acme", id: 56, app_slug: "acme-ai-flow", repository_selection: "all")
 
