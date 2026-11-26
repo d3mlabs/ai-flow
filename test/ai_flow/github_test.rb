@@ -427,9 +427,22 @@ class AiFlow::GitHubTest < Minitest::Test
     error.message == "gh api repos/acme/widgets failed: gh: Not Found (HTTP 404)"
   end
 
-  test "any other gh failure stays the plain Error — a 403 is not an absence" do
+  test "a gh 403 is a Forbidden carrying gh's words — a refusal, not an absence" do
     Given "gh answering Forbidden"
     github = AiFlow::GitHub.new(executor: FailingExecutor.new(stderr: "gh: Resource not accessible by integration (HTTP 403)\n"))
+
+    When "reading a repository"
+    read = -> { github.repository("acme/widgets") }
+
+    Then
+    error = assert_raises(AiFlow::GitHub::Forbidden) { read.call }
+    !error.is_a?(AiFlow::GitHub::NotFound)
+    error.message == "gh api repos/acme/widgets failed: gh: Resource not accessible by integration (HTTP 403)"
+  end
+
+  test "any other gh failure stays the plain Error" do
+    Given "gh answering a server error"
+    github = AiFlow::GitHub.new(executor: FailingExecutor.new(stderr: "gh: Server Error (HTTP 502)\n"))
 
     When "reading a repository"
     error = begin

@@ -14,6 +14,7 @@ module AiFlow::AcpClientTest::When; end
 module AiFlow::Adoption::AppInstallationTest::Given; end
 module AiFlow::Adoption::AppInstallationTest::Then; end
 module AiFlow::Adoption::AppInstallationTest::When; end
+module AiFlow::Adoption::AppInstallationTest::Where; end
 module AiFlow::Adoption::CallerWorkflowTest::Cleanup; end
 module AiFlow::Adoption::CallerWorkflowTest::Then; end
 module AiFlow::Adoption::CallerWorkflowTest::Where; end

@@ -1,4 +1,4 @@
-# typed: true
+# typed: false — rspock Where tables are load-time rewritten and have no static typing.
 # frozen_string_literal: true
 
 require "test_helper"
@@ -62,6 +62,80 @@ class AiFlow::Adoption::AppInstallationTest < Minitest::Test
       step: "acme-ai-flow App",
       detail: "not installed in acme",
       remedy: "install it on acme/widgets: https://github.com/apps/acme-ai-flow/installations/new",
+    )
+  end
+
+  # GitHub App slugs are one global namespace: `ai-flow` was taken before
+  # d3mlabs registered its App, which is `d3mlabs-ai-flow`. Adopt asked
+  # for `ai-flow` by default and reported "not installed" on every repo
+  # the App demonstrably runs on (ai-flow#190).
+  test "without a slug, the org's ai-flow App is found among its installations: #{what}" do
+    Given
+    github = FakeGitHub.new
+    github.seed_app_installation("acme", id: 9, app_slug: "dependabot", repository_selection: "all")
+    github.seed_app_installation("acme", id: 55, app_slug: slug, repository_selection: "all")
+
+    When
+    outcome = AiFlow::Adoption::AppInstallation.new(github: github).converge(REPOSITORY, nil)
+
+    Then
+    outcome == AiFlow::Adoption::Outcome::Settled.new(step: "#{slug} App", detail: "installed on every repository in acme")
+
+    Where
+    what                        | slug
+    "the plain name"            | "ai-flow"
+    "the org's prefixed name"   | "acme-ai-flow"
+  end
+
+  test "without a slug and no ai-flow App among the org's installations, the finding names what is installed and how to say which" do
+    Given
+    github = FakeGitHub.new
+    github.seed_app_installation("acme", id: 9, app_slug: "dependabot", repository_selection: "all")
+
+    When
+    outcome = AiFlow::Adoption::AppInstallation.new(github: github).converge(REPOSITORY, nil)
+
+    Then
+    outcome == AiFlow::Adoption::Outcome::Finding.new(
+      step: "ai-flow App",
+      detail: "no ai-flow App installed in acme (installed: dependabot)",
+      remedy: "install the org's ai-flow App on acme/widgets, or name it with --app SLUG",
+    )
+  end
+
+  test "without a slug and two ai-flow Apps installed, adopt does not guess" do
+    Given
+    github = FakeGitHub.new
+    github.seed_app_installation("acme", id: 55, app_slug: "ai-flow", repository_selection: "all")
+    github.seed_app_installation("acme", id: 56, app_slug: "acme-ai-flow", repository_selection: "all")
+
+    When
+    outcome = AiFlow::Adoption::AppInstallation.new(github: github).converge(REPOSITORY, nil)
+
+    Then
+    outcome == AiFlow::Adoption::Outcome::Finding.new(
+      step: "ai-flow App",
+      detail: "two ai-flow Apps installed in acme: ai-flow, acme-ai-flow",
+      remedy: "name the one this org runs with --app SLUG",
+    )
+  end
+
+  # `user/installations/{id}/repositories` answers a token the App issued
+  # or a classic PAT; gh's own OAuth login gets a 403. Adopt crashed on it
+  # (ai-flow#190); the honest answer is that it cannot tell.
+  test "a selection this gh login cannot read is a finding that says so, with the page where a human can" do
+    Given "an installation on selected repositories, the list forbidden to this login"
+    github = FakeGitHub.new
+    github.seed_app_installation("acme", id: 55, app_slug: "ai-flow", repository_selection: "selected", repositories: nil)
+
+    When
+    outcome = AiFlow::Adoption::AppInstallation.new(github: github).converge(REPOSITORY, "ai-flow")
+
+    Then
+    outcome == AiFlow::Adoption::Outcome::Finding.new(
+      step: "ai-flow App",
+      detail: "installed in acme on selected repositories; whether acme/widgets is one cannot be read with this gh login (the endpoint takes a token the App issued, or a classic PAT)",
+      remedy: "check the repository is listed at https://github.com/organizations/acme/settings/installations/55",
     )
   end
 
