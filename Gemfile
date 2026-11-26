@@ -8,15 +8,15 @@ gem "sorbet-runtime"
 group :development do
   gem "sorbet"
   gem "tapioca", require: false
-  gem "rubocop-d3mlabs", "~> 1.0", require: false
+  gem "rubocop-d3mlabs", ">= 1.0.0", "< 2.0.0", require: false
 end
 
 group :test do
   gem "minitest"
   gem "minitest-reporters"
   gem "rake"
-  gem "rspock", "~> 3.0"
-  gem "simplecov", "~> 1.0"
-  gem "simplecov-cobertura", "~> 4.0", require: false
-  gem "simplecov-sorbet", "~> 0.2", require: false
+  gem "rspock", ">= 3.0.0", "< 4.0.0"
+  gem "simplecov", ">= 1.0.0", "< 2.0.0"
+  gem "simplecov-cobertura", ">= 4.0.0", "< 5.0.0", require: false
+  gem "simplecov-sorbet", ">= 0.2", "< 1", require: false
 end

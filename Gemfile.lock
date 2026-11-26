@@ -133,11 +133,11 @@ DEPENDENCIES
   minitest
   minitest-reporters
   rake
-  rspock (~> 3.0)
-  rubocop-d3mlabs (~> 1.0)
-  simplecov (~> 1.0)
-  simplecov-cobertura (~> 4.0)
-  simplecov-sorbet (~> 0.2)
+  rspock (>= 3.0.0, < 4.0.0)
+  rubocop-d3mlabs (>= 1.0.0, < 2.0.0)
+  simplecov (>= 1.0.0, < 2.0.0)
+  simplecov-cobertura (>= 4.0.0, < 5.0.0)
+  simplecov-sorbet (>= 0.2, < 1)
   sorbet
   sorbet-runtime
   tapioca
