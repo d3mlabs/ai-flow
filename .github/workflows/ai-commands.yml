@@ -1,8 +1,20 @@
 # ai-flow: reusable slash-command dispatcher (/ask, /edit, /split, /build).
 #
 # Adopting repos reference this via a ~10-line caller workflow (see
-# templates/caller-workflow.yml). Jobs run on self-hosted runners carrying the
-# headless Cursor `agent` CLI — Actions bills nothing for self-hosted jobs.
+# templates/caller-workflow.yml) at `@v1` — the series tag `dev deploy gh`
+# moves — and install the dispatcher on their hosts as a dependency of
+# their own, like any tool (the README's adoption checklist). Jobs run on
+# self-hosted runners carrying the headless Cursor `agent` CLI — Actions
+# bills nothing for self-hosted jobs.
+#
+# The dispatch job is a thin shell whose contract holds across a major:
+# check out the adopter → `dev up` (installs what the adopter declared,
+# the dispatcher among it, and puts its bin/ on the project PATH) → check
+# the dispatcher is this shell's series → `dev runner status --check` →
+# `ai-flow dispatch`. No second checkout, nothing read from the runner's
+# environment: the dispatcher a job runs is the one the adopter
+# installed, this YAML is the one `@v1` points at. Adding a step is a 1.x
+# change; renaming an input the dispatcher reads is a major.
 #
 # Identity: an org-owned GitHub App (`ai-flow`) is the acting identity — no
 # hosted component, purely a per-job token mint. App tokens (unlike the
@@ -330,13 +342,11 @@ jobs:
           exit 1
 
       # Mint the App installation token (1h), scoped to the triggering repo
-      # (plans#25): this token only serves the two checkouts below and the
+      # (plans#25): this token only serves the checkout below and the
       # no-App fallback. Cross-repo work (/build's Target repos, /learn's
       # promotion) happens in the dispatcher, which holds the App key and
       # mints its own reach per call (TokenProvider); the agent it launches
-      # gets a read-only token (installation-wide reads, zero writes). The
-      # public ai-flow checkout needs no scope — any valid token reads a
-      # public repo (cross-owner adopters exercise exactly that today).
+      # gets a read-only token (installation-wide reads, zero writes).
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
@@ -360,65 +370,85 @@ jobs:
           # the default GITHUB_TOKEN suppresses.
           persist-credentials: false
 
-      # github.token is scoped to the triggering repo, so it can't read a
-      # private ai-flow — the App token can (installed org-wide). Public
-      # ai-flow forks work with the plain github.token fallback.
-      - name: Check out ai-flow (the dispatcher)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: d3mlabs/ai-flow
-          path: .ai-flow
-          token: ${{ steps.app-token.outputs.token || github.token }}
-          # Read-only checkout — nothing pushes from here, so no credential
-          # should linger in its git config for the agent to read.
-          persist-credentials: false
+      # The adopter's checkout is the project: its own `dev up`, as on any
+      # developer's machine, installs everything the adopter declared — the
+      # dispatcher among it — and puts each tree's bin/ on the project
+      # PATH. The runner user runs it, as the identity that owns the host;
+      # the agent user ai-flow spawns later provisions its own checkouts
+      # with dev's per-checkout verb, never this one. gh's credential is
+      # the runner user's login — a box's runner user and a Mac's operator
+      # both carry one, and an adopter's private dependencies need its
+      # reach, not the one-repo App token's.
+      - name: Install the adopter's declared tools
+        uses: d3mlabs/dev/up@main
 
-      # The dispatcher's toolchain comes through dev, the org's dependency
-      # machinery: `dev deps install` provisions the pinned Ruby (a brew
-      # bottle from the d3mlabs tap, dev >= 0.3) and the locked gem set from
-      # dependencies.rb — headless, so no shell hooks or credential prompts.
-      # The runner box needs dev and shadowenv preinstalled; Ruby and gems
-      # it does not.
-      - name: Install dispatcher dependencies
-        working-directory: .ai-flow
-        run: dev deps install
+      # Inside ai-flow's own checkout, ai-flow is the checkout: a repo
+      # cannot install itself, so the checkout's exe/ goes on the job PATH
+      # and `ai-flow` below resolves to it, under the project Ruby `dev up`
+      # just installed. Everywhere else the name resolves to the launcher
+      # of the tree the adopter installed, on the project PATH dev wrote.
+      # A fork of ai-flow names itself here.
+      - name: Resolve ai-flow to the checkout when the checkout is ai-flow
+        if: github.repository == 'd3mlabs/ai-flow'
+        run: echo "$GITHUB_WORKSPACE/exe" >> "$GITHUB_PATH"
 
-      # Inspect, never converge: a job runs as the runner user and has no
-      # business rewriting host posture. dev's ledger (each red line with
-      # its remedy) goes to the job log; drift must not fail a command the
-      # host can still run, so the verdict reaches the dispatcher as an
-      # outcome and lands as one line in the command's reply (ai-flow#140).
+      # This YAML is one series' shell and the dispatcher the adopter
+      # installed must be of that series; the two drift when a major bump
+      # moves one and not the other, and this step is the one place both
+      # are in hand. SHELL_SERIES is this file's major: a major bump edits
+      # it (a test holds it to VERSION).
+      - name: Check the dispatcher is this shell's series
+        env:
+          SHELL_SERIES: "1"
+        run: |
+          if ! version="$(shadowenv exec -- ai-flow version 2>/dev/null)"; then
+            echo "::error::no ai-flow on the project PATH after dev up: this repository does not install ai-flow — see the README's adoption checklist"
+            exit 1
+          fi
+          major="${version%%.*}"
+          if [ "$major" != "$SHELL_SERIES" ]; then
+            echo "::error::this workflow is ai-flow v$SHELL_SERIES but the repository installs ai-flow $version — install a $SHELL_SERIES.x release, or call the workflow at @v$major"
+            exit 1
+          fi
+
+      # Inspect, never converge the host: `dev up` above converged the
+      # project (the checkout's declarations); the host — the runner's
+      # users, groups and sudoers — is converged by its operator through
+      # `dev runner`, and a job only reads it. dev's ledger (each red line
+      # with its remedy) goes to the job log; drift must not fail a command
+      # the host can still run, so the verdict reaches the dispatcher as an
+      # outcome and lands as one line in the command's reply. Run after
+      # `dev up`, so dev's staleness gate cannot fire first and read as
+      # drift.
       - name: Check host posture
         id: posture
         continue-on-error: true
-        # In the dispatcher checkout, whose dependencies the step above just
-        # installed: in a target that is itself a dev project, dev's
-        # staleness gate would fire first and read as drift (ai-flow#166).
-        working-directory: .ai-flow
         run: dev runner status --check
 
       # The run must record exactly what code ran — the job log is ai-flow's
-      # observability surface. Two ai-flow versions are in play and can
-      # drift: this workflow YAML resolves from the caller's pin (the
-      # floating v1 tag), while the dispatcher checkout above tracks main.
-      # The model policy (.github/ai-flow.yml) is logged; the valid model
-      # names live in the ACP session catalog, which model resolution dumps
-      # (names + modelIds) when a configured handle fails to resolve —
-      # `agent --list-models` ids are a different naming domain and were
-      # actively misleading here (ai-flow#84). Probes must never fail the
-      # job.
+      # observability surface: the dispatcher the adopter installed (with
+      # the Ruby it runs under, its own tree's) and this workflow YAML, what
+      # the caller's `@v1` resolved to. The model policy (.github/ai-flow.yml) is logged;
+      # the valid model names live in the ACP session catalog, which model
+      # resolution dumps (names + modelIds) when a configured handle fails
+      # to resolve — `agent --list-models` ids are a different naming
+      # domain and were actively misleading here (ai-flow#84). Probes must
+      # never fail the job.
       - name: Log versions
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: |
-          echo "ai-flow dispatcher: $(git -C .ai-flow log -1 --format='%H (%s)')"
+          echo "ai-flow dispatcher: $(shadowenv exec -- ai-flow version) at $(shadowenv exec -- sh -c 'command -v ai-flow')"
           echo "ai-flow workflow yaml: ${{ github.job_workflow_sha || '(empty on this runner — see referenced_workflows on the run API)' }}"
           echo "target repo: ${{ github.repository }}@$(git log -1 --format='%H')"
-          echo "ruby: $(cd .ai-flow && shadowenv exec -- ruby --version)"
           echo "agent CLI: $("${AI_FLOW_AGENT_BIN:-cursor-agent}" --version 2>/dev/null || echo 'not found')"
           echo "::group::repo config (.github/ai-flow.yml)"
           [ -f .github/ai-flow.yml ] && cat .github/ai-flow.yml || echo "no .github/ai-flow.yml — code policy / CLI default"
           echo "::endgroup::"
+
+      # Under the project environment (`shadowenv exec`), where dev put the
+      # tree's bin/ — the launcher is self-contained and needs nothing else
+      # from it.
       - name: Dispatch
         env:
           # Fallback only: with App credentials the dispatcher mints its own
@@ -436,5 +466,4 @@ jobs:
           # named ai-flow — derive the bot login from the actual slug.
           AI_FLOW_BOT_LOGIN: ${{ format('{0}[bot]', steps.app-token.outputs.app-slug || 'ai-flow') }}
           AI_FLOW_HOST_POSTURE: ${{ steps.posture.outcome == 'failure' && 'drifted' || 'converged' }}
-        working-directory: .ai-flow
-        run: dev dispatch
+        run: shadowenv exec -- ai-flow dispatch

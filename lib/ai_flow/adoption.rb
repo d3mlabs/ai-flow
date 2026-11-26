@@ -9,12 +9,13 @@ module AiFlow
   # knowledge and re-converges on every run; report, but never edit,
   # console state that cannot be derived or has no write API.
   #
-  # Four steps, each its own class under Adoption:
+  # Four steps, each its own class under Adoption, and every one a
+  # relationship between the repo and ai-flow's GitHub-side service:
   #
   # - CallerWorkflow — `.github/workflows/ai-commands.yml` from the caller
-  #   template: written when absent, a drift finding when present but
-  #   calling a different ref than the template (a tag pin silently splits
-  #   the workflow YAML from the dispatcher code it drives).
+  #   template: written when absent; present, its `uses:` ref is converged
+  #   to the series tag (`@v1`), and a call to another workflow is a
+  #   finding.
   # - RepoConfigFile — `.github/ai-flow.yml` from its template, with
   #   `knowledge_repo:` pre-filled when the adopter names one.
   # - SecretAccess — each of the three org secrets the caller workflow
@@ -23,8 +24,12 @@ module AiFlow
   # - AppInstallation — whether the ai-flow App is installed on the repo:
   #   a finding only, since installing needs the App's own credentials.
   #
-  # Runner-group admission stays dev's (`dev runner register --org` from the
-  # repo's checkout): it is derived from the host, not from ai-flow.
+  # Two acts of adoption are not steps here because they are not
+  # ai-flow's: putting the dispatcher on the adopter's hosts is the
+  # adopter's dependency declaration, like any tool it installs (the
+  # README's install line), and runner-group admission is `dev runner
+  # register --org` from the repo's checkout. The job itself checks that
+  # the dispatcher the adopter installed is the series this shell is.
   class Adoption
     extend T::Sig
 
@@ -160,11 +165,17 @@ module AiFlow
     end
 
     # @param github [AiFlow::GitHub] org-side reads and the secret PUTs
-    # @param root [String] the ai-flow tree the templates are read from
+    # @param root [String] the ai-flow tree the templates and VERSION are
+    #   read from
+    # @raise [Series::InvalidVersionError] when the tree's VERSION is not
+    #   a version
     sig { params(github: GitHub, root: String).void }
     def initialize(github:, root:)
       @github = github
-      @caller_workflow = T.let(CallerWorkflow.new(template: File.join(root, CALLER_WORKFLOW_TEMPLATE)), CallerWorkflow)
+      @caller_workflow = T.let(
+        CallerWorkflow.new(template: File.join(root, CALLER_WORKFLOW_TEMPLATE), series: Series.of_tree(root)),
+        CallerWorkflow,
+      )
       @repo_config_file = T.let(RepoConfigFile.new(template: File.join(root, REPO_CONFIG_TEMPLATE)), RepoConfigFile)
       @secret_access = T.let(SecretAccess.new(github: github), SecretAccess)
       @app_installation = T.let(AppInstallation.new(github: github), AppInstallation)

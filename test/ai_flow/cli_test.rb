@@ -142,6 +142,23 @@ class AiFlow::CliTest < Minitest::Test
     ["-h"]     | AiFlow::Cli::USAGE
   end
 
+  test "version prints the tree's VERSION first, then the Ruby this process runs under: #{argv.inspect}" do
+    Given
+    cli, stdout, _stderr = build_cli
+
+    When
+    status = cli.run(argv)
+
+    Then "the version is the first word — the workflows' series check reads it that way"
+    status == 0
+    stdout.string == "#{File.read(File.join(AI_FLOW_ROOT, "VERSION")).strip} (ruby #{RUBY_VERSION})\n"
+
+    Where
+    argv
+    ["version"]
+    ["--version"]
+  end
+
   test "an unknown command is a usage error on stderr, exit 2" do
     Given
     cli, stdout, stderr = build_cli
@@ -198,7 +215,7 @@ class AiFlow::CliTest < Minitest::Test
         changed  org secret AI_FLOW_APP_PRIVATE_KEY: acme/widgets added to its selected repositories
         finding  ai-flow App: installed in acme but not on acme/widgets
                  → add the repository at https://github.com/organizations/acme/settings/installations/55
-      Runner-group admission is dev's: `dev runner register --org` from the repo's checkout.
+      #{AiFlow::Cli::Adopt::HOST_SIDE}
     REPORT
 
     Cleanup

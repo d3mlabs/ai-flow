@@ -1,5 +1,9 @@
 # ai-flow caller workflow — copy to .github/workflows/ai-commands.yml in each
-# participating repo (code repos and the org plans repo). Requires:
+# participating repo (code repos and the org plans repo); `ai-flow adopt`
+# writes it. Requires:
+# - ai-flow installed on the repo's hosts as a dependency of the repo's own
+#   (a 1.x release; see the README's adoption checklist): the job's
+#   `dev up` installs it like every other tool the repo declares
 # - the org-level CURSOR_API_KEY secret (or a repo secret)
 # - the org-level AI_FLOW_APP_ID / AI_FLOW_APP_PRIVATE_KEY secrets (the
 #   ai-flow GitHub App — required; jobs fail without them unless you opt
@@ -31,9 +35,12 @@ permissions:
 
 jobs:
   ai-commands:
-    # @main so the workflow YAML tracks the dispatcher code, which is also
-    # checked out at main — a tag pin here silently splits the two versions.
-    uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main
+    # @v1: the series tag, moved only by `dev deploy gh` from an immutable
+    # release, never by a merge to main. The workflow there is the shell
+    # of the 1.x dispatcher this repo installs, and the job checks the two
+    # agree. A major bump is an edit here and to the installed release;
+    # `ai-flow adopt` re-pins this ref.
+    uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}

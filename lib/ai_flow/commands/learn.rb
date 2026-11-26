@@ -1212,14 +1212,13 @@ module AiFlow
 
       # Stage the learning files in the given checkout and commit them. The
       # learning branch carries only learnings by construction, so a blanket
-      # add is safe; .ai-flow is the dispatcher's own nested checkout, never
-      # ours.
+      # add is safe.
       #
       # @return [Array<String>] changed learning slugs (skill folders +
       #   "index" for the index edit), empty when nothing was written
       sig { params(dir: String, message: String).returns(T::Array[String]) }
       def commit_learnings(dir, message: "ai-flow /learn: capture learnings")
-        run!(["git", "add", "-A", "--", ":(exclude).ai-flow"], chdir: dir)
+        run!(["git", "add", "-A"], chdir: dir)
         staged, = @executor.capture("git", "diff", "--cached", "--name-only", chdir: dir)
         slugs = learning_slugs(staged)
         # Key the "did we capture" decision on learning files, not any staged

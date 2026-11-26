@@ -191,11 +191,14 @@ proposal-tracking rules live in [docs/commands.md](docs/commands.md#learn).
 Architecture (system diagram, job lifecycle, module map, command flows):
 see [docs/architecture.md](docs/architecture.md).
 
-- `.github/workflows/ai-commands.yml` — the reusable workflow (`workflow_call`).
+- `.github/workflows/ai-commands.yml` — the reusable workflow (`workflow_call`):
+a shell whose contract holds across a major (check out the adopter, `dev
+up`, `dev runner status --check`, `ai-flow dispatch`); the dispatcher it
+runs is the one the adopter's lock installed. `origin-firing.yml` is the
+same shell around `ai-flow gate`.
 - `.github/workflows/ai-commands-caller.yml` — this repo's own caller: ai-flow
-is an adopter of itself (the template under the only free name). The
-dispatcher a job runs and the checkout it edits are different trees; see
-[docs/security.md](docs/security.md).
+is an adopter of itself (the template under the only free name); see
+*Shareability* under the adoption checklist for the one way it differs.
 - `exe/ai-flow` — the `ai-flow` executable. `ai-flow dispatch` is the
 ai-commands job entry point (parses the event, gates, routes), `ai-flow
 gate` the origin-firing check, `ai-flow adopt <owner/repo>` runs the
@@ -211,10 +214,10 @@ See *Releasing and deploying* under Development.
 - `lib/ai_flow/` — comment parsing, anchor resolution, the `Agent#launch`
 seam (the one place that invokes the `agent` CLI — swap the backend here),
 GitHub API access via `gh`, the five command implementations, `Cli` (the
-executable's three commands), and `Adoption` (what `ai-flow adopt`
+executable's four commands), and `Adoption` (what `ai-flow adopt`
 converges and reports).
 - `templates/caller-workflow.yml` — the ~10-line workflow each repo copies;
-`ai-flow adopt` writes it.
+`ai-flow adopt` writes it at the series tag.
 - `templates/hooks.json` — the Cursor `afterFileEdit` auto-push hook for
 repos using `dev plan`.
 - `docs/` — [commands.md](docs/commands.md) (the normative command
@@ -295,20 +298,30 @@ cd ~/src/my-repo
 ```
 
 It prints one line per step — `changed`, `settled`, or `finding` with the
-remedy under it — and exits 1 while any finding remains. It writes the two
-files when absent (commit and push them yourself), puts the repo on each
-org secret's selected-repositories list, and never edits a file that is
-already there or console state it cannot derive: a caller workflow calling
-another ref than the template's is reported as drift, a secret the org
-lacks is reported with the `gh secret set` command, and the App not being
-installed on the repo is reported with the settings page where it is added.
-Re-running is safe; every step settles once done. Pass `--app <slug>` when
-your org registered the App under a name other than `ai-flow`. Runner-group
-admission (step 3) stays `dev runner register --org` from the same
-checkout. The by-hand equivalents:
+remedy under it — and exits 1 while any finding remains. It writes the
+caller workflow when absent and re-pins a caller that calls the same
+workflow at another ref (`@main`, an old series, a sha) to `@v1` (commit
+and push the written files yourself). It puts the repo on each org
+secret's selected-repositories list, writes `.github/ai-flow.yml` when
+absent, and never edits console state it cannot derive: a caller of a
+different workflow (a fork's) is reported as drift, a secret the org lacks
+is reported with the `gh secret set` command, and the App not being
+installed on the repo is reported with the settings page where it is
+added. Re-running is safe; every step settles once done. Pass `--app
+<slug>` when your org registered the App under a name other than
+`ai-flow`. Two steps are the repo's own and not the command's: installing
+the dispatcher on its hosts (step 1, second half) and runner-group
+admission (step 3). The by-hand equivalents:
 
 1. Copy `templates/caller-workflow.yml` to `.github/workflows/ai-commands.yml`
-  (works for code repos and the org plans repo alike).
+  (works for code repos and the org plans repo alike), and declare ai-flow
+   as a dependency of the repo so its hosts install it. Under dev that is
+   `gh "d3mlabs/ai-flow", "^1", assets: "ai-flow-*.zip"` in
+   `dependencies.rb`, then `dev deps update ai-flow` and commit `deps.lock`
+   with it; a job's `dev up` installs the release the lock names, like
+   every other tool the repo declares. The caller's `@v1` is the shell of
+   that 1.x dispatcher, and every job checks the two agree — a major bump
+   is an edit to both.
 2. Ensure the org secrets are available to the repo (or add repo secrets):
   `CURSOR_API_KEY` (authenticates the headless `agent` CLI on the runner)
    and `AI_FLOW_APP_ID` / `AI_FLOW_APP_PRIVATE_KEY` (the ai-flow GitHub App —
@@ -332,9 +345,10 @@ checkout. The by-hand equivalents:
    in a role from an ai-flow checkout — `dev runner register --org --role
    agent --slots N`, or `--role orchestrator` — and dev converges the
    group, the pins and the identity from the declaration (dev's `--ai-flow`
-   and `--labels ai-orchestrator` stand for these for one release). Both
-   roles' slots follow the stream `d3mlabs/ai-flow@gh ~> <major>` (below,
-   *Releasing*). The topology is a deployment
+   and `--labels ai-orchestrator` stand for these for one release). The
+   group's workflow pins are at the series tag `v<major>` of the
+   checkout's `VERSION` (below, *Releasing*); a host records no version of
+   ai-flow beyond that. The topology is a deployment
    choice — one box can carry all five labels, or a beefy box takes
    `ai-build` alone (/build runs the full agent loop including tests, so it
    needs a real dev machine, not a bare runner) while a light box takes the
@@ -379,19 +393,24 @@ checkout. The by-hand equivalents:
    repo's `dependencies.rb` declares the `cursor-cli` cask (the upstream
    cask carries Linux builds, so the binary lands in the Linuxbrew prefix
    like any other); elsewhere, `curl https://cursor.com/install -fsS | bash`. Ruby itself and the dispatcher's gems are not
-   prerequisites: the workflow runs `dev deps install` in the ai-flow
-   checkout, which provisions the pinned Ruby (a brew bottle from the
-   d3mlabs tap's `ruby@X.Y.Z` family, dev ≥ 0.3) and the locked gem set
-   from `dependencies.rb`. Every command that spawns the agent in a
-   checkout carrying a `dev.yml` does the same for that checkout,
-   dispatcher-side, before the agent spawns — /build its worktrees and
-   clones, /edit the job checkout, /learn its worktree and clone — and a
-   checkout that cannot be provisioned fails the run with dev's stderr on
-   the comment rather than handing the agent a half-equipped workspace
-   (ai-flow#99, ai-flow#140). After installing, the workflow runs `dev
-   runner status --check`: the ledger goes to the job log, and when the
-   host has drifted the command's reply carries one line naming the runner
-   and the remedy (`dev runner register` there). Drift never fails a run.
+   prerequisites, and nothing of ai-flow's is read from the runner's
+   environment: the job runs `dev up` in the adopter's checkout, which
+   installs what the adopter declared — the ai-flow release among it,
+   self-contained with the Ruby and gems that release ships — and puts the
+   tree's `bin` on the project PATH, where `ai-flow dispatch` runs. The
+   dispatcher a job runs is therefore the one the adopter installed, and
+   the adopter moves it as it moves any dependency (under dev, `dev deps
+   update ai-flow`). Every command that spawns
+   the agent in a checkout carrying a `dev.yml` provisions that checkout
+   the same way, dispatcher-side, before the agent spawns — /build its
+   worktrees and clones, /edit the job checkout, /learn its worktree and
+   clone — and a checkout that cannot be provisioned fails the run with
+   dev's stderr on the comment rather than handing the agent a
+   half-equipped workspace (ai-flow#99, ai-flow#140). After installing,
+   the workflow runs `dev runner status --check`: the ledger goes to the
+   job log, and when the host has drifted the command's reply carries one
+   line naming the runner and the remedy (`dev runner register` there).
+   Drift never fails a run.
    A leftover `~/.rbenv/shims` on the service's
    PATH must go: its `gem` shim shadows the keg's once rbenv is gone.
 5. Recommended on any box that also holds a human's credentials (a
@@ -466,11 +485,21 @@ not a current one — today a job on a runner without the agent CLI fails
 at the first agent invocation.
 
 Shareability: if this repo is public, any org can reference
-`d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` with its own secret
+`d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1` with its own secret
 and runner pool (same distribution model as action repos, one level up).
-Callers reference `@main` deliberately: the dispatcher
-checkout inside the workflow always runs main, so pinning the YAML to a tag
-or SHA would only freeze half the system and silently split the two versions.
+
+`@v1` is the series tag: `dev deploy gh` moves it to each deployed 1.x
+release, only on deploy from an immutable release, never on a merge to
+`main`. The YAML at that ref is a shell whose contract holds across the
+major; the dispatcher a job actually runs is the one the adopter
+installed, by the job's own `dev up`, and it advances when the adopter
+updates its dependency, not when ai-flow deploys. Each job checks the two
+are the same series and fails with the remedy when they are not. Deploying
+the previous release rolls the shell back for every caller at once; a
+dispatcher rolls back per adopter, by installing the previous release.
+Inside ai-flow's own checkout, ai-flow *is* the checkout: it cannot
+install itself, so `ai-flow gate` and `ai-flow dispatch` there resolve to
+`exe/ai-flow`, the tree under test.
 
 ### Choosing your runner setup
 
@@ -534,12 +563,13 @@ Required settings, the adopter's half:
   branch's workflow file, so unreviewed fork YAML must never execute.
 - **Runner group restriction**: visibility `selected` with only adopting
   repos, and `restricted_to_workflows` pinned to
-  `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main` (jobs defined
+  `d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1` (jobs defined
   in a reusable workflow are checked against the reusable workflow's
-  path/ref). An approved malicious fork workflow then gets no self-hosted
-  runner. `dev runner register --org` converges the group.
+  path/ref — the series tag callers use). An approved malicious fork
+  workflow then gets no self-hosted runner. `dev runner register --org`
+  converges the group from `dev.yml`'s `runner_roles:`.
 - **CODEOWNERS + required review on the workflow path**: the pin makes
-  `ai-commands.yml@main` the runner group's root of trust, so
+  `ai-commands.yml@v1` the runner group's root of trust, so
   `.github/workflows/**` needs a required human review. PR authors
   can't approve their own PRs but *can* approve bot-authored ones, which
   is exactly the case that matters (a `/build` proposing workflow
@@ -594,10 +624,14 @@ dev deploy gh --dry-run      # report the heads as they stand and the candidate
 A release is immutable bytes; which one is live is the gh channel's
 **head** — the series tag `v<major>` — moved only by `dev deploy gh` from an
 immutable release, never by a merge to `main`. Every consumer follows the
-same constraint, this major and any minor or patch: an agent host as the
-stream `d3mlabs/ai-flow@gh ~> 1`, written at `dev runner register` from the
-checkout's `VERSION`; an adopter as `uses: …@v1`. Deploying the previous
-release rolls both back.
+same constraint, this major and any minor or patch: an adopter twice, as
+`uses: …@v1` in its caller workflow (the shell) and as `gh
+"d3mlabs/ai-flow", "^1"` in its `dependencies.rb` (the dispatcher, locked
+in `deps.lock` and installed by the job's `dev up`); the runner group's
+pin as `…@refs/tags/v1`, written at `dev runner register` from the
+checkout's `VERSION`. Deploying the previous release rolls the shell and
+the group pin back at once; an adopter's dispatcher rolls back when it
+re-locks. A host records no version of ai-flow.
 
 The released tree ships its manifest and lock, so dev installs it
 self-contained: the tree's dependencies are converged into the tree, a

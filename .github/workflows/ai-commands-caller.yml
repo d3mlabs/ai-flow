@@ -1,11 +1,13 @@
 # ai-flow's own caller: this repo adopts the slash commands it provides.
 # templates/caller-workflow.yml, under a different name because
-# ai-commands.yml here is the reusable workflow itself. A /build on this
-# repo edits a branch checkout; the dispatcher that runs it is a separate
-# checkout of main (post plans#76, the deployed release), and the only
-# output is a PR — nothing a job does changes what the next job runs.
-# Workflow-file edits are never committed by the bot (Build lifts them
-# out as a patch) and need a code-owner review to land.
+# ai-commands.yml here is the reusable workflow itself. Inside ai-flow's
+# checkout, ai-flow is the checkout: this repo cannot install itself, so
+# the shell's `dev up` installs the checkout's own toolchain and `ai-flow
+# dispatch` resolves to the checkout's exe/ai-flow. A /build here
+# edits a branch checkout and its only output is a PR — nothing a job does
+# changes what the next job runs. Workflow-file edits are never committed
+# by the bot (Build lifts them out as a patch) and need a code-owner review
+# to land.
 name: ai-commands
 
 on:
@@ -25,9 +27,9 @@ permissions:
 
 jobs:
   ai-commands:
-    # @main so the workflow YAML tracks the dispatcher code, which is also
-    # checked out at main — a tag pin here silently splits the two versions.
-    uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@main
+    # @v1: the series tag, moved only by `dev deploy gh` from an immutable
+    # release, never by a merge to main. A major bump is an edit here.
+    uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}

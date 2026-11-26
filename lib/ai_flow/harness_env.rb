@@ -11,15 +11,17 @@ module AiFlow
   # gh/git are indifferent to the bundler keys, so a clean default costs
   # nothing.
   #
-  # The dispatcher runs under `bundle exec` inside the .ai-flow checkout;
-  # without the scrub, RUBYOPT/BUNDLE_GEMFILE/GEM_HOME leak into the child
+  # The dispatcher runs under bundler inside its own gh tree (the launcher
+  # dev writes activates the tree's vendored lock), or under `bundle exec`
+  # in ai-flow's checkout when the checkout is ai-flow; without the scrub,
+  # RUBYOPT/BUNDLE_GEMFILE/GEM_HOME leak into the child
   # and it resolves the harness's pins instead of its own — the agent's
   # `bundle` hits Bundler::RubyVersionMismatch naming a Ruby the project
   # never declared, and `dev` crashes unable to load its vendored gems.
   # Bundler.original_env is bundler's own record of the pre-activation
   # environment; the toolchain-selection keys it can't see — written before
-  # bundler started, by shadowenv activating .ai-flow or an rbenv shim in
-  # the launch chain — are force-unset on top (TOOLCHAIN_KEYS). A nil value
+  # bundler started, by shadowenv activating the adopter's project or an
+  # rbenv shim in the launch chain — are force-unset on top (TOOLCHAIN_KEYS). A nil value
   # in a spawn env hash unsets the key.
   module HarnessEnv
     extend T::Sig

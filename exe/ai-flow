@@ -2,7 +2,8 @@
 # frozen_string_literal: true
 
 # The ai-flow executable: `ai-flow dispatch` (the ai-commands job entry
-# point), `ai-flow gate` (the origin-firing check) and `ai-flow adopt`.
+# point), `ai-flow gate` (the origin-firing check), `ai-flow adopt` and
+# `ai-flow version`.
 # It lives in `exe/` because `bin/` in a deployed tree is dev's output —
 # the generated wrapper that unsets the caller's harness activation and
 # execs the tree's locked Ruby on this file.
@@ -17,8 +18,9 @@
 # environment untouched — no `bundler/setup`, no exported gem home, which
 # is the regression the harness-env family of fixes paid for. A source
 # checkout has no `vendor/bundle` and keeps the shell's gem environment
-# (the project's `dev up`), which is how its own test suite and
-# `dev dispatch` run it.
+# (the project's `dev up`), which is how its own test suite runs it — and
+# how a job on ai-flow's own checkout does, the one caller that cannot
+# pin itself.
 
 tree = File.expand_path("..", __dir__)
 tree_gems = File.join(tree, "vendor", "bundle", "ruby", RbConfig::CONFIG["ruby_version"])

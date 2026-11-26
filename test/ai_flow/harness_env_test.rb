@@ -8,8 +8,8 @@ class AiFlow::HarnessEnvTest < Minitest::Test
   test "scrub restores bundler keys and unsets toolchain-selection keys" do
     Given "an env polluted the way bundle exec + shadowenv leave the harness's"
     polluted = {
-      "RUBYOPT" => "-r/harness/.ai-flow/bundler/setup",
-      "BUNDLE_GEMFILE" => "/harness/.ai-flow/Gemfile",
+      "RUBYOPT" => "-r/harness/gh/ai-flow/bundler/setup",
+      "BUNDLE_GEMFILE" => "/harness/gh/ai-flow/Gemfile",
       "__shadowenv_data" => "harness-shadowenv-blob",
       "RBENV_VERSION" => "3.3.10",
     }

@@ -20,6 +20,11 @@ module AiFlow::Adoption::CallerWorkflowTest::Where; end
 module AiFlow::Adoption::RepoConfigFileTest::Cleanup; end
 module AiFlow::Adoption::RepoConfigFileTest::Then; end
 module AiFlow::Adoption::RepoConfigFileTest::Where; end
+module AiFlow::Adoption::ReusableWorkflowRefTest::Expect; end
+module AiFlow::Adoption::ReusableWorkflowRefTest::Given; end
+module AiFlow::Adoption::ReusableWorkflowRefTest::Then; end
+module AiFlow::Adoption::ReusableWorkflowRefTest::When; end
+module AiFlow::Adoption::ReusableWorkflowRefTest::Where; end
 module AiFlow::Adoption::SecretAccessTest::Given; end
 module AiFlow::Adoption::SecretAccessTest::Then; end
 module AiFlow::Adoption::SecretAccessTest::When; end
@@ -31,7 +36,6 @@ module AiFlow::AdoptionTest::Then; end
 module AiFlow::AdoptionTest::When; end
 module AiFlow::AgentIsolationTest::Cleanup; end
 module AiFlow::AgentIsolationTest::Then; end
-module AiFlow::AgentIsolationTest::Where; end
 module AiFlow::AgentOutputTest::Cleanup; end
 module AiFlow::AgentOutputTest::Expect; end
 module AiFlow::AgentOutputTest::Then; end
@@ -111,7 +115,17 @@ module AiFlow::RichDiffTest::Given; end
 module AiFlow::RichDiffTest::Then; end
 module AiFlow::RunnerSlotTest::Expect; end
 module AiFlow::RunnerSlotTest::Where; end
+module AiFlow::SeriesTest::Cleanup; end
+module AiFlow::SeriesTest::Expect; end
+module AiFlow::SeriesTest::Then; end
+module AiFlow::SeriesTest::When; end
+module AiFlow::SeriesTest::Where; end
 module AiFlow::TokenProviderTest::Cleanup; end
 module AiFlow::TokenProviderTest::Then; end
 module AiFlow::ValueEqualityTest::Where; end
 module AiFlow::WorkspaceProvisionerTest::Cleanup; end
+module ThinShellTest::Expect; end
+module ThinShellTest::Given; end
+module ThinShellTest::Then; end
+module ThinShellTest::When; end
+module ThinShellTest::Where; end

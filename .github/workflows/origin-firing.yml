@@ -6,7 +6,11 @@
 # marker (migrations, manual edits) skip green.
 #
 # Adopting repos (the org knowledge repo first) reference this via a small
-# caller workflow — see templates/proposal-checks.yml.
+# caller workflow — see templates/proposal-checks.yml — at `@v1`, and
+# install the checker on their hosts as a dependency of their own, like
+# every ai-flow adopter. The job is the same thin shell as
+# ai-commands.yml: check out the adopter → `dev up` → check the checker is
+# this shell's series → `dev runner status --check` → `ai-flow gate`.
 name: origin-firing
 
 on:
@@ -39,12 +43,10 @@ jobs:
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
     steps:
       # Scoped to the proposal repo (plans#25): this token only serves the
-      # two checkouts below and the no-App fallback. Cross-repo origin reads
+      # checkout below and the no-App fallback. Cross-repo origin reads
       # happen in the checker, which holds the App key and mints its own
       # reach per call (TokenProvider); the agent pass inside it gets a
-      # read-only token (installation-wide reads, zero writes). The public
-      # ai-flow checkout needs no scope — any valid token reads a public
-      # repo (cross-owner adopters exercise exactly that today).
+      # read-only token (installation-wide reads, zero writes).
       - name: Mint the ai-flow App token
         id: app-token
         if: ${{ env.AI_FLOW_APP_ID != '' }}
@@ -65,32 +67,48 @@ jobs:
           token: ${{ steps.app-token.outputs.token || github.token }}
           persist-credentials: false
 
-      - name: Check out ai-flow (the checker)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: d3mlabs/ai-flow
-          path: .ai-flow
-          token: ${{ steps.app-token.outputs.token || github.token }}
-          persist-credentials: false
+      # Same provisioning as ai-commands.yml: the adopter's own `dev up`
+      # installs everything it declared, the checker among it, with each
+      # tree's bin/ on the project PATH — as the runner user, through its
+      # own gh login.
+      - name: Install the adopter's declared tools
+        uses: d3mlabs/dev/up@main
 
-      # Same provisioning as ai-commands.yml: the checker's toolchain comes
-      # through dev — `dev deps install` provisions the pinned Ruby and the
-      # locked gem set (sorbet-runtime above all) headlessly. The runner box
-      # needs dev and shadowenv preinstalled; Ruby and gems it does not.
-      - name: Install checker dependencies
-        working-directory: .ai-flow
-        run: dev deps install
+      # Inside ai-flow's own checkout, ai-flow is the checkout — the same
+      # rule as ai-commands.yml: the checkout's exe/ resolves `ai-flow`.
+      - name: Resolve ai-flow to the checkout when the checkout is ai-flow
+        if: github.repository == 'd3mlabs/ai-flow'
+        run: echo "$GITHUB_WORKSPACE/exe" >> "$GITHUB_PATH"
 
-      # Inspect, never converge (same reasoning as ai-commands.yml): the
-      # ledger lands in the job log; drift does not fail the check, and the
-      # checker has no reply surface, so the log is where it is read.
+      # Same check as ai-commands.yml: this YAML is one series' shell, and
+      # the checker the adopter installed must be of it.
+      - name: Check the checker is this shell's series
+        env:
+          SHELL_SERIES: "1"
+        run: |
+          if ! version="$(shadowenv exec -- ai-flow version 2>/dev/null)"; then
+            echo "::error::no ai-flow on the project PATH after dev up: this repository does not install ai-flow — see the README's adoption checklist"
+            exit 1
+          fi
+          major="${version%%.*}"
+          if [ "$major" != "$SHELL_SERIES" ]; then
+            echo "::error::this workflow is ai-flow v$SHELL_SERIES but the repository installs ai-flow $version — install a $SHELL_SERIES.x release, or call the workflow at @v$major"
+            exit 1
+          fi
+
+      # Inspect, never converge the host (same reasoning as
+      # ai-commands.yml): the ledger lands in the job log; drift does not
+      # fail the check, and the checker has no reply surface, so the log
+      # is where it is read.
       - name: Check host posture
         continue-on-error: true
-        # In the dispatcher checkout, whose dependencies the step above just
-        # installed: in a target that is itself a dev project, dev's
-        # staleness gate would fire first and read as drift (ai-flow#166).
-        working-directory: .ai-flow
         run: dev runner status --check
+
+      - name: Log versions
+        run: |
+          echo "ai-flow checker: $(shadowenv exec -- ai-flow version) at $(shadowenv exec -- sh -c 'command -v ai-flow')"
+          echo "ai-flow workflow yaml: ${{ github.job_workflow_sha || '(empty on this runner — see referenced_workflows on the run API)' }}"
+          echo "pull request head: ${{ github.repository }}@$(git log -1 --format='%H')"
 
       - name: Origin-firing check
         env:
@@ -103,5 +121,4 @@ jobs:
           # named ai-flow — derive the bot login from the actual slug, or the
           # origin-evidence bot filter misses this deployment's own panels.
           AI_FLOW_BOT_LOGIN: ${{ format('{0}[bot]', steps.app-token.outputs.app-slug || 'ai-flow') }}
-        working-directory: .ai-flow
-        run: dev origin-firing-check
+        run: shadowenv exec -- ai-flow gate
