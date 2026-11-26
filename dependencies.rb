@@ -26,21 +26,21 @@ Dev::Deps.define do
   group(:development) do
     gem "sorbet"
     gem "tapioca", require: false
-    gem "rubocop-d3mlabs", "~> 1.0", require: false
+    gem "rubocop-d3mlabs", "^1.0", require: false
   end
 
   group(:test) do
     gem "minitest"
     gem "minitest-reporters"
     gem "rake"
-    gem "rspock", "~> 3.0"
-    gem "simplecov", "~> 1.0"
+    gem "rspock", "^3.0"
+    gem "simplecov", "^1.0"
     # Codecov's parser rejects SimpleCov's JSON once a report carries skipped
     # lines ("ignored" entries — exactly what simplecov-sorbet produces);
     # cobertura XML is Codecov's documented format for SimpleCov output.
-    gem "simplecov-cobertura", "~> 4.0", require: false
+    gem "simplecov-cobertura", "^4.0", require: false
     # Skips type-level Sorbet constructs (T.type_alias/sig blocks, T.absurd)
     # so they never read as coverage misses.
-    gem "simplecov-sorbet", "~> 0.2", require: false
+    gem "simplecov-sorbet", ">= 0.2, < 1", require: false
   end
 end
