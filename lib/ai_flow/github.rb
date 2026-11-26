@@ -17,11 +17,16 @@ module AiFlow
     # apart from Error because `adopt` reads absence as a fact to report —
     # a secret not created, an App not installed — never as a crash.
     class NotFound < Error; end
+    # GitHub refused the call for this credential (HTTP 403): the thing
+    # exists, this login may not read or write it.
+    class Forbidden < Error; end
 
     PULL_REQUEST_URL = %r{\Ahttps://github\.com/(?<repo>[\w.-]+/[\w.-]+)/pull/(?<number>\d+)\z}
 
     # How gh spells a 404 on stderr (`gh: Not Found (HTTP 404)`).
     NOT_FOUND_STATUS = "HTTP 404"
+    # How gh spells a 403 on stderr (`gh: … (HTTP 403)`).
+    FORBIDDEN_STATUS = "HTTP 403"
 
     # The title GitHub accepts for a pull request: at most LIMIT characters
     # (the REST API answers 422 Validation Failed above it). Issue titles
@@ -748,6 +753,7 @@ module AiFlow
     def raise_api_error(path, err)
       message = "gh api #{path} failed: #{err.strip}"
       raise NotFound, message if err.include?(NOT_FOUND_STATUS)
+      raise Forbidden, message if err.include?(FORBIDDEN_STATUS)
 
       raise Error, message
     end

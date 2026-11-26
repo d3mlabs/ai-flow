@@ -418,9 +418,17 @@ class FakeGitHub < AiFlow::GitHub
     installations.fetch(org)
   end
 
+  # An installation seeded with `repositories: nil` is one whose list this
+  # login may not read, as `user/installations/{id}/repositories` answers
+  # gh's OAuth token (ai-flow#190).
   def installation_repositories(installation_id)
     @calls << [:installation_repositories, installation_id]
-    (@installation_repositories || {}).fetch(installation_id)
+    repositories = (@installation_repositories || {}).fetch(installation_id)
+    return repositories if repositories
+
+    raise AiFlow::GitHub::Forbidden,
+      "gh api user/installations/#{installation_id}/repositories failed: gh: You must authenticate with an access token " \
+        "authorized to a GitHub App, a personal access token, or basic auth in order to list repositories for an installation. (HTTP 403)"
   end
 
   def api(path, method: nil, payload: nil)

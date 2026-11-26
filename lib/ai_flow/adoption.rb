@@ -190,15 +190,15 @@ module AiFlow
     # @param knowledge_repo [String, nil] the org knowledge repo to
     #   pre-fill in a generated .github/ai-flow.yml; nil leaves the key
     #   commented out as the template has it
-    # @param app_slug [String] the ai-flow App's slug in this org
+    # @param app_slug [String, nil] the ai-flow App's slug in this org; nil finds it among the org's installations
     # @return [Array<Outcome>] one per step, in step order
     # @raise [NoCheckoutError] when checkout is not a directory
     # @raise [GitHub::NotFound] when the repository does not exist
     sig do
-      params(owner_repo: String, checkout: String, knowledge_repo: T.nilable(String), app_slug: String)
+      params(owner_repo: String, checkout: String, knowledge_repo: T.nilable(String), app_slug: T.nilable(String))
         .returns(T::Array[Outcome])
     end
-    def converge(owner_repo:, checkout:, knowledge_repo: nil, app_slug: CommitIdentity::DEFAULT_APP_SLUG)
+    def converge(owner_repo:, checkout:, knowledge_repo: nil, app_slug: nil)
       raise NoCheckoutError, "#{checkout} is not a directory — run adopt from the adopting repo's checkout" unless File.directory?(checkout)
 
       repository = @github.repository(owner_repo)

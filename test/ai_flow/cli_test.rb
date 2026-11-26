@@ -222,6 +222,26 @@ class AiFlow::CliTest < Minitest::Test
     FileUtils.rm_rf(checkout)
   end
 
+  test "adopt without --app finds the org's ai-flow App by name, whatever prefix GitHub's slug namespace forced on it" do
+    Given "an org whose one ai-flow App is acme-ai-flow, installed on every repo"
+    checkout = Dir.mktmpdir("ai-flow-adopt-")
+    github = FakeGitHub.new
+    github.seed_repository("acme/widgets", id: 777)
+    AiFlow::Adoption::SECRETS.each { |name| github.seed_org_secret("acme", name, visibility: "selected", repositories: []) }
+    github.seed_app_installation("acme", id: 56, app_slug: "acme-ai-flow", repository_selection: "all")
+    cli, stdout, _stderr = build_cli(github: github)
+
+    When "adopting with no --app"
+    cli.run(["adopt", "acme/widgets", "--checkout", checkout])
+
+    Then
+    stdout.string.include?("acme-ai-flow App")
+    stdout.string.include?("installed on every repository in acme")
+
+    Cleanup
+    FileUtils.rm_rf(checkout)
+  end
+
   test "adopt exits 0 once every step is settled" do
     Given "a repo adopted in full: files present, secrets shared, App on it"
     checkout = Dir.mktmpdir("ai-flow-adopt-")

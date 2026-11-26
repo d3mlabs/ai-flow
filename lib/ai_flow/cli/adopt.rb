@@ -28,7 +28,7 @@ module AiFlow
 
           --checkout DIR             the adopting repo's working tree (default: the current directory)
           --knowledge-repo OWNER/REPO  pre-fill knowledge_repo: in a generated .github/ai-flow.yml
-          --app SLUG                 the ai-flow App's slug in this org (default: #{CommitIdentity::DEFAULT_APP_SLUG})
+          --app SLUG                 the ai-flow App's slug in this org (default: the one installation named ai-flow, plain or prefixed)
 
         #{HOST_SIDE}
       USAGE
@@ -53,7 +53,7 @@ module AiFlow
       def run(args)
         checkout = T.let(Dir.pwd, String)
         knowledge_repo = T.let(nil, T.nilable(String))
-        app_slug = T.let(CommitIdentity::DEFAULT_APP_SLUG, String)
+        app_slug = T.let(nil, T.nilable(String))
         parser = OptionParser.new do |opts|
           opts.on("--checkout DIR", String) { |dir| checkout = dir }
           opts.on("--knowledge-repo OWNER/REPO", String) { |repo| knowledge_repo = repository_name(repo) }
