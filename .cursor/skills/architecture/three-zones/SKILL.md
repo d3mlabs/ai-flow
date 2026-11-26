@@ -19,14 +19,17 @@ it is uniquely cheap or authoritative at:
    Actions is the dispatcher infrastructure: webhook consumption, queueing,
    and routing are operated by GitHub and cost nothing on self-hosted
    runners. The reusable workflow (`.github/workflows/ai-commands.yml`,
-   `workflow_call`-only) is called by a thin caller in each adopting repo —
-   ai-flow itself has no caller, so there is no `/build` on ai-flow issues.
+   `workflow_call`-only) is called by a thin caller in each adopting repo
+   at the series tag `@v1`; ai-flow's own caller is the one exception that
+   cannot pin itself (there, the checkout's `exe/ai-flow` runs).
 3. **Self-hosted runners — execution.** `exe/ai-flow dispatch` plus
    `lib/ai_flow` drive the headless Cursor agent CLI. ai-flow reaches a
-   host as a released tree (dev installs the gh channel's head
-   self-contained before each job), and the host's shape — the `agent` and
-   `orchestrator` roles, labels, groups, the `ai-agent` job identity,
-   `cursor-cli` — is declared in this repo's `dev.yml` and
+   job as the released tree the adopter's lock pins (`gh
+   "d3mlabs/ai-flow", "^1"`), installed into the adopter's checkout by the
+   job's own `dev up` — nothing of ai-flow's is read from the runner's
+   environment and a host records no version of it — and the host's shape
+   — the `agent` and `orchestrator` roles, labels, groups, the `ai-agent`
+   job identity, `cursor-cli` — is declared in this repo's `dev.yml` and
    `dependencies.rb`, not in dev. Jobs route by per-command runner labels
    (ai-ask / ai-edit / ai-split / ai-build / ai-learn); one box can carry
    all labels. Runner machines are normal dev machines: `dev` keeps their
@@ -41,5 +44,6 @@ their CI runs.
 Depth: docs/architecture.md (system overview and sequence diagrams),
 docs/attribution.md (identity and token minting).
 
-origin: seeded by ai-flow#13
-date: 2026-07-25
+origin: seeded by ai-flow#13; the runner zone's install path revised by
+ai-flow#186 (the adopter's lock, not a per-job head install)
+date: 2026-11-25

@@ -28,9 +28,15 @@ Consequences, and the pattern to preserve:
   adopting repos' `.github/workflows/ai-commands.yml` callers (new event
   types, filters, labels) ride a human-pushed credential — plan for a
   manual rollout step whenever the reusable workflow's interface grows.
-- **ai-flow's own reusable workflow is `@main`-tracked** by callers, so
-  dispatcher code and workflow YAML stay in lockstep; a tag pin would
-  silently split the two versions.
+- **Callers pin the series tag, never a branch.** An adopter reads one
+  head twice — `uses: …@v1` in its caller workflow and `gh
+  "d3mlabs/ai-flow", "^1"` in its `dependencies.rb` — and `dev deploy gh`
+  moves `v1` only from an immutable release. The reusable workflow is a
+  shell (checkout → `dev up` → `dev runner status --check` → `ai-flow
+  dispatch`) whose contract holds across the major, so the two never
+  split within it; `ai-flow adopt` is what keeps the two lines agreeing,
+  and a major bump is an edit to both. A caller at `@main` would run
+  tomorrow's YAML against today's locked dispatcher.
 
 Wrong: teaching /build to commit workflow files when the diff "looks
 safe". Right: keep the exclusion absolute; the suggested-patch panel is
@@ -39,5 +45,6 @@ the only channel.
 Depth: docs/attribution.md (App permissions), lib/ai_flow/commands/build.rb
 (`WORKFLOWS_DIR` handling).
 
-origin: seeded by ai-flow#13
-date: 2026-07-25
+origin: seeded by ai-flow#13; callers moved from `@main` to the series
+tag by ai-flow#186
+date: 2026-11-25
