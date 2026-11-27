@@ -9,7 +9,7 @@
 # (names + modelIds) in the run's error.
 # Precedence per command: models.<command> > models.default > CLI default.
 models:
-  default: claude-fable-5
+  default: claude-fable-5-1
   # Per-command overrides, e.g. a heavier model for the code-writing pass.
   # An exact catalog modelId also matches — that is how a thinking-effort
   # variant is pinned:
