@@ -1152,6 +1152,30 @@ class AiFlow::Commands::BuildTest < Minitest::Test
     nil
   end
 
+  test "a CONFLICTING PR in a dev project is provisioned on the branch as checked out, before the rebase leaves markers in the tree" do
+    Given "a PR whose rebase onto its base stops on a file dev itself loads (dev#729: dev is its own checkout)"
+    github = FakeGitHub.new
+    github.seed_permission("jpduchesne", "write")
+    github.seed_pull_request_state(REPO, 7, mergeable: false, base_ref: "main")
+    context = ContextBuilder.issue_comment(number: 7, body: "/build fix CI", pull_request: true)
+    executor = RecordingExecutor.new(fail_on: ["rebase origin/main"], conflicts: ["lib/dev/deps/pip_repository.rb"])
+    agent = FakeAgent.new(["<<<AI-FLOW:SEGMENT 1>>>\nResolved."])
+    dir = Dir.mktmpdir("ai-flow-build-test-")
+    File.write(File.join(dir, "dev.yml"), "name: dev\n")
+
+    When "iterating"
+    run_build(github: github, executor: executor, body: "/build fix CI", context: context, agent: agent, workdir: dir)
+    lines = executor.command_lines
+
+    Then "dev deps install ran after the checkout and before git rebase, so it read a tree with no conflict markers"
+    provision_at = T.must(lines.index("dev deps install"))
+    T.must(lines.index { |line| line.include?("git checkout ") }) < provision_at
+    provision_at < T.must(lines.index { |line| line.include?(" rebase origin/main") })
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a bare /build on a CONFLICTING PR with nothing else outstanding pushes the clean rebase without an agent" do
     Given "no instruction, no feedback, a PR GitHub cannot merge, a rebase that applies cleanly"
     github = FakeGitHub.new

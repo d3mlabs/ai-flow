@@ -283,8 +283,11 @@ With nothing outstanding and no instruction:
 
 > ℹ️ **/build** — nothing to address: no instruction, no unresolved review threads, and no new discussion since the last ai-flow commit.
 
-A PR GitHub reports as not mergeable is rebased onto its base first,
-dispatcher-side, as the App (ai-flow#148): a rebase that applies cleanly
+A PR GitHub reports as not mergeable is rebased onto its base,
+dispatcher-side, as the App (ai-flow#148), after the checkout is
+provisioned (`dev deps install` reads the branch as pushed, never a tree
+with conflict markers in it — in dev's own repo that tree *is* dev): a
+rebase that applies cleanly
 runs straight through; one that stops leaves its conflict markers in the
 working tree, the agent is told which files carry them and that the
 tooling owns the rebase (resolve in place, never merge the base in, no

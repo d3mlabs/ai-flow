@@ -555,6 +555,13 @@ module AiFlow
       sig { params(segment: CommentParser::Segment).void }
       def iterate_on_pull_request(segment)
         branch = checkout_head_branch
+        # Provision on the branch as checked out, before the rebase: a
+        # rebase that stops leaves conflict markers in the tree for the
+        # agent, and `dev deps install` must not read them — in dev's own
+        # repo, dev is the checkout (dev#689), so a marker in lib/ is a
+        # SyntaxError at provisioning (dev#729). A base that moved the lock
+        # is the agent's own `dev up` to pick up after the pass.
+        @provisioner.provision(@context.owner_repo, @workdir)
         rebase = rebase_onto_base
         threads = sweepable_threads
         comments = fresh_conversation_comments
@@ -579,7 +586,6 @@ module AiFlow
           end
         end
 
-        @provisioner.provision(@context.owner_repo, @workdir)
         # A learning proposal PR's learning files are its content: the pass
         # edits them on the branch, and nothing is split out to a capture.
         capture = RepoConfig.load(@workdir).learn_on_build? && !Learn.proposal_branch?(branch)
